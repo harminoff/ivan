@@ -101,7 +101,6 @@ public final class IvanActivity extends SDLActivity {
                             WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
                     controller.hide(WindowInsets.Type.statusBars());
                 } else {
-                    controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_DEFAULT);
                     controller.show(WindowInsets.Type.statusBars());
                 }
             }
