@@ -21,8 +21,30 @@ adb shell am start -n io.github.harminoff.ivan/.IvanActivity
 
 The installable debug APK is written to
 `app/build/outputs/apk/debug/app-debug.apk`. Use `:app:assembleRelease` to create
-an unsigned release APK; production distribution still requires a release key
-and signing configuration.
+an unsigned release APK when no local release key is configured.
+
+For production distribution, create `signing/keystore.properties` beside this
+README with values in the following form. The entire `signing` directory is
+ignored by Git and must be backed up securely; losing the key prevents future
+updates from replacing an installed release.
+
+For a new port identity, `generate-release-key.ps1` creates a strong local key,
+the properties file, and a recovery note without printing the password:
+
+```powershell
+.\generate-release-key.ps1
+```
+
+```properties
+storeFile=signing/ivan-android-release.p12
+storePassword=replace-with-secret
+keyAlias=ivan-android
+keyPassword=replace-with-secret
+```
+
+With that file and keystore present, `:app:assembleRelease` automatically signs
+`app/build/outputs/apk/release/app-release.apk`. Never commit the keystore or
+password file.
 
 The checked-in Gradle wrapper expects Android SDK 35, NDK 28.2.13676358,
 CMake 3.22.1, and Java 17. The build vendors SDL 2.32.10, SDL_mixer 2.8.2,

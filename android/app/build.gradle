@@ -2,6 +2,14 @@ plugins {
     id "com.android.application"
 }
 
+def releaseKeystoreProperties = new Properties()
+def releaseKeystorePropertiesFile = rootProject.file("signing/keystore.properties")
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.withInputStream {
+        releaseKeystoreProperties.load(it)
+    }
+}
+
 def generatedAssets = layout.buildDirectory.dir("generated/ivanAssets")
 def generatedResources = layout.buildDirectory.dir("generated/ivanResources")
 
@@ -72,6 +80,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseKeystorePropertiesFile.exists()) {
+            release {
+                storeFile rootProject.file(releaseKeystoreProperties["storeFile"])
+                storePassword releaseKeystoreProperties["storePassword"]
+                keyAlias releaseKeystoreProperties["keyAlias"]
+                keyPassword releaseKeystoreProperties["keyPassword"]
+            }
+        }
+    }
+
     buildTypes {
         debug {
             debuggable true
@@ -79,6 +98,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (releaseKeystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
