@@ -150,6 +150,13 @@ cycleoption ivanconfig::MobileControllerSide("MobileControllerSide",
                                           &MobileControllerSideDisplayer,
                                           &configsystem::NormalCycleChangeInterface,
                                           &MobileControllerSideChanger);
+truthoption ivanconfig::MobileStatusBarHidden("MobileStatusBarHidden",
+                                          "Hide Android status bar",
+                                          "Hide the clock and notification bar at the top of the screen. Android navigation controls remain available.",
+                                          false,
+                                          &configsystem::NormalTruthDisplayer,
+                                          &configsystem::NormalTruthChangeInterface,
+                                          &MobileStatusBarHiddenChanger);
 #endif
 truthoption ivanconfig::ShowMapAtDetectMaterial("ShowMapAtDetectMaterial",
                                           "Show map while detecting material",
@@ -1157,6 +1164,13 @@ void ivanconfig::MobileControllerSideChanger(cycleoption* O, long What)
     O->Value = What;
   mobileui::SetControllerOnLeft(What == 1);
 }
+
+void ivanconfig::MobileStatusBarHiddenChanger(truthoption* O, truth What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetStatusBarHidden(What);
+}
 #endif
 
 void ivanconfig::UseExtraMenuGraphicsChanger(truthoption* O, truth What)
@@ -1252,6 +1266,7 @@ void ivanconfig::Initialize()
   fsCategory="General Setup";
 #ifdef ANDROID
   configsystem::AddOption(fsCategory,&MobileControllerSide);
+  configsystem::AddOption(fsCategory,&MobileStatusBarHidden);
 #endif
   configsystem::AddOption(fsCategory,&DefaultName);
   configsystem::AddOption(fsCategory,&FantasyNamePattern);
@@ -1384,6 +1399,7 @@ void ivanconfig::Initialize()
   AllowMouseOnFelistChanger(NULL, AllowMouseOnFelist.Value);
 #ifdef ANDROID
   MobileControllerSideChanger(NULL, MobileControllerSide.Value);
+  MobileStatusBarHiddenChanger(NULL, MobileStatusBarHidden.Value);
 #endif
   UseExtraMenuGraphicsChanger(NULL, UseExtraMenuGraphics.Value);
 

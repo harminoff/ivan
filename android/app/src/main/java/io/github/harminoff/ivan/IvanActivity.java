@@ -4,6 +4,8 @@ import android.os.Bundle;
 import android.system.Os;
 import android.util.Log;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
 
@@ -15,6 +17,7 @@ import java.io.InputStream;
 public final class IvanActivity extends SDLActivity {
     private static final String TAG = "IVAN";
     private static final String CONTENT_VERSION = "0.59-de528ac-android-2";
+    private boolean statusBarHidden;
 
     private static native void nativeSetSafeInsets(int left, int top, int right, int bottom, float density);
 
@@ -74,6 +77,40 @@ public final class IvanActivity extends SDLActivity {
     @Override
     protected String[] getLibraries() {
         return new String[] { "SDL2", "main" };
+    }
+
+    public void setStatusBarHidden(boolean hidden) {
+        statusBarHidden = hidden;
+        runOnUiThread(this::applyStatusBarVisibility);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applyStatusBarVisibility();
+        }
+    }
+
+    private void applyStatusBarVisibility() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                if (statusBarHidden) {
+                    controller.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    controller.hide(WindowInsets.Type.statusBars());
+                } else {
+                    controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_DEFAULT);
+                    controller.show(WindowInsets.Type.statusBars());
+                }
+            }
+        } else if (statusBarHidden) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        }
+        getWindow().getDecorView().requestApplyInsets();
     }
 
     private void installPackagedContent() {

@@ -75,6 +75,7 @@ class ivanconfig
   static truth IsAllowMouseOnFelist(){ return AllowMouseOnFelist.Value; }
 #ifdef ANDROID
   static truth IsMobileControllerOnLeft() { return MobileControllerSide.Value == 1; }
+  static truth IsMobileStatusBarHidden() { return MobileStatusBarHidden.Value; }
 #endif
   static truth IsOutlinedGfx() { return OutlinedGfx.Value; }
   static long GetVolume() { return Volume.Value; }
@@ -161,6 +162,7 @@ class ivanconfig
 #ifdef ANDROID
   static void MobileControllerSideDisplayer(const cycleoption*, festring&);
   static void MobileControllerSideChanger(cycleoption*, long);
+  static void MobileStatusBarHiddenChanger(truthoption*, truth);
 #endif
   static void UseExtraMenuGraphicsChanger(truthoption*, truth);
   static void WorldSizeConfigDisplayer(const cycleoption* O, festring& Entry);
@@ -287,6 +289,7 @@ class ivanconfig
   static truthoption AllowMouseOnFelist;
 #ifdef ANDROID
   static cycleoption MobileControllerSide;
+  static truthoption MobileStatusBarHidden;
 #endif
   static truthoption UseExtraMenuGraphics;
 };

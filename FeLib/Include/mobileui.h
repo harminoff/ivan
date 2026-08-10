@@ -29,6 +29,7 @@ namespace mobileui
 
   void SetSafeInsets(int Left, int Top, int Right, int Bottom, float Density);
   void SetControllerOnLeft(bool OnLeft);
+  void SetStatusBarHidden(bool Hidden);
   void SetMapFocus(int X, int Y);
   void SetStats(const char* Line1, const char* Line2,
                 const char* Line3, const char* Line4);

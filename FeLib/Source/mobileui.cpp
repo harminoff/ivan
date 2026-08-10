@@ -13,6 +13,7 @@
 #include "felibdef.h"
 #include "feio.h"
 #include "felist.h"
+#include "SDL_system.h"
 
 namespace
 {
@@ -675,6 +676,61 @@ namespace
          Rect.y + (Rect.h - Scale * 7) / 2, Value, Scale, R, G, B);
   }
 
+  void MenuRowText(SDL_Renderer* Renderer, const SDL_Rect& Row,
+                   const std::string& Value, int Padding,
+                   Uint8 R, Uint8 G, Uint8 B)
+  {
+    const int AvailableWidth = std::max(1, Row.w - Padding * 2);
+    const int MaximumScale = Clamp(Row.h / 11, 1, 5);
+    // Three-pixel glyphs remain comfortably readable on a phone.  Long
+    // desktop list entries should wrap before they are reduced below that.
+    const int MinimumScale = std::min(3, MaximumScale);
+    int Scale = MaximumScale;
+    int LinesFit = 1;
+    std::vector<std::string> Lines;
+
+    for(int Candidate = MaximumScale; Candidate >= MinimumScale; --Candidate)
+    {
+      const int Columns = std::max(1, AvailableWidth / (Candidate * 6));
+      std::vector<std::string> CandidateLines = WrapText(Value, Columns);
+      const int LineAdvance = Candidate * 8;
+      const int CandidateLinesFit = Row.h >= Candidate * 7
+        ? 1 + std::max(0, Row.h - Candidate * 7) / LineAdvance : 1;
+      if((int)CandidateLines.size() <= CandidateLinesFit
+         || Candidate == MinimumScale)
+      {
+        Scale = Candidate;
+        LinesFit = CandidateLinesFit;
+        Lines.swap(CandidateLines);
+        break;
+      }
+    }
+
+    if(Lines.empty())
+      Lines.push_back("");
+    if((int)Lines.size() > LinesFit)
+    {
+      Lines.resize(LinesFit);
+      const int Columns = std::max(1, AvailableWidth / (Scale * 6));
+      std::string& Last = Lines.back();
+      if(Columns > 3)
+      {
+        Last.resize(std::min(Last.size(), size_t(Columns - 3)));
+        while(!Last.empty() && std::isspace((unsigned char)Last.back()))
+          Last.pop_back();
+        Last += "...";
+      }
+      else
+        Last.resize(std::min(Last.size(), size_t(Columns)));
+    }
+
+    const int LineAdvance = Scale * 8;
+    const int TotalHeight = (int(Lines.size()) - 1) * LineAdvance + Scale * 7;
+    int Y = Row.y + (Row.h - TotalHeight) / 2;
+    for(size_t Index = 0; Index < Lines.size(); ++Index, Y += LineAdvance)
+      Text(Renderer, Row.x + Padding, Y, Lines[Index].c_str(), Scale, R, G, B);
+  }
+
   std::vector<std::string> StatGroups(const std::string& Value)
   {
     std::vector<std::string> Groups;
@@ -806,24 +862,29 @@ namespace
       }
 
       const std::string& Label = State.MenuOptions[Index];
-      int Scale = Clamp(Row.h / 11, 1, 5);
-      while(Scale > 1 && TextWidth(Label.c_str(), Scale) > Row.w - Padding * 2)
-        --Scale;
-      std::string Visible = Label;
-      const int Columns = std::max(1, (Row.w - Padding * 2) / (Scale * 6));
-      if((int)Visible.size() > Columns)
+      if(MainMenu)
       {
-        Visible.resize(std::max(1, Columns - 3));
-        Visible += "...";
+        int Scale = Clamp(Row.h / 11, 1, 5);
+        while(Scale > 1
+              && TextWidth(Label.c_str(), Scale) > Row.w - Padding * 2)
+          --Scale;
+        std::string Visible = Label;
+        const int Columns = std::max(1,
+          (Row.w - Padding * 2) / (Scale * 6));
+        if((int)Visible.size() > Columns)
+        {
+          Visible.resize(std::max(1, Columns - 3));
+          Visible += "...";
+        }
+        Text(Renderer,
+             Row.x + (Row.w - TextWidth(Visible.c_str(), Scale)) / 2,
+             Row.y + (Row.h - Scale * 7) / 2,
+             Visible.c_str(), Scale,
+             Selected ? 255 : 240, Selected ? 224 : 230,
+             Selected ? 205 : 202);
       }
-      Text(Renderer, MainMenu
-                       ? Row.x + (Row.w - TextWidth(Visible.c_str(), Scale)) / 2
-                       : Row.x + Padding,
-           Row.y + (Row.h - Scale * 7) / 2,
-           Visible.c_str(), Scale,
-           Selected && MainMenu ? 255 : 240,
-           Selected && MainMenu ? 224 : 230,
-           Selected && MainMenu ? 205 : 202);
+      else
+        MenuRowText(Renderer, Row, Label, Padding, 240, 230, 202);
     }
     for(int Index = State.MenuOptionCount; Index < MAX_MENU_OPTIONS; ++Index)
       State.MenuRows[Index] = { 0, 0, 0, 0 };
@@ -1141,6 +1202,25 @@ namespace mobileui
     Event.type = SDL_USEREVENT;
     Event.user.code = REDRAW_EVENT_CODE;
     SDL_PushEvent(&Event);
+  }
+
+  void SetStatusBarHidden(bool Hidden)
+  {
+    JNIEnv* Env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    jobject Activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if(!Env || !Activity)
+      return;
+
+    jclass ActivityClass = Env->GetObjectClass(Activity);
+    if(ActivityClass)
+    {
+      jmethodID Method = Env->GetMethodID(ActivityClass,
+                                          "setStatusBarHidden", "(Z)V");
+      if(Method)
+        Env->CallVoidMethod(Activity, Method, Hidden ? JNI_TRUE : JNI_FALSE);
+      Env->DeleteLocalRef(ActivityClass);
+    }
+    Env->DeleteLocalRef(Activity);
   }
 
   void SetSafeInsets(int Left, int Top, int Right, int Bottom, float Density)
