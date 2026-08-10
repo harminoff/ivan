@@ -69,6 +69,9 @@
 #include "whandler.h"
 #include "wsquare.h"
 #include "specialkeys.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 #include "dbgmsgproj.h"
 
@@ -2020,6 +2023,10 @@ void game::DrawMapOverlay(bitmap* buffer)
 //      v2MapNotesTopLeft = v2TopLeftFinal+v2(v2MapScrSizeFinal.X,0);
     v2MapTopLeft = v2TopLeftFinal;
     v2MapSize = v2MapScrSizeFinal;
+#ifdef ANDROID
+    mobileui::SetMapSourceBounds(v2MapTopLeft.X, v2MapTopLeft.Y,
+                                 v2MapSize.X, v2MapSize.Y);
+#endif
   }
 
   static blitdata BFinal = DEFAULT_BLITDATA;
@@ -3069,6 +3076,14 @@ void game::DrawEverythingNoBlit(truth AnimationDraw)
   UpdateAltSilhouette(AnimationDraw);
 
   UpdateShowItemsAtPos(!bXBRZandFelist); //last thing as this is a temp overlay
+
+#ifdef ANDROID
+  if(Player->IsEnabled())
+  {
+    v2 MobileFocus = CalculateScreenCoordinates(Player->GetPos()) + v2(8, 8);
+    mobileui::SetMapFocus(MobileFocus.X, MobileFocus.Y);
+  }
+#endif
 
   #ifdef WIZARD
     DBG1(vDbgDrawOverlayFunctions.size());
@@ -4171,7 +4186,24 @@ void game::BusyAnimation()
 
 void game::BusyAnimation(bitmap* Buffer, truth ForceDraw)
 {
+#ifdef ANDROID
+  // World and dungeon generation run synchronously on SDL's native thread.
+  // Keep Android window/lifecycle events moving while that work is in
+  // progress; otherwise SDL_RenderPresent can wait indefinitely for a stale
+  // surface after an inset, focus, or orientation event on some devices.
+  static Uint32 LastEventPump = 0;
+  const Uint32 Now = SDL_GetTicks();
+  if(Now - LastEventPump >= 16)
+  {
+    SDL_Event Event;
+    globalwindowhandler::PollEvents(&Event);
+    LastEventPump = Now;
+  }
+
+  static Uint32 LastTime = 0;
+#else
   static clock_t LastTime = 0;
+#endif
   static int Frame = 0;
   static blitdata B1 = { 0,
                          { 0, 0 },
@@ -4188,7 +4220,13 @@ void game::BusyAnimation(bitmap* Buffer, truth ForceDraw)
                          0,
                          0 };
 
+#ifdef ANDROID
+  // Ten frames per second is ample feedback on a phone and leaves most CPU
+  // time for the unoptimised debug world generator.
+  if(ForceDraw || Now - LastTime >= 100)
+#else
   if(ForceDraw || clock() - LastTime > CLOCKS_PER_SEC / 25)
+#endif
   {
     B2.Bitmap = Buffer;
     B2.Dest.X = (RES.X >> 1) - 100 + EnterTextDisplacement.X;
@@ -4208,7 +4246,11 @@ void game::BusyAnimation(bitmap* Buffer, truth ForceDraw)
     if(++Frame == 32)
       Frame = 0;
 
+#ifdef ANDROID
+    LastTime = Now;
+#else
     LastTime = clock();
+#endif
   }
 }
 
@@ -4263,6 +4305,9 @@ bool game::IsQuestionMode()
 int game::AskForKeyPress(cfestring& Topic)
 {
   bQuestionMode=true;
+#ifdef ANDROID
+  mobileui::SetPrompt(Topic.CapitalizeCopy().CStr());
+#endif
 
   DrawEverythingNoBlit();
   FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", Topic.CapitalizeCopy().CStr());
@@ -4276,6 +4321,9 @@ int game::AskForKeyPress(cfestring& Topic)
 
   igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
 
+#ifdef ANDROID
+  mobileui::ClearPrompt();
+#endif
   bQuestionMode=false;
   return Key;
 }
@@ -4318,6 +4366,9 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
   bool bMapNotesMode = bDrawMapOverlayEnabled && bShowMapNotes;
 
   bPositionQuestionMode=true;
+#ifdef ANDROID
+  mobileui::SetPrompt(Topic.CStr());
+#endif
   v2 v2PreviousClick=v2(0,0);
   for(;;)
   {
@@ -4469,6 +4520,9 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
     Key = GET_KEY();
   }
   bPositionQuestionMode=false;
+#ifdef ANDROID
+  mobileui::ClearPrompt();
+#endif
 
   // for text
   igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
@@ -4613,6 +4667,27 @@ int game::KeyQuestion(cfestring& Message, int DefaultAnswer, int KeyNumber, ...)
     Key[c] = va_arg(Arguments, int);
 
   va_end(Arguments);
+#ifdef ANDROID
+  int MobileKeys[9];
+  int MobileKeyCount = 0;
+  for(int c = 0; c < KeyNumber && MobileKeyCount < 9; ++c)
+  {
+    int Candidate = Key[c];
+    if(Candidate == KEY_CONTROLLER_B)
+      Candidate = KEY_ESC;
+    else if(Candidate != KEY_ESC && (Candidate < 0x20 || Candidate >= 0x7F))
+      continue;
+
+    bool Duplicate = false;
+    for(int Existing = 0; Existing < MobileKeyCount; ++Existing)
+      if(MobileKeys[Existing] == Candidate)
+        Duplicate = true;
+    if(!Duplicate)
+      MobileKeys[MobileKeyCount++] = Candidate;
+  }
+  mobileui::SetPrompt(Message.CStr());
+  mobileui::SetQuestionChoices(MobileKeys, MobileKeyCount);
+#endif
   DrawEverythingNoBlit();
   FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", Message.CStr());
   graphics::BlitDBToScreen();
@@ -4633,6 +4708,10 @@ int game::KeyQuestion(cfestring& Message, int DefaultAnswer, int KeyNumber, ...)
       Return = DefaultAnswer;
   }
 
+#ifdef ANDROID
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+#endif
   delete [] Key;
   igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
 
@@ -5410,6 +5489,12 @@ inputfile& operator>>(inputfile& SaveFile, dangerid& Value)
 
 festring game::GetDataDir()
 {
+#ifdef ANDROID
+  const char* DataDir = getenv("IVAN_DATA_DIR");
+  if(DataDir && *DataDir)
+    return DataDir;
+  return "./";
+#else
 #ifdef PORTABLE_BUILD
   return "./";
 #else
@@ -5425,6 +5510,7 @@ festring game::GetDataDir()
   return GetUserDataDir();
 #endif
 #endif
+#endif /* ANDROID */
 }
 
 festring game::GetSaveDir()

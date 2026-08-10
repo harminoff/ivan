@@ -17,6 +17,7 @@ log/
 
 # Package files
 *.jar
+!android/gradle/wrapper/gradle-wrapper.jar
 /*egg-info/
 
 # Maven
@@ -55,3 +56,15 @@ Thumbs.db
 ~$*.doc*
 ~$*.xls*
 ~$*.ppt*
+
+# Local Codex, build, packaging, and research artifacts
+/.codex-remote-attachments/
+/build-*/
+/playable/
+/companion/
+/third_party/
+/PLAN.md
+/RESEARCH.md
+/Play IVAN with Companion.cmd
+/ivan-loading.png
+/ivan-step.png

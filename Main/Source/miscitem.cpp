@@ -1125,7 +1125,7 @@ truth key::Apply(character* User)
           Key = game::AskForKeyPress(CONST_S("What do you wish to lock or unlock? "
                                              "[press a direction key, space or i]"));
 
-        if(Key == 'i')
+        if(Key == 'i' || Key == KEY_CONTROLLER_X)
         {
           item* Item = User->SelectFromPossessions(CONST_S("What do you want to lock or unlock?"),
                                                    &item::HasLock);
@@ -1160,7 +1160,7 @@ truth key::Apply(character* User)
         Key = game::AskForKeyPress(CONST_S("What do you wish to lock or unlock? "
                                            "[press a direction key or space]"));
 
-      if(Key == 'i' && OpenableItems)
+      if((Key == 'i' || Key == KEY_CONTROLLER_X) && OpenableItems)
       {
         item* Item = User->GetStack()->DrawContents(User, CONST_S("What do you want "
                                                                   "to lock or unlock?"),

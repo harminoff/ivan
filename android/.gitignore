@@ -1,0 +1,7 @@
+.gradle/
+.cxx/
+local.properties
+app/.cxx/
+app/build/
+build/
+.render-tools/

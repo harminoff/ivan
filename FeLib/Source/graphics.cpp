@@ -22,10 +22,15 @@
 
 #include <iostream>
 #include <sstream>
+#include <algorithm>
+#include <cstdlib>
 
 #include "graphics.h"
 #include "bitmap.h"
 #include "whandler.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 #include "error.h"
 #include "rawbit.h"
 #include "felist.h"
@@ -205,11 +210,25 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
   SDL_WM_SetCaption(Title, 0);
 #else
   Flags |= SDL_WINDOW_ALLOW_HIGHDPI|SDL_WINDOW_HIDDEN;
+#ifdef ANDROID
+  Flags |= SDL_WINDOW_RESIZABLE;
+#endif
 
+  int WindowWidth = NewRes.X;
+  int WindowHeight = NewRes.Y;
+#ifdef ANDROID
+  const char* AndroidWidth = getenv("IVAN_SCREEN_WIDTH");
+  const char* AndroidHeight = getenv("IVAN_SCREEN_HEIGHT");
+  if(AndroidWidth && AndroidHeight)
+  {
+    WindowWidth = std::max(NewRes.X, atoi(AndroidWidth));
+    WindowHeight = std::max(NewRes.Y, atoi(AndroidHeight));
+  }
+#endif
   Window = SDL_CreateWindow(Title,
                             SDL_WINDOWPOS_UNDEFINED,
                             SDL_WINDOWPOS_UNDEFINED,
-                            NewRes.X, NewRes.Y, Flags);
+                            WindowWidth, WindowHeight, Flags);
 
   if(!Window)
     ABORT("Couldn't set video mode.");
@@ -227,7 +246,13 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
   if(!Renderer)
     ABORT("Couldn't set renderer mode.");
 
+#ifndef ANDROID
   SDL_RenderSetLogicalSize(Renderer, NewRes.X, NewRes.Y);
+#else
+  // Mobile owns its output-space viewport so it can reserve different control
+  // regions in portrait and landscape without resizing IVAN's internal canvas.
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+#endif
 
   switch(ScalingQuality){
   case 1: SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear"); break;
@@ -698,7 +723,13 @@ void graphics::BlitDBToScreen()
 
   if (SDL_LockTexture(Texture, NULL, &DestPtr, &Pitch) == 0)
   {
-    memcpy(DestPtr, SrcPtr, Res.Y * Pitch);
+    const int RowBytes = Res.X * sizeof(packcol16);
+    if(Pitch == RowBytes)
+      memcpy(DestPtr, SrcPtr, Res.Y * RowBytes);
+    else
+      for(int Y = 0; Y < Res.Y; ++Y)
+        memcpy(static_cast<uchar*>(DestPtr) + Y * Pitch,
+               SrcPtr + Y * Res.X, RowBytes);
     SDL_UnlockTexture(Texture);
   }
   else
@@ -707,12 +738,32 @@ void graphics::BlitDBToScreen()
     SDL_UpdateTexture(Texture, NULL, SrcPtr, Res.X * sizeof(packcol16));
   }
 
-  SDL_RenderClear(Renderer);
-  SDL_RenderCopy(Renderer, Texture, NULL, NULL);
-  SDL_RenderPresent(Renderer);
+    SDL_SetRenderDrawColor(Renderer, 0, 0, 0, 255);
+    SDL_RenderClear(Renderer);
+#ifdef ANDROID
+    mobileui::UpdateLayout(Renderer, Res.X, Res.Y);
+    mobileui::DrawBackground(Renderer);
+    mobileui::DrawGame(Renderer, Texture);
+    mobileui::Draw(Renderer);
+#else
+    SDL_RenderCopy(Renderer, Texture, NULL, NULL);
+#endif
+    SDL_RenderPresent(Renderer);
 #endif
 }
 
+#endif
+
+#if SDL_MAJOR_VERSION == 2
+void graphics::RecreateTexture()
+{
+  if(Texture)
+    SDL_DestroyTexture(Texture);
+  Texture = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_RGB565,
+                              SDL_TEXTUREACCESS_STREAMING, Res.X, Res.Y);
+  if(!Texture)
+    ABORT("Couldn't recreate renderer texture: %s", SDL_GetError());
+}
 #endif
 
 void graphics::SetScale(int NewScale)
@@ -721,6 +772,7 @@ void graphics::SetScale(int NewScale)
 #if SDL_MAJOR_VERSION == 1
 #warning Graphics scaling not implemented for SDL v1
 #else
+#ifndef ANDROID
   // Scale the window, maintaining its center position.
   v2 WindowPos, OldSize, NewSize = Res * NewScale;
   SDL_GetWindowPosition(Window, &WindowPos.X, &WindowPos.Y);
@@ -729,6 +781,7 @@ void graphics::SetScale(int NewScale)
   SDL_SetWindowPosition(Window, WindowPos.X, WindowPos.Y);
   SDL_SetWindowSize(Window, Res.X * NewScale, Res.Y * NewScale);
   SDL_RenderSetScale(Renderer, NewScale, NewScale);
+#endif
 #endif
 }
 

@@ -24,6 +24,9 @@
 #include "whandler.h"
 #include "bugworkaround.h"
 #include "sfx.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 stringoption ivanconfig::DefaultName(     "DefaultName",
                                           "Player's default name",
@@ -139,6 +142,15 @@ truthoption ivanconfig::AllowMouseOnFelist("AllowMouseOnFelist",
                                           &configsystem::NormalTruthDisplayer,
                                           &configsystem::NormalTruthChangeInterface,
                                           &AllowMouseOnFelistChanger);
+#ifdef ANDROID
+cycleoption ivanconfig::MobileControllerSide("MobileControllerSide",
+                                          "Mobile controller side",
+                                          "Choose which side of a landscape screen holds the on-screen controller. Portrait controls remain centered.",
+                                          0, 2,
+                                          &MobileControllerSideDisplayer,
+                                          &configsystem::NormalCycleChangeInterface,
+                                          &MobileControllerSideChanger);
+#endif
 truthoption ivanconfig::ShowMapAtDetectMaterial("ShowMapAtDetectMaterial",
                                           "Show map while detecting material",
                                           "",
@@ -1132,6 +1144,21 @@ void ivanconfig::AllowMouseOnFelistChanger(truthoption* O, truth What)
   graphics::SetAllowMouseInFullScreen(What);
 }
 
+#ifdef ANDROID
+void ivanconfig::MobileControllerSideDisplayer(const cycleoption* O,
+                                               festring& Entry)
+{
+  Entry << (O->Value == 1 ? "left" : "right");
+}
+
+void ivanconfig::MobileControllerSideChanger(cycleoption* O, long What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetControllerOnLeft(What == 1);
+}
+#endif
+
 void ivanconfig::UseExtraMenuGraphicsChanger(truthoption* O, truth What)
 {
   if(O!=NULL)O->Value = What;
@@ -1223,6 +1250,9 @@ void ivanconfig::Initialize()
   festring fsCategory;
 
   fsCategory="General Setup";
+#ifdef ANDROID
+  configsystem::AddOption(fsCategory,&MobileControllerSide);
+#endif
   configsystem::AddOption(fsCategory,&DefaultName);
   configsystem::AddOption(fsCategory,&FantasyNamePattern);
   configsystem::AddOption(fsCategory,&DefaultPetName);
@@ -1352,6 +1382,9 @@ void ivanconfig::Initialize()
   SelectedBkgColorChanger(NULL, SelectedBkgColor.Value);
   AutoPickUpMatchingChanger(NULL, AutoPickUpMatching.Value);
   AllowMouseOnFelistChanger(NULL, AllowMouseOnFelist.Value);
+#ifdef ANDROID
+  MobileControllerSideChanger(NULL, MobileControllerSide.Value);
+#endif
   UseExtraMenuGraphicsChanger(NULL, UseExtraMenuGraphics.Value);
 
 #ifndef NOSOUND

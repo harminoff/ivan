@@ -21,6 +21,9 @@
 #include "festring.h"
 #include "rawbit.h"
 #include "whandler.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 #include "dbgmsgproj.h"
 
@@ -368,6 +371,13 @@ int globalwindowhandler::GetKey(truth EmptyBuffer)
     KeyBuffer.clear();
     MouseBuffer = {};
   }
+
+#ifdef ANDROID
+  // Mobile controls live outside IVAN's fixed 800x600 framebuffer.  Refresh
+  // the complete presentation whenever a modal screen begins waiting for
+  // input so fades and text screens cannot leave the controls hidden.
+  graphics::BlitDBToScreen();
+#endif
 
   keyTimeoutRequestedAt=SDL_GetTicks();
   int iDelayMS=iDefaultDelayMS;
@@ -781,13 +791,40 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
     switch(Event->window.event)
     {
      case SDL_WINDOWEVENT_SHOWN:
+     case SDL_WINDOWEVENT_EXPOSED:
      case SDL_WINDOWEVENT_RESIZED:
+     case SDL_WINDOWEVENT_SIZE_CHANGED:
      case SDL_WINDOWEVENT_RESTORED:
       graphics::BlitDBToScreen();
       break;
     }
 #endif
     break;
+
+#if SDL_MAJOR_VERSION == 2
+   case SDL_RENDER_DEVICE_RESET:
+   case SDL_RENDER_TARGETS_RESET:
+    graphics::RecreateTexture();
+    graphics::BlitDBToScreen();
+    break;
+
+   case SDL_APP_DIDENTERFOREGROUND:
+    graphics::BlitDBToScreen();
+    break;
+
+   case SDL_USEREVENT:
+#ifdef ANDROID
+    if(Event->user.code == mobileui::REDRAW_EVENT_CODE)
+      graphics::BlitDBToScreen();
+    else if(Event->user.code == mobileui::DIRECTION_REPEAT_EVENT_CODE)
+    {
+      mobileui::touchresult Result = mobileui::HandleDirectionRepeat();
+      if(Result.Kind == mobileui::touchresult::TOUCH_KEY)
+        AddKeyToBuffer(0xE000 + Result.KeyCode);
+    }
+#endif
+    break;
+#endif
 
    case SDL_QUIT:
     if(!QuitMessageHandler || QuitMessageHandler())
@@ -828,6 +865,41 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
    }
 
 #if SDL_MAJOR_VERSION == 2 //BEFORE key up or down
+#ifdef ANDROID
+   case SDL_FINGERDOWN:
+   {
+     mobileui::touchresult Result = mobileui::HandleFingerDown(
+       Event->tfinger.x, Event->tfinger.y);
+     if(Result.Kind == mobileui::touchresult::TOUCH_KEY)
+       AddKeyToBuffer(0xE000 + Result.KeyCode);
+     break;
+   }
+
+   case SDL_FINGERUP: {
+     mobileui::touchresult Result = mobileui::HandleFinger(Event->tfinger.x, Event->tfinger.y);
+     if(Result.Kind == mobileui::touchresult::TOUCH_KEY)
+       AddKeyToBuffer(0xE000 + Result.KeyCode);
+     else if(Result.Kind == mobileui::touchresult::TOUCH_REDRAW)
+     {
+       // Defer drawing until the touch callback has unwound. Some Android
+       // renderers temporarily expose touch-coordinate transforms while the
+       // finger event itself is being dispatched.
+       SDL_Event RedrawEvent;
+       SDL_zero(RedrawEvent);
+       RedrawEvent.type = SDL_USEREVENT;
+       RedrawEvent.user.code = mobileui::REDRAW_EVENT_CODE;
+       SDL_PushEvent(&RedrawEvent);
+     }
+     else if(Result.Kind == mobileui::touchresult::TOUCH_MOUSE)
+     {
+       mouseclick Click;
+       Click.btn = SDL_BUTTON_LEFT;
+       Click.pos = v2(Result.MouseX, Result.MouseY);
+       BufferMouseEvent(Click);
+     }
+     break;
+   }
+#endif
    case SDL_TEXTINPUT: DBG2(Event->key.keysym.sym,Event->text.text[0]);
      AddKeyToBuffer(Event->text.text[0]);
      break;
@@ -881,6 +953,11 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
      break;
 
    case SDL_KEYDOWN: DBGLN;
+#ifdef ANDROID
+     if(Event->key.keysym.sym == SDLK_AC_BACK)
+       AddKeyToBuffer(0xE000 + KEY_CONTROLLER_B);
+     else
+#endif
      ProcessKeyDownMessage(Event);
      break;
   }

@@ -73,6 +73,9 @@ class ivanconfig
   static truth GetPlaySounds() { return PlaySounds.Value; }
   static truth IsShowTurn() { return ShowTurn.Value; }
   static truth IsAllowMouseOnFelist(){ return AllowMouseOnFelist.Value; }
+#ifdef ANDROID
+  static truth IsMobileControllerOnLeft() { return MobileControllerSide.Value == 1; }
+#endif
   static truth IsOutlinedGfx() { return OutlinedGfx.Value; }
   static long GetVolume() { return Volume.Value; }
   static long GetSfxVolume() { return SfxVolume.Value; }
@@ -155,6 +158,10 @@ class ivanconfig
   static void SfxVolumeChanger(numberoption*, long);
   static void AltSilhouetteDisplayer(const cycleoption* O, festring& Entry);
   static void AllowMouseOnFelistChanger(truthoption*, truth);
+#ifdef ANDROID
+  static void MobileControllerSideDisplayer(const cycleoption*, festring&);
+  static void MobileControllerSideChanger(cycleoption*, long);
+#endif
   static void UseExtraMenuGraphicsChanger(truthoption*, truth);
   static void WorldSizeConfigDisplayer(const cycleoption* O, festring& Entry);
   static void LandTypeConfigDisplayer(const cycleoption* O, festring& Entry);
@@ -278,6 +285,9 @@ class ivanconfig
   static truthoption ShowTurn;
 
   static truthoption AllowMouseOnFelist;
+#ifdef ANDROID
+  static cycleoption MobileControllerSide;
+#endif
   static truthoption UseExtraMenuGraphics;
 };
 

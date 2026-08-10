@@ -78,13 +78,17 @@ festring getstr(FILE *f, truth word)
   festring s;
   while(1)
   {
-    char c = fgetc(f);
+    // fgetc() returns int so it can represent every byte plus EOF.  Keeping
+    // the result in char loses EOF on platforms where char is unsigned (such
+    // as Android ARM64) and turns the end of SoundEffects.cfg into an infinite
+    // stream of 0xff bytes.
+    int c = fgetc(f);
     if(c == EOF) return s;
     if(c == 13) continue;
     if(c == 10 && s != "") return eol = true, s;
     if(c == 10) continue;
     if(c == ' ' && word && s != "") return s;
-    s = s + c;
+    s = s + static_cast<char>(c);
   }
 }
 
@@ -100,7 +104,17 @@ void soundeffects::initSound()
     debf = fopen(fsSndDbgFile.CStr(), "wt"); //"a");
     if(debf)fprintf(debf, "This file can be used to diagnose problems with sound.\n");
 
-    if(Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 8000) != 0)
+    int Frequency = 0;
+    int Channels = 0;
+    Uint16 Format = 0;
+
+    // Music and sound effects share SDL_mixer's single audio device.  The
+    // Android music backend opens it during startup; reopening it here with a
+    // different chunk size can synchronously tear down OpenSL ES while music
+    // is playing, which hangs on some physical devices.  Reuse an existing
+    // mixer device and only open one when SFX is the first audio user.
+    if(Mix_QuerySpec(&Frequency, &Format, &Channels) == 0
+       && Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 8000) != 0)
     {
       std::vector<festring> vfsCritMsgs;
       vfsCritMsgs.push_back(festring()<<Mix_GetError());

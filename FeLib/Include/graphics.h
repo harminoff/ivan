@@ -44,6 +44,9 @@ class graphics
   static void SetScale(int);
   static void SwitchMode();
   static void SetMode(cchar*, cchar*, v2, int, int, truth);
+#if SDL_MAJOR_VERSION == 2
+  static void RecreateTexture();
+#endif
 #endif
 
 #ifdef __DJGPP__

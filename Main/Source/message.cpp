@@ -30,6 +30,10 @@
 #include "sfx.h"
 #include "dbgmsgproj.h"
 
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
+
 felist msgsystem::MessageHistory(CONST_S("Message history"), WHITE, 128);
 festring msgsystem::LastMessage;
 festring msgsystem::BigMessage;
@@ -141,6 +145,9 @@ void msgsystem::AddMessage(cchar* Format, ...)
   MessageHistory.SetSelected(MessageHistory.GetLastEntryIndex());
   LastMessageLines = Chapter.size();
   MessagesChanged = true;
+#ifdef ANDROID
+  mobileui::SetLog(Buffer.CStr());
+#endif
 }
 
 void msgsystem::Draw()

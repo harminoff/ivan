@@ -44,6 +44,9 @@
 #include "wsquare.h"
 #include "wterras.h"
 #include "specialkeys.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 #include "dbgmsgproj.h"
 
@@ -369,7 +372,7 @@ truth commandsystem::Open(character* Char)
           Key = game::AskForKeyPress(CONST_S("What do you wish to open? "
                                              "[press a direction key, space or 'i']"));
 
-        if(Key == 'i')
+        if(Key == 'i' || Key == KEY_CONTROLLER_X)
         {
           item* Item = Char->GetStack()->DrawContents(Char,
                                                       CONST_S("What do you want to open?"),
@@ -406,7 +409,7 @@ truth commandsystem::Open(character* Char)
         Key = game::AskForKeyPress(CONST_S("What do you wish to open? "
                                            "[press a direction key or space]"));
 
-      if(Key == 'i' && OpenableItems)
+      if((Key == 'i' || Key == KEY_CONTROLLER_X) && OpenableItems)
       {
         item* Item = Char->GetStack()->DrawContents(Char,
                                                     CONST_S("What do you want to open?"),
@@ -1304,7 +1307,7 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
       break;
     }
 
-    if(Key == 'i' || Key == KEY_CONTROLLER_Y)
+    if(Key == 'i' || Key == KEY_CONTROLLER_X || Key == KEY_CONTROLLER_Y)
     {
       if(!Char->GetStack()->GetItems())
       {
@@ -1818,6 +1821,13 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
   if( h && (h->GetLeftArm() || h->GetRightArm()) ){
     if(game::ToggleDrawMapOverlay()){
+#ifdef ANDROID
+      struct mobilemapscope
+      {
+        mobilemapscope() { mobileui::SetMapScreen(true); }
+        ~mobilemapscope() { mobileui::SetMapScreen(false); }
+      } MobileMapScope;
+#endif
       lsquare* lsqrH=NULL;
       while(true){
         v2 noteAddPos = Char->GetPos();
@@ -1827,8 +1837,13 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
         if(bChoseLocationMode)
           key='l';
         else
+#ifdef ANDROID
+          key = game::KeyQuestion(CONST_S("Choose a map action."),
+            KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', '?', KEY_ESC);
+#else
           key = game::KeyQuestion(CONST_S("Cartography notes action [press F1 for help]"),
-            KEY_ESC, 6, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL);
+            KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL, KEY_ESC);
+#endif
 
         if(specialkeys::IsRequestedEvent(specialkeys::FocusedElementHelp)){
           specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp,fsHelp);
@@ -1836,6 +1851,9 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
         }
 
         switch(key){
+          case '?':
+            game::TextScreen(fsHelp);
+            continue;
           case 'd':
             lsqrH = game::GetHighlightedMapNoteLSquare();
             if(lsqrH!=NULL){
@@ -2596,6 +2614,216 @@ truth commandsystem::IssueCommand(character* Char)
 
   return game::CommandQuestion();
 }
+
+#ifdef ANDROID
+void commandsystem::UpdateMobileActions(character* Char)
+{
+  if(!Char)
+  {
+    mobileui::SetActions(0, 0, 0, 0);
+    return;
+  }
+
+  const int MaximumActions = 48;
+  const char* Labels[MaximumActions];
+  int Keys[MaximumActions];
+  int Groups[MaximumActions];
+  int Count = 0;
+
+  auto Add = [&](int CommandIndex, const char* Label, int Group,
+                 truth Available)
+  {
+    command* CommandToAdd = GetCommand(CommandIndex);
+    if(!Available || !CommandToAdd || Count >= MaximumActions)
+      return;
+    if(game::IsInWilderness() && !CommandToAdd->IsUsableInWilderness())
+      return;
+    if(CommandToAdd->IsWizardModeFunction() && !game::WizardModeIsActive())
+      return;
+    Labels[Count] = Label;
+    Keys[Count] = KEY_MOBILE_COMMAND_BASE + CommandIndex;
+    Groups[Count] = Group;
+    ++Count;
+  };
+
+  const truth Wilderness = game::IsInWilderness();
+  lsquare* Square = Wilderness ? 0 : Char->GetLSquareUnder();
+  stack* Inventory = Char->GetStack();
+  humanoid* Human = Char->AsHumanoid();
+  const truth HumanHasUsableArm = !Human
+    || (Human->GetLeftArm() && Human->GetLeftArm()->IsUsable())
+    || (Human->GetRightArm() && Human->GetRightArm()->IsUsable());
+
+  auto InventoryOrGroundHas = [&](sorter Sorter)
+  {
+    return Inventory->SortedItems(Char, Sorter)
+        || (Square && Square->GetStack()->SortedItems(Char, Sorter));
+  };
+
+  truth CanPickUp = false;
+  if(!Wilderness && Char->GetStackUnder()->GetVisibleItems(Char))
+    CanPickUp = true;
+  if(!Wilderness)
+    for(int Index = 0; Index < 4 && !CanPickUp; ++Index)
+    {
+      stack* Nearby = Char->GetLSquareUnder()->GetStackOfAdjacentSquare(Index);
+      CanPickUp = Nearby && Nearby->GetVisibleItems(Char);
+    }
+
+  truth CanOpenSomething = Char->CanOpen()
+                        && Inventory->SortedItems(Char, &item::IsOpenable);
+  truth CanCloseSomething = false;
+  truth CanTalkToSomeone = false;
+  truth DipDestinationNear = false;
+  if(Square)
+    for(int Direction = 0; Direction < Char->GetExtendedNeighbourSquares();
+        ++Direction)
+    {
+      lsquare* Nearby = Char->GetNeighbourLSquare(Direction);
+      if(!Nearby)
+        continue;
+      if(Nearby->GetStack()->SortedItems(Char, &item::IsOpenable))
+        CanOpenSomething = true;
+      if(Nearby->GetOLTerrain())
+      {
+        CanOpenSomething |= Nearby->GetOLTerrain()->CanBeOpened();
+        CanCloseSomething |= Nearby->GetOLTerrain()->IsOpen();
+      }
+      DipDestinationNear |= Nearby->IsDipDestination();
+    }
+  if(Square && Char->CanTalk())
+    for(int Direction = 0; Direction < 8 && !CanTalkToSomeone; ++Direction)
+    {
+      lsquare* Nearby = Char->GetNaturalNeighbourLSquare(Direction);
+      CanTalkToSomeone = Nearby && Nearby->GetCharacter();
+    }
+
+  oterrain* TerrainUnder = Char->GetSquareUnder()
+                         ? Char->GetSquareUnder()->GetOTerrain() : 0;
+  const truth CanOffer = Square && Square->GetOLTerrain()
+                      && Square->GetOLTerrain()->AcceptsOffers()
+                      && Inventory->GetItems()
+                      && HumanHasUsableArm;
+  const truth CanSit = Square
+                    && ((Square->GetOLTerrain()
+                         && Square->GetOLTerrain()->GetSitMessage().GetSize())
+                        || (Square->GetGLTerrain()
+                            && Square->GetGLTerrain()->GetSitMessage().GetSize()));
+
+  Add(5, "PICK UP", mobileui::ACTION_CONTEXT, CanPickUp);
+  Add(18, "OPEN", mobileui::ACTION_CONTEXT, CanOpenSomething);
+  Add(19, "CLOSE", mobileui::ACTION_CONTEXT,
+      Char->CanOpen() && CanCloseSomething);
+  olterrain* LocalTerrainUnder = dynamic_cast<olterrain*>(TerrainUnder);
+  Add(3, "GO DOWN", mobileui::ACTION_CONTEXT,
+      (LocalTerrainUnder && LocalTerrainUnder->IsDownLink())
+      || (Wilderness && dynamic_cast<owterrain*>(TerrainUnder)));
+  Add(4, "GO UP", mobileui::ACTION_CONTEXT,
+      LocalTerrainUnder && LocalTerrainUnder->IsUpLink());
+  Add(24, "TALK", mobileui::ACTION_CONTEXT, CanTalkToSomeone);
+  Add(28, "OFFER", mobileui::ACTION_CONTEXT, CanOffer);
+  Add(30, "SIT", mobileui::ACTION_CONTEXT, CanSit);
+  Add(45, "KICK", mobileui::ACTION_CONTEXT, Char->CanKick());
+
+  const truth HasItems = Inventory->GetItems();
+  const truth CanConsume = Char->UsesNutrition();
+  const truth CanDrink = CanConsume
+    && (InventoryOrGroundHas(&item::IsDrinkable)
+        || (Square && Square->GetOLTerrain()
+            && Square->GetOLTerrain()->HasDrinkEffect()));
+  const truth CanEat = CanConsume
+    && (InventoryOrGroundHas(&item::IsEatable)
+        || (Square && Square->GetOLTerrain()
+            && Square->GetOLTerrain()->HasEatEffect()));
+  const truth HasDipItem = Char->PossessesItem(&item::IsDippable);
+  const truth HasDipDestination = Char->PossessesItem(&item::IsDipDestination)
+                               || DipDestinationNear;
+  const truth CanThrow = Char->CanThrow()
+                      && HumanHasUsableArm && HasItems;
+  const truth CanUseEquipment = Char->CanUseEquipment();
+  truth HasValidSwap = false;
+  for(size_t Index = 0; Index < vSWCfg.size() && !HasValidSwap; ++Index)
+    HasValidSwap = vSWCfg[Index].IsValid();
+
+  Add(9, "INVENTORY", mobileui::ACTION_ITEMS, HasItems);
+  Add(8, "EQUIPMENT", mobileui::ACTION_ITEMS, CanUseEquipment);
+  Add(10, "APPLY", mobileui::ACTION_ITEMS,
+      Char->CanApply() && Char->PossessesItem(&item::IsAppliable));
+  item* LastApplied = itLastApplyID ? game::SearchItem(itLastApplyID) : 0;
+  Add(11, "APPLY AGAIN", mobileui::ACTION_ITEMS,
+      LastApplied && LastApplied->FindCarrier() == Char);
+  Add(12, "ZAP", mobileui::ACTION_ITEMS,
+      Char->CanZap() && Char->GetAttribute(INTELLIGENCE) >= 5
+      && Char->PossessesItem(&item::IsZappable));
+  Add(13, "READ", mobileui::ACTION_ITEMS,
+      (Char->CanRead() || game::GetSeeWholeMapCheatMode())
+      && Inventory->SortedItems(Char, &item::IsReadable)
+      && (!Square || !Square->IsDark() || game::GetSeeWholeMapCheatMode()));
+  Add(14, "EAT", mobileui::ACTION_ITEMS, CanEat);
+  Add(15, "DRINK", mobileui::ACTION_ITEMS, CanDrink);
+  Add(16, "TASTE", mobileui::ACTION_ITEMS, CanDrink);
+  Add(17, "DIP", mobileui::ACTION_ITEMS,
+      HasDipItem && HasDipDestination);
+  Add(7, "THROW", mobileui::ACTION_ITEMS, CanThrow);
+  Add(6, "DROP", mobileui::ACTION_ITEMS, HasItems);
+  Add(41, "WIELD LEFT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(40, "WIELD RIGHT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(42, "SWAP", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasValidSwap);
+  Add(43, "SWAP SETUP", mobileui::ACTION_ITEMS,
+      Human && CanUseEquipment);
+  Add(23, "INSCRIBE", mobileui::ACTION_ITEMS,
+      Char->CanRead() && HumanHasUsableArm);
+
+  truth CanPray = false;
+  if(Square && Square->GetDivineMaster() != ATHEIST)
+  {
+    const int Master = Square->GetDivineMaster();
+    if(Master)
+      CanPray = game::GetGod(Master)->IsKnown();
+    else
+      for(int God = 1; God <= GODS && !CanPray; ++God)
+        CanPray = game::GetGod(God)->IsKnown();
+  }
+  const truth HasFollowers = Char->GetTeam()
+                          && Char->GetTeam()->GetMembers() > 1;
+  Add(1, "WAIT", mobileui::ACTION_CHARACTER, true);
+  Add(20, "SEARCH", mobileui::ACTION_CONTEXT, true);
+  Add(31, "REST", mobileui::ACTION_CHARACTER,
+      !Char->StateIsActivated(PANIC));
+  Add(29, "PRAY", mobileui::ACTION_CONTEXT, CanPray);
+  Add(25, "CRAFT", mobileui::ACTION_ITEMS,
+      Human && HumanHasUsableArm
+      && (HasItems || (Square && Square->GetStack()->GetItems())));
+  Add(26, "NAME", mobileui::ACTION_CHARACTER,
+      Char->CanTalk() && HasFollowers);
+  Add(27, "ORDER", mobileui::ACTION_CHARACTER,
+      Char->CanTalk() && HasFollowers);
+  Add(46, "VOMIT", mobileui::ACTION_CHARACTER,
+      Char->CanForceVomit());
+
+  Add(2, "FAST WALK", mobileui::ACTION_MOVE, Char->CanMove());
+  Add(44, "RUN", mobileui::ACTION_MOVE, Char->CanMove());
+
+  Add(21, "LOOK", mobileui::ACTION_SYSTEM, true);
+  Add(22, "MAP", mobileui::ACTION_SYSTEM,
+      Human && HumanHasUsableArm);
+  Add(34, "HISTORY", mobileui::ACTION_SYSTEM, true);
+  Add(35, "LOG DOWN", mobileui::ACTION_SYSTEM, true);
+  Add(36, "LOG UP", mobileui::ACTION_SYSTEM, true);
+  Add(37, "OPTIONS", mobileui::ACTION_SYSTEM, true);
+  Add(38, "HELP", mobileui::ACTION_SYSTEM, true);
+  Add(39, "SKILLS", mobileui::ACTION_CHARACTER, true);
+  Add(32, "SAVE", mobileui::ACTION_SYSTEM, true);
+  Add(33, "QUIT", mobileui::ACTION_SYSTEM, true);
+  Add(47, "SEED", mobileui::ACTION_SYSTEM, true);
+  Add(48, "CONSOLE", mobileui::ACTION_SYSTEM, true);
+
+  mobileui::SetActions(Labels, Keys, Groups, Count);
+}
+#endif
 
 void commandsystem::PlayerDiedWeaponSkills()
 {

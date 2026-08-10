@@ -53,6 +53,9 @@ class commandsystem
   static truth ShowKeyLayout(character*);
   static truth NOP(character*);
   static truth SpawnRoute(character* Char, v2 Pos);
+#ifdef ANDROID
+  static void UpdateMobileActions(character*);
+#endif
  private:
   static truth Apply(character*);
   static truth ApplyWork(character* Char,item* itOverride=NULL);

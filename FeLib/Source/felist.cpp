@@ -25,6 +25,9 @@
 #include "specialkeys.h"
 #include "festring.h"
 #include "dbgmsgproj.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 const felist* FelistCurrentlyDrawn = 0;
 
@@ -326,6 +329,13 @@ uint felist::Draw()
       }
   }
 
+#ifdef ANDROID
+  // Desktop lists can place up to 26 choices on one page.  Ten comfortably
+  // sized rows are a better phone target and keep direct-touch selection
+  // reliable in both orientations.
+  PageLength = std::min(PageLength, uint(10));
+#endif
+
   for(;;){
     bool bJustExitTheList=false;
     uint Return = DrawFiltered(bJustExitTheList);
@@ -453,6 +463,51 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
   {
     if(FlagsChk != Flags)ABORT("flags changed during felist draw %s %s",std::bitset<16>(FlagsChk).to_string().c_str(), std::bitset<16>(Flags).to_string().c_str());
 
+#ifdef ANDROID
+    std::vector<const char*> MobileOptions;
+    int MobileSelected = -1;
+    uint SelectableIndex = 0;
+    for(uint EntryIndex = 0; EntryIndex < Entry.size(); ++EntryIndex)
+      if(Entry[EntryIndex]->Selectable)
+      {
+        if(SelectableIndex >= PageBegin
+           && SelectableIndex < PageBegin + PageLength)
+        {
+          if(SelectableIndex == Selected)
+            MobileSelected = int(MobileOptions.size());
+          MobileOptions.push_back(Entry[EntryIndex]->String.CStr());
+        }
+        ++SelectableIndex;
+      }
+
+    // Help, history and other read-only lists intentionally have no
+    // selectable entries.  They still need their visible text on Android.
+    if(!SelectableIndex)
+      for(uint EntryIndex = PageBegin;
+          EntryIndex < Entry.size()
+          && EntryIndex < PageBegin + PageLength; ++EntryIndex)
+        if(!Entry[EntryIndex]->String.IsEmpty())
+          MobileOptions.push_back(Entry[EntryIndex]->String.CStr());
+
+    festring MobileSubtitle;
+    for(uint DescriptionIndex = 1; DescriptionIndex < Description.size();
+        ++DescriptionIndex)
+    {
+      if(!MobileSubtitle.IsEmpty() && !Description[DescriptionIndex]->String.IsEmpty())
+        MobileSubtitle << "  ";
+      MobileSubtitle << Description[DescriptionIndex]->String;
+    }
+    const uint MobileTotal = SelectableIndex ? SelectableIndex : Entry.size();
+    const int MobilePages = std::max(1, int((MobileTotal + PageLength - 1)
+                                            / std::max(uint(1), PageLength)));
+    mobileui::SetMenu(Description.empty() ? "MENU"
+                                           : Description[0]->String.CStr(),
+                      MobileSubtitle.CStr(),
+                      MobileOptions.empty() ? 0 : &MobileOptions[0],
+                      int(MobileOptions.size()), MobileSelected,
+                      int(PageBegin / std::max(uint(1), PageLength)) + 1,
+                      MobilePages);
+#endif
     graphics::DrawAtDoubleBufferBeforeFelistPage(); // here prevents full dungeon blink
     truth LastEntryVisible = DrawPage(Buffer,&v2FinalPageSize,&vEntryRect);DBGLN;
 
@@ -591,6 +646,20 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
       break;
     }
     DBGLN;
+
+#ifdef ANDROID
+    if(Pressed >= KEY_MOBILE_MENU_SELECT_BASE
+       && Pressed <= KEY_MOBILE_MENU_SELECT_MAX)
+    {
+      const uint Target = PageBegin + Pressed - KEY_MOBILE_MENU_SELECT_BASE;
+      if(Target < Selectables)
+      {
+        Selected = Target;
+        Return = Selected;
+        break;
+      }
+    }
+#endif
 
     if(Pressed == KEY_ESC || Pressed == KEY_CONTROLLER_B) // this here grants will be preferred over everything else below
     {
@@ -808,6 +877,9 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
   globalwindowhandler::DeInstallControlLoop(FelistDrawController);
 
   FelistCurrentlyDrawn=NULL;DBGLN;
+#ifdef ANDROID
+  mobileui::ClearMenu();
+#endif
 
   #ifdef FELIST_WAITKEYUP
   if(bWaitKeyUp && !globalwindowhandler::IsLastSDLkeyEventWasKeyUp())

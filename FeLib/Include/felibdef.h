@@ -212,6 +212,10 @@ inline int GetMinColor24(col24 Color)
 #define KEY_CONTROLLER_X         0x211
 #define KEY_CONTROLLER_Y         0x212
 #define KEY_MOUSE_EVENT          0x220
+#define KEY_MOBILE_COMMAND_BASE  0x300 /* command table index is added */
+#define KEY_MOBILE_COMMAND_MAX   0x33F
+#define KEY_MOBILE_MENU_SELECT_BASE 0x400 /* visible list row is added */
+#define KEY_MOBILE_MENU_SELECT_MAX  0x41F
 
 #define NO_FLAME 0xFFFF
 

@@ -33,6 +33,10 @@
 #include <bitset>
 #include <cmath>
 
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
+
 struct statedata
 {
   cchar* Description;
@@ -3654,6 +3658,21 @@ truth character::AutoPlayAICommand(int& rKey)
 
 void character::PerformPlayerCommand(int Key, bool& HasActed, bool& ValidKeyPressed)
 {
+#ifdef ANDROID
+  // Named mobile buttons refer to IVAN's command table instead of fixed
+  // characters, so alternate/custom key maps continue to work.
+  if(Key > KEY_MOBILE_COMMAND_BASE && Key <= KEY_MOBILE_COMMAND_MAX)
+  {
+    const int CommandIndex = Key - KEY_MOBILE_COMMAND_BASE;
+    if(commandsystem::GetCommand(CommandIndex))
+      Key = commandsystem::GetCommand(CommandIndex)->GetKey();
+  }
+
+  // The mobile X face button is the always-reachable inventory action while
+  // gameplay is active. Lists continue to interpret X as page navigation.
+  if(Key == KEY_CONTROLLER_X)
+    Key = 'i';
+#endif
   auto MoveByVector = [&] (v2 Dir) {
     if(Dir == v2(0, 0)){
       Key = '.';
@@ -3764,6 +3783,9 @@ void character::GetPlayerCommand()
   {
     graphics::SetAllowStretchedBlit(); //overall great/single location to re-enable stretched blit!
 
+#ifdef ANDROID
+    commandsystem::UpdateMobileActions(this);
+#endif
     game::DrawEverything();
 
     if(!StateIsActivated(FEARLESS) && game::GetDangerFound())
@@ -6375,6 +6397,23 @@ void character::DrawPanel(truth AnimationDraw) const
     if(SecondLine[0] != '\0')
       FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, SecondLine);
   }
+
+#ifdef ANDROID
+  char MobileLine1[128], MobileLine2[128], MobileLine3[128], MobileLine4[160];
+  snprintf(MobileLine1, sizeof(MobileLine1), "HP %d/%d  MANA %d  GOLD %ld",
+           GetHP(), GetMaxHP(), GetAttribute(MANA), GetMoney());
+  snprintf(MobileLine2, sizeof(MobileLine2), "ARM %d  LEG %d  DEX %d  AGI %d",
+           GetAttribute(ARM_STRENGTH), GetAttribute(LEG_STRENGTH),
+           GetAttribute(DEXTERITY), GetAttribute(AGILITY));
+  snprintf(MobileLine3, sizeof(MobileLine3), "END %d  PER %d  INT %d  WIS %d",
+           GetAttribute(ENDURANCE), GetAttribute(PERCEPTION),
+           GetAttribute(INTELLIGENCE), GetAttribute(WISDOM));
+  snprintf(MobileLine4, sizeof(MobileLine4),
+           "WILL %d  CHA %d  DAY %d  %d:%02d  TURN %ld",
+           GetAttribute(WILL_POWER), GetAttribute(CHARISMA), Time.Day,
+           Time.Hour, Time.Min, game::GetTurn());
+  mobileui::SetStats(MobileLine1, MobileLine2, MobileLine3, MobileLine4);
+#endif
 }
 
 void character::CalculateDodgeValue()

@@ -53,6 +53,9 @@
 #include "felist.h"
 #include "festring.h"
 #include "graphics.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 #include "rawbit.h"
 #include "save.h"
 #include "whandler.h"
@@ -77,6 +80,11 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
                           bitmapeditor BitmapEditor)
 {
   bInUse=true;
+#ifdef ANDROID
+  const bool MobileTextScreen = GKey && !BitmapEditor;
+  if(MobileTextScreen)
+    mobileui::SetScreenText(Text.CStr());
+#endif
 
   bitmap Buffer(RES, 0);
   Buffer.ActivateFastFlag();
@@ -128,6 +136,10 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
   }
 
   bInUse=false;
+#ifdef ANDROID
+  if(MobileTextScreen)
+    mobileui::ClearScreenText();
+#endif
 }
 
 /* Returns amount of chars cSF in string sSH */
@@ -183,9 +195,29 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
 
   festring sCopyOfMS;
   festring VeryUnGuruPrintf;
+#ifdef ANDROID
+  std::vector<festring> MobileMenuStrings;
+  std::vector<const char*> MobileMenuOptions;
+  sCopyOfMS = sMS;
+  while(sCopyOfMS.Find('\r') != festring::NPos)
+  {
+    const festring::sizetype RPos = sCopyOfMS.Find('\r');
+    festring Entry = sCopyOfMS;
+    Entry.Resize(RPos);
+    sCopyOfMS.Erase(0, RPos + 1);
+    MobileMenuStrings.push_back(Entry);
+  }
+  for(size_t Index = 0; Index < MobileMenuStrings.size(); ++Index)
+    MobileMenuOptions.push_back(MobileMenuStrings[Index].CStr());
+#endif
 
   while(!bReady)
   {
+#ifdef ANDROID
+    mobileui::SetMenu("IVAN", "MAIN MENU",
+                      MobileMenuOptions.empty() ? 0 : &MobileMenuOptions[0],
+                      int(MobileMenuOptions.size()), iSelected, 1, 1);
+#endif
     cbitmap* BackGround = NULL;
     if(ExtraMenuGraphics)
       BackGround = vBackGround.size()>iSelected?vBackGround[iSelected]:NULL;
@@ -353,14 +385,34 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
      }
 
      default:
+#ifdef ANDROID
+      if(k >= KEY_MOBILE_MENU_SELECT_BASE
+         && k <= KEY_MOBILE_MENU_SELECT_MAX)
+      {
+        const int MobileSelection = k - KEY_MOBILE_MENU_SELECT_BASE;
+        if(MobileSelection >= 0
+           && MobileSelection < int(MobileMenuOptions.size()))
+        {
+          iSelected = MobileSelection;
+          bReady = true;
+        }
+      }
+      else
+#endif
       if(k > 0x30 && k < 0x31 + CountChars('\r', sMS)){
         bMenuIsActive=false;
+#ifdef ANDROID
+        mobileui::ClearMenu();
+#endif
         return k - 0x31;
       }
     }
   }
 
   bMenuIsActive=false;
+#ifdef ANDROID
+  mobileui::ClearMenu();
+#endif
   return iSelected;
 }
 
@@ -400,6 +452,11 @@ int iosystem::StringQuestion(festring& Input,
                              stringkeyhandler StringKeyHandler)
 {
   bInUse=true;
+#ifdef ANDROID
+  int MobileInputKeys[3] = { KEY_BACK_SPACE, KEY_ENTER, KEY_ESC };
+  mobileui::SetPrompt(Topic.CStr(), Input.CStr());
+  mobileui::SetQuestionChoices(MobileInputKeys, AllowExit ? 3 : 2);
+#endif
   
   /**
    * History files are based on tokens to make them more shareable.
@@ -457,6 +514,9 @@ int iosystem::StringQuestion(festring& Input,
   bool bAbort = false;
   int iHistIndex = 0;
   if(vHist.size())iHistIndex=vHist.size()-1;
+#ifdef ANDROID
+  SDL_StartTextInput();
+#endif
   for(int LastKey = 0, CursorPos = Input.GetSize();; LastKey = 0)
   {
     B.Bitmap = DOUBLE_BUFFER;
@@ -465,6 +525,9 @@ int iosystem::StringQuestion(festring& Input,
                  Color, "%s", Input.CStr());
     FONT->Printf(DOUBLE_BUFFER, v2(Pos.X, Pos.Y + 11),
                  Color, "%*c", CursorPos + 1, '_');
+#ifdef ANDROID
+    mobileui::SetPrompt(Topic.CStr(), Input.CStr());
+#endif
 
     if(TooShort)
     {
@@ -494,6 +557,13 @@ int iosystem::StringQuestion(festring& Input,
       && LastKey != KEY_UP
     ){
       LastKey = GET_KEY(false);
+
+#ifdef ANDROID
+      if(LastKey == KEY_CONTROLLER_A)
+        LastKey = KEY_ENTER;
+      else if(LastKey == KEY_CONTROLLER_B)
+        LastKey = KEY_ESC;
+#endif
 
       if(StringKeyHandler != 0 && StringKeyHandler(LastKey, Input))
       {
@@ -603,6 +673,12 @@ int iosystem::StringQuestion(festring& Input,
       Input.Insert(static_cast<festring::sizetype>(CursorPos++),
                    static_cast<char>(LastKey));
   }
+
+#ifdef ANDROID
+  SDL_StopTextInput();
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+#endif
   
   if(bAbort)
     return ABORTED;
@@ -661,6 +737,9 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
     DOUBLE_BUFFER->NormalBlit(B);
 
   festring Input;
+#ifdef ANDROID
+  mobileui::SetPrompt(Topic.CStr(), Input.CStr(), true);
+#endif
   FONT->Printf(DOUBLE_BUFFER, Pos, Color, "%s", Topic.CStr());
   Swap(B.Src, B.Dest);
 
@@ -672,6 +751,9 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
                  Color, "%s", Input.CStr());
     FONT->Printf(DOUBLE_BUFFER, v2(Pos.X, Pos.Y + 11),
                  Color, "%*c", CursorPos + 1, '_');
+#ifdef ANDROID
+    mobileui::SetPrompt(Topic.CStr(), Input.CStr(), true);
+#endif
     graphics::BlitDBToScreen();
 
     while(!isdigit(LastKey) && LastKey != KEY_BACK_SPACE
@@ -696,6 +778,9 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
     {
       if(ReturnZeroOnEsc){
         bInUse=false;
+#ifdef ANDROID
+        mobileui::ClearPrompt();
+#endif
         return 0;
       }
 
@@ -738,6 +823,9 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
   }
 
   bInUse=false;
+#ifdef ANDROID
+  mobileui::ClearPrompt();
+#endif
   return atoi(Input.CStr());
 }
 
@@ -762,6 +850,11 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
 
   long BarValue = StartValue;
   festring Input;
+#ifdef ANDROID
+  festring MobileValue;
+  MobileValue << StartValue;
+  mobileui::SetPrompt(Topic.CStr(), MobileValue.CStr(), true);
+#endif
   truth FirstTime = true;
   v2 V(RES.X, 20); ///???????????
   bitmap BackUp(V, 0);
@@ -863,6 +956,14 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
     DOUBLE_BUFFER->DrawVerticalLine(Pos.X + 1 + (BarValue - Min)
                                     * 200 / (Max - Min), Pos.Y + 12,
                                     Pos.Y + 18, Color1, true);
+#ifdef ANDROID
+    festring MobileValue;
+    if(FirstTime)
+      MobileValue << StartValue;
+    else
+      MobileValue << BarValue;
+    mobileui::SetPrompt(Topic.CStr(), MobileValue.CStr(), true);
+#endif
     graphics::BlitDBToScreen();
 
     while(!isdigit(LastKey) && LastKey != KEY_ESC
@@ -937,6 +1038,9 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
   }
 
   bInUse=false;
+#ifdef ANDROID
+  mobileui::ClearPrompt();
+#endif
   return BarValue;
 }
 
@@ -979,6 +1083,14 @@ bool iosystem::AlertConfirmMsg(const char* cMsg,std::vector<festring> vfsCritMsg
   sAlertConfirmMsgInst.cMsg=cMsg;
   sAlertConfirmMsgInst.vfsCritMsgs=vfsCritMsgs;
   sAlertConfirmMsgInst.bConfirmMode=bConfirmMode;
+#ifdef ANDROID
+  festring MobileMessage = cMsg;
+  for(int i = 0; i < vfsCritMsgs.size(); ++i)
+    MobileMessage << "\n" << vfsCritMsgs[i];
+  int MobileKeys[2] = { bConfirmMode ? 'y' : KEY_ENTER, KEY_ESC };
+  mobileui::SetPrompt(MobileMessage.CStr());
+  mobileui::SetQuestionChoices(MobileKeys, bConfirmMode ? 2 : 1);
+#endif
 
   AlertConfirmMsgDraw(DOUBLE_BUFFER);
   graphics::BlitDBToScreen(); //as the final blit may be from StretchedBuffer
@@ -988,6 +1100,10 @@ bool iosystem::AlertConfirmMsg(const char* cMsg,std::vector<festring> vfsCritMsg
 
   bInUse=false;
   sAlertConfirmMsgInst.bShow=false;
+#ifdef ANDROID
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+#endif
   return bAnswer;
 }
 
