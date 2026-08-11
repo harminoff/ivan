@@ -1288,7 +1288,12 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
         }
       }
 
-      if(game::StringQuestion(What, CONST_S("Write your map note (optionally position mouse cursor over it before editing):"), WHITE, 0, iLSqrLimit, true) == NORMAL_EXIT){
+#ifdef ANDROID
+      const festring MapNotePrompt("Write your map note:");
+#else
+      const festring MapNotePrompt("Write your map note (optionally position mouse cursor over it before editing):");
+#endif
+      if(game::StringQuestion(What, MapNotePrompt, WHITE, 0, iLSqrLimit, true) == NORMAL_EXIT){
         if(What.GetSize()>0) {
           game::SetMapNote(lsqrN,What);
         }
@@ -1799,7 +1804,19 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
   bool bChoseLocationMode = pv2ChoseLocation!=NULL;
 
-  festring fsHelp;fsHelp<<
+  festring fsHelp;
+#ifdef ANDROID
+  fsHelp <<
+    "[Map Touch Help:]\n"
+    "NOTES shows or hides map-note labels.\n\n"
+    "CURSOR opens the map cursor. Use the direction pad to move and the "
+    "center button to select a tile.\n\n"
+    "After selecting a tile, choose CREATE if it has no note, or EDIT or "
+    "DELETE if it already has one. BACK returns to the map without changing "
+    "anything.\n\n"
+    "The cursor remembers its last position until you close the map.";
+#else
+  fsHelp <<
     "[Map Help:]\n"
     " F1 - show this message\n"
     " t - toggle map notes\n"
@@ -1810,6 +1827,7 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
     " Map notes containing '!' or '!!' will be highlighted.\n"
     " Position mouse cursor over a map note to edit or delete it.\n"
     " In look mode, clicking on a map note will navigate to that location.\n";
+#endif
 
   bitmap BackGround(RES);
   BackGround.ActivateFastFlag();
@@ -1829,6 +1847,9 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
       } MobileMapScope;
 #endif
       lsquare* lsqrH=NULL;
+#ifdef ANDROID
+      v2 MobileMapCursor = Char->GetPos();
+#endif
       while(true){
         v2 noteAddPos = Char->GetPos();
 
@@ -1839,7 +1860,7 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
         else
 #ifdef ANDROID
           key = game::KeyQuestion(CONST_S("Choose a map action."),
-            KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', '?', KEY_ESC);
+            KEY_ESC, 4, 't', 'l', '?', KEY_ESC);
 #else
           key = game::KeyQuestion(CONST_S("Cartography notes action [press F1 for help]"),
             KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL, KEY_ESC);
@@ -1855,11 +1876,13 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
             game::TextScreen(fsHelp);
             continue;
           case 'd':
+#ifndef ANDROID
             lsqrH = game::GetHighlightedMapNoteLSquare();
             if(lsqrH!=NULL){
               lsqrH->Engrave(festring());
               game::RefreshDrawMapOverlay();
             }
+#endif
             continue;
           case 'r':
             game::RotateMapNotes();
@@ -1874,8 +1897,10 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
               game::RefreshDrawMapOverlay();
 
               festring fsMsg = pv2ChoseLocation!=NULL ? "Choose a location." :
-                "Where do you wish to add a map note?";
+                "Navigate to a map tile.";
+#ifndef ANDROID
               fsMsg<<" [F1 - help]";
+#endif
 
               v2 start;
               if(pv2ChoseLocation!=NULL){
@@ -1884,7 +1909,11 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                     start=(*pv2ChoseLocation);
               }
               if(start.Is0())
+#ifdef ANDROID
+                start=MobileMapCursor;
+#else
                 start=Char->GetPos();
+#endif
 
               if(!game::GetCurrentArea()->IsValidPos(start)){
                 // very rare case when opening the map will crash at game::PositionQuestion(,start,...) ... area::GetSquare(start)
@@ -1896,9 +1925,14 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
               noteAddPos = game::PositionQuestion(fsMsg, start, NULL, NULL, true); DBGSV2(noteAddPos);
               if(noteAddPos==ERROR_V2){
+#ifdef ANDROID
+                BackGround.FastBlit(DOUBLE_BUFFER);
+                continue;
+#else
                 game::ToggleDrawMapOverlay();
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 return false; //continue;
+#endif
               }
               if(pv2ChoseLocation!=NULL){
                 (*pv2ChoseLocation)=noteAddPos;
@@ -1906,9 +1940,28 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 return (*pv2ChoseLocation) != Char->GetPos();
               }
+#ifdef ANDROID
+              MobileMapCursor=noteAddPos;
+              lsqrH=game::GetCurrentLevel()->GetLSquare(noteAddPos);
+              cchar* Existing=lsqrH ? lsqrH->GetEngraved() : NULL;
+              const bool HasMapNote = Existing && Existing[0]
+                                   && Existing[0] == game::MapNoteToken();
+              const int TileAction = HasMapNote
+                ? game::KeyQuestion(CONST_S("Choose an action for this note."),
+                    KEY_ESC, 3, 'e', 'd', KEY_ESC)
+                : game::KeyQuestion(CONST_S("This tile has no note."),
+                    KEY_ESC, 2, 'a', KEY_ESC);
+              if(TileAction=='a' || TileAction=='e')
+                WhatToEngrave(Char,true,noteAddPos);
+              else if(TileAction=='d' && lsqrH)
+                lsqrH->Engrave(festring());
+              game::RefreshDrawMapOverlay();
+              continue;
+#endif
             }
             /* no break */
           case 'e':
+#ifndef ANDROID
             if(noteAddPos==Char->GetPos()){
               lsqrH = game::GetHighlightedMapNoteLSquare();
               if(lsqrH!=NULL)
@@ -1916,6 +1969,7 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
             }
             WhatToEngrave(Char,true,noteAddPos);
             game::RefreshDrawMapOverlay();
+#endif
             continue;
         }
         break;

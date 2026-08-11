@@ -822,6 +822,11 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
       if(Result.Kind == mobileui::touchresult::TOUCH_KEY)
         AddKeyToBuffer(0xE000 + Result.KeyCode);
     }
+    else if(Event->user.code == mobileui::LOG_HIDE_EVENT_CODE)
+    {
+      mobileui::HandleLogTimeout();
+      graphics::BlitDBToScreen();
+    }
 #endif
     break;
 #endif

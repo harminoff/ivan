@@ -7,7 +7,8 @@
 namespace mobileui
 {
   enum { REDRAW_EVENT_CODE = 0x4956414E,
-         DIRECTION_REPEAT_EVENT_CODE = 0x4956414F };
+         DIRECTION_REPEAT_EVENT_CODE = 0x4956414F,
+         LOG_HIDE_EVENT_CODE = 0x49564150 };
   enum actiongroup
   {
     ACTION_CONTEXT = 0,
@@ -27,7 +28,9 @@ namespace mobileui
     touchresult() : Kind(TOUCH_NONE), KeyCode(0), MouseX(0), MouseY(0) { }
   };
 
-  void SetSafeInsets(int Left, int Top, int Right, int Bottom, float Density);
+  void SetSafeInsets(int Left, int Top, int Right, int Bottom,
+                     int CutoutLeft, int CutoutTop,
+                     int CutoutRight, int CutoutBottom, float Density);
   void SetControllerOnLeft(bool OnLeft);
   void SetStatusBarHidden(bool Hidden);
   void SetMapFocus(int X, int Y);
@@ -39,6 +42,8 @@ namespace mobileui
   void ClearPrompt();
   void SetMapScreen(bool Active);
   void SetMapSourceBounds(int X, int Y, int Width, int Height);
+  void SetMapNotes(const char* const* Notes, const int* X, const int* Y,
+                   int Count);
   void SetScreenText(const char* Text);
   void ClearScreenText();
   void SetActions(const char* const* Labels, const int* Keys,
@@ -55,6 +60,7 @@ namespace mobileui
   void Draw(SDL_Renderer* Renderer);
   touchresult HandleFingerDown(float NormalizedX, float NormalizedY);
   touchresult HandleDirectionRepeat();
+  void HandleLogTimeout();
   touchresult HandleFinger(float NormalizedX, float NormalizedY);
 }
 #endif

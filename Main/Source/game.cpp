@@ -1506,6 +1506,7 @@ lsquare* game::GetHighlightedMapNoteLSquare()
   if(iNoteHighlight>=vMapNotes.size())return NULL;DBGLN;
   return vMapNotes[iNoteHighlight].lsqr; //no need to expose mapnote, all info required is at lsqr
 }
+
 bool validateV2(v2 v2Chk, bitmap* buffer=NULL, v2 Border=v2()){
   if(v2Chk.X<0 || v2Chk.Y<0)return false;
 
@@ -1522,6 +1523,21 @@ bool validateV2(v2 v2Chk, bitmap* buffer=NULL, v2 Border=v2()){
 }
 void game::DrawMapNotesOverlay(bitmap* buffer)
 {
+#ifdef ANDROID
+  const int MobileNoteCount = bDrawMapOverlayEnabled && bShowMapNotes
+    ? std::min(int(vMapNotes.size()), 12) : 0;
+  const char* MobileNoteLabels[12];
+  int MobileNoteX[12];
+  int MobileNoteY[12];
+  for(int i = 0; i < MobileNoteCount; ++i)
+  {
+    MobileNoteLabels[i] = vMapNotes[i].note;
+    MobileNoteX[i] = vMapNotes[i].scrPos.X;
+    MobileNoteY[i] = vMapNotes[i].scrPos.Y;
+  }
+  mobileui::SetMapNotes(MobileNoteLabels, MobileNoteX, MobileNoteY,
+                        MobileNoteCount);
+#endif
   if(!bDrawMapOverlayEnabled)return;
 
   if(!bShowMapNotes)return;
@@ -1535,6 +1551,7 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
   int iFontWidth=8; //font width
   int iM=3; //margin
 
+#ifndef ANDROID
   const static int iTotCol=5;
   static col16 ac[iTotCol];//={BLACK,DARK_GRAY};
   static bool bDummyInit = [](){
@@ -1542,6 +1559,7 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
     for(int i=0;i<iTotCol;i++){
       ac[i]=MakeRGB16(i*step,i*step,i*step);
     }return true;}();
+#endif
 
   int iMaxLineLength=0;
   for(int i=0;i<vMapNotes.size();i++){
@@ -1591,6 +1609,7 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
     }
 
 //    col16 colBkg = iNoteHighlight==i ? colBkg=YELLOW : colMapNoteBkg;
+#ifndef ANDROID
     if(validateV2(bkgTL,buffer,bkgB)){
       col16 colMapNoteBkg2=colMapNoteBkg;
       if(festring(vMapNotes[i].note).Find("!!")!=festring::NPos)
@@ -1602,6 +1621,7 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
       buffer->Fill(bkgTL,bkgB,colMapNoteBkg2); //bkg
       buffer->DrawRectangle(bkgTL,bkgTL+bkgB,LIGHT_GRAY,iNoteHighlight==i); //bkg
     }
+#endif
 
     vMapNotes[i].v2LineHook=vMapNotes[i].basePos;
     if(bHookAtRight)vMapNotes[i].v2LineHook.X+=w;
@@ -1613,6 +1633,9 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
     }
   }
 
+  // Android renders numbered, color-matched connectors in the mobile layout;
+  // drawing these legacy hooks would make them terminate outside the crop.
+#ifndef ANDROID
   // line
   for(int i=0;i<vMapNotes.size();i++){ DBG7(i,vMapNotes.size(),DBGAV2(vMapNotes[i].scrPos),DBGAV2(vMapNotes[i].v2LineHook),ac[i%iTotCol],iNoteHighlight==i, iMapOverlayDrawCount);
     if(validateV2(vMapNotes[i].scrPos,buffer) && validateV2(vMapNotes[i].v2LineHook,buffer)){
@@ -1625,6 +1648,7 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
   for(int i=0;i<vMapNotes.size();i++)
     if(validateV2(vMapNotes[i].basePos,buffer))
       FONT->Printf(buffer, vMapNotes[i].basePos, WHITE, "%s", vMapNotes[i].note);
+#endif
 }
 
 const char* cHugeMap="Cannot display a map that is as big as the world!";
@@ -1675,6 +1699,13 @@ void game::DrawMapOverlay(bitmap* buffer)
   static bitmap* bmpFinal;
 
   bool bTransparentMap = bPositionQuestionMode && (CursorPos != PLAYER->GetPos()) && ivanconfig::IsTransparentMapLM();
+#ifdef ANDROID
+  // The mobile map is presented as its own opaque panel.  A masked redraw
+  // leaves the previous cursor outline in the SDL surface, producing a trail
+  // of white boxes (and holes where floor tiles are transparent) as it moves.
+  // Repaint the complete map on Android so each frame replaces the old cursor.
+  bTransparentMap = false;
+#endif
 
   if(bPositionQuestionMode){
     static v2 v2PreviousCursorPos;

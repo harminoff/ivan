@@ -27,7 +27,7 @@ namespace
          ACTIONS_PER_PAGE = 8, MAX_MOBILE_ACTIONS = 48,
          MAX_QUESTION_CHOICES = 9, MAX_MENU_OPTIONS = 26,
          CONTROL_MOVEMENT = 0, CONTROL_ACTIONS = 1,
-         MODE_CHOOSER_COUNT = mobileui::ACTION_GROUPS + 1 };
+         CONTROL_SECTION_COUNT = mobileui::ACTION_GROUPS + 1 };
 
   const actiondef MenuNavigation[ACTION_COUNT] = {
     { "PG UP", KEY_PAGE_UP }, { "UP", KEY_UP },
@@ -59,15 +59,18 @@ namespace
     int Top = 0;
     int Right = 0;
     int Bottom = 0;
+    SDL_Rect DisplayCutout = { 0, 0, 0, 0 };
     float Density = 1.f;
     int ActionPage = 0;
     int ControlMode = CONTROL_MOVEMENT;
-    bool ModeChooser = false;
-    bool TogglePressActive = false;
-    Uint32 TogglePressStarted = 0;
     bool DirectionPressActive = false;
     int DirectionPressKey = 0;
     SDL_TimerID DirectionRepeatTimer = 0;
+    bool LogVisible = false;
+    bool LogPressActive = false;
+    Uint32 LogPressStarted = 0;
+    Uint32 LogHideDeadline = 0;
+    SDL_TimerID LogHideTimer = 0;
     bool MenuDirectionMode = false;
     bool Gameplay = false;
     bool ControllerOnLeft = false;
@@ -93,8 +96,13 @@ namespace
     std::string PromptInput;
     bool ScreenTextActive = false;
     std::string ScreenText;
+    std::string ScreenTextTitle = "STORY";
     bool MapScreen = false;
     SDL_Rect MapOverlaySource = { 0, 0, 0, 0 };
+    enum { MAX_MAP_NOTES = 12 };
+    std::string MapNoteLabels[MAX_MAP_NOTES];
+    SDL_Point MapNotePoints[MAX_MAP_NOTES];
+    int MapNoteCount = 0;
     std::string ActionLabels[MAX_MOBILE_ACTIONS];
     int ActionKeys[MAX_MOBILE_ACTIONS] = { 0 };
     int ActionGroups[MAX_MOBILE_ACTIONS] = { 0 };
@@ -113,7 +121,8 @@ namespace
   bool ConsoleDirty = true;
 
   enum { DIRECTION_REPEAT_DELAY_MS = 350,
-         DIRECTION_REPEAT_INTERVAL_MS = 110 };
+         DIRECTION_REPEAT_INTERVAL_MS = 110,
+         LOG_VISIBLE_MS = 6000 };
 
   Uint32 QueueDirectionRepeat(Uint32, void*)
   {
@@ -123,6 +132,16 @@ namespace
     Event.user.code = mobileui::DIRECTION_REPEAT_EVENT_CODE;
     SDL_PushEvent(&Event);
     return DIRECTION_REPEAT_INTERVAL_MS;
+  }
+
+  Uint32 QueueLogHide(Uint32, void*)
+  {
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type = SDL_USEREVENT;
+    Event.user.code = mobileui::LOG_HIDE_EVENT_CODE;
+    SDL_PushEvent(&Event);
+    return 0;
   }
 
   void CancelDirectionPress()
@@ -255,29 +274,6 @@ namespace
     }
   }
 
-  void AdvanceControlSection()
-  {
-    if(State.ControlMode == CONTROL_MOVEMENT)
-    {
-      for(int Group = 0; Group < mobileui::ACTION_GROUPS; ++Group)
-        if(FirstActionPageForGroup(Group) >= 0)
-        {
-          SelectActionGroup(Group);
-          return;
-        }
-      return;
-    }
-
-    const int CurrentGroup = CurrentActionGroup();
-    for(int Group = CurrentGroup + 1; Group < mobileui::ACTION_GROUPS; ++Group)
-      if(FirstActionPageForGroup(Group) >= 0)
-      {
-        SelectActionGroup(Group);
-        return;
-      }
-    State.ControlMode = CONTROL_MOVEMENT;
-  }
-
   void AdvanceActionPageWithinGroup()
   {
     const int Group = CurrentActionGroup();
@@ -327,12 +323,6 @@ namespace
     return State.Controls;
   }
 
-  SDL_Rect ModeChooserRow(int Index)
-  {
-    const int Inset = Clamp(int(5 * State.Density), 5, 14);
-    return GridCell(State.Controls, 1, MODE_CHOOSER_COUNT, Index, Inset);
-  }
-
   void Color(SDL_Renderer* Renderer, Uint8 R, Uint8 G, Uint8 B, Uint8 A = 255)
   {
     SDL_SetRenderDrawColor(Renderer, R, G, B, A);
@@ -364,6 +354,169 @@ namespace
                          Rect.w - Index * 2, Rect.h - Index * 2 };
       if(Inner.w > 1 && Inner.h > 1)
         Outline(Renderer, Inner, 77, 64, 46);
+    }
+  }
+
+  // Native IVAN sprites reduced to their four source-lightness bands.  Keeping
+  // the original 16x16 pixels makes the tabs recognizable without introducing
+  // a second UI art style or loading another texture atlas into FeLib.
+  const char* const ControlSectionIcons[CONTROL_SECTION_COUNT][16] = {
+    {
+      "332..........233", "32............23", "2..............2",
+      "................", "................", "................",
+      "................", "................", "................",
+      "................", "................", "................",
+      "................", "2..............2", "32............23",
+      "332..........233"
+    },
+    {
+      ".......44..44...", "......43344334..", ".....4333333334.",
+      "......433443334.", ".....4433444334.", "....4333333334..",
+      "...4333333334...", "...433333334....", "....433333334...",
+      ".....43333334...", "....43333334....", "....4333334.....",
+      ".....4333334....", "......4334334...", "......434.44....",
+      ".......4........"
+    },
+    {
+      "................", "................", "................",
+      "...123333332....", "..12123333332...", "..121233333332..",
+      "..111233313332..", "..121211111112..", "..121233111332..",
+      "..121222111222..", "..121233333332..", "...11222222222..",
+      "....1211111112..", "................", "................",
+      "................"
+    },
+    {
+      "................", "................", "....3......3....",
+      "...333....233...", "..333311212222..", ".32333332222222.",
+      "...2333322222...", "....23322222....", "....22222222....",
+      "....33222222....", "....33322222....", "....33322221....",
+      "....33322221....", "................", "................",
+      "................"
+    },
+    {
+      "................", ".....4.....4....", "....434...434...",
+      "...43224.42234..", "..4322224222234.", ".4322224.4222234",
+      "43222234.4322223", ".422222343222224", "..4244223224424.",
+      "...4..43224..4..", ".....4322234....", "....432242234...",
+      "...43224.42234..", "..43224...42234.", "...424.....424..",
+      "....4.......4..."
+    },
+    {
+      "................", "................", ".......22.......",
+      "......23222.....", ".....23233322...", "....23233223322.",
+      "...23222223332..", "..232232223324..", ".24223223232442.",
+      ".2444223322442..", "..11144222442...", ".11111444442....",
+      "11111224442.....", "..11...222......", "..1.............",
+      "................"
+    }
+  };
+
+  bool ShowControlSectionTabs()
+  {
+    return State.Gameplay && !State.PromptActive && !State.ScreenTextActive
+        && !State.QuestionChoiceCount && !State.MapScreen;
+  }
+
+  bool ShowGameplayLog()
+  {
+    return State.PromptActive
+        || (State.LogVisible && !State.LogMessage.empty());
+  }
+
+  int SelectedControlSection()
+  {
+    return State.ControlMode == CONTROL_MOVEMENT
+      ? 0 : CurrentActionGroup() + 1;
+  }
+
+  SDL_Rect ControlSectionTab(int Index)
+  {
+    const int Gap = Clamp(int(3 * State.Density), 3, 10);
+    const int Inset = Clamp(int(2 * State.Density), 2, 6);
+    const SDL_Rect Area = State.Width < State.Height
+      ? SDL_Rect{ State.Safe.x, State.Controls.y,
+                  State.Safe.w, State.Controls.h }
+      : SDL_Rect{ State.Toggle.x, State.Controls.y,
+                  State.Toggle.w, State.Controls.h };
+    SDL_Rect Side;
+    if(Index < 3)
+      Side = { Area.x, Area.y,
+               std::max(1, State.Controls.x - Area.x - Gap), Area.h };
+    else
+      Side = { State.Controls.x + State.Controls.w + Gap, Area.y,
+               std::max(1, Area.x + Area.w
+                         - State.Controls.x - State.Controls.w - Gap), Area.h };
+    return GridCell(Side, 1, 3, Index % 3, Inset);
+  }
+
+  void PaintControlSectionIcon(SDL_Renderer* Renderer, int Index,
+                               const SDL_Rect& Button, bool Selected,
+                               bool Enabled)
+  {
+    static const Uint8 Dark[CONTROL_SECTION_COUNT][3] = {
+      { 38, 72, 28 }, { 92, 48, 13 }, { 65, 42, 20 },
+      { 34, 67, 27 }, { 30, 70, 83 }, { 73, 58, 34 }
+    };
+    static const Uint8 Light[CONTROL_SECTION_COUNT][3] = {
+      { 157, 218, 83 }, { 246, 207, 94 }, { 226, 177, 82 },
+      { 176, 207, 108 }, { 170, 226, 225 }, { 227, 211, 157 }
+    };
+    // The action atlas' gold sprite is a foot/boot, which communicates travel
+    // much better than the crossed tools.  Use the tools for contextual world
+    // interactions and the foot for movement while retaining their native
+    // palettes.
+    const int SpriteIndex = Index == 1 ? 4 : (Index == 4 ? 1 : Index);
+    const int Padding = Clamp(int(6 * State.Density), 7, 18);
+    const int Pixel = std::max(1,
+      std::min((Button.w - Padding * 2) / 16,
+               (Button.h - Padding * 2) / 16));
+    const int StartX = Button.x + (Button.w - Pixel * 16) / 2;
+    const int StartY = Button.y + (Button.h - Pixel * 16) / 2;
+    for(int Y = 0; Y < 16; ++Y)
+      for(int X = 0; X < 16; ++X)
+      {
+        const char Shade = ControlSectionIcons[SpriteIndex][Y][X];
+        if(Shade == '.')
+          continue;
+        const int Level = Shade - '1';
+        Uint8 R = Uint8(Dark[SpriteIndex][0]
+          + (Light[SpriteIndex][0] - Dark[SpriteIndex][0]) * Level / 3);
+        Uint8 G = Uint8(Dark[SpriteIndex][1]
+          + (Light[SpriteIndex][1] - Dark[SpriteIndex][1]) * Level / 3);
+        Uint8 B = Uint8(Dark[SpriteIndex][2]
+          + (Light[SpriteIndex][2] - Dark[SpriteIndex][2]) * Level / 3);
+        if(Selected)
+        {
+          R = Uint8(std::min(255, int(R) + 22));
+          G = Uint8(std::min(255, int(G) + 22));
+          B = Uint8(std::min(255, int(B) + 22));
+        }
+        if(!Enabled)
+        {
+          const Uint8 Gray = Uint8((int(R) + G + B) / 3);
+          R = Uint8((int(Gray) + 25) / 2);
+          G = R;
+          B = R;
+        }
+        const SDL_Rect PixelRect = { StartX + X * Pixel,
+                                     StartY + Y * Pixel, Pixel, Pixel };
+        Fill(Renderer, PixelRect, R, G, B, 255);
+      }
+  }
+
+  void PaintControlSectionTabs(SDL_Renderer* Renderer)
+  {
+    const int Selected = SelectedControlSection();
+    for(int Index = 0; Index < CONTROL_SECTION_COUNT; ++Index)
+    {
+      const SDL_Rect Button = ControlSectionTab(Index);
+      const bool Enabled = Index == 0 || ActionCountForGroup(Index - 1) > 0;
+      const bool IsSelected = Index == Selected;
+      Fill(Renderer, Button, IsSelected ? 35 : 19,
+           IsSelected ? 71 : 23, IsSelected ? 48 : 28, 246);
+      Outline(Renderer, Button, Enabled ? 156 : 76,
+              Enabled ? 137 : 68, Enabled ? 100 : 55);
+      PaintControlSectionIcon(Renderer, Index, Button, IsSelected, Enabled);
     }
   }
 
@@ -628,14 +781,14 @@ namespace
 
   void WrappedText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
                    const std::string& Value, bool CenterVertically = true,
-                   int LineSpacingPercent = 0)
+                   int LineSpacingPercent = 0, int MaximumScale = 4)
   {
     if(Value.empty())
       return;
     int Scale = 1;
     std::vector<std::string> Lines;
     int LinesFit = 1;
-    for(int Candidate = 6; Candidate >= 1; --Candidate)
+    for(int Candidate = MaximumScale; Candidate >= 1; --Candidate)
     {
       const int Columns = std::max(1, (Rect.w - 20) / (Candidate * 6));
       std::vector<std::string> CandidateLines = WrapText(Value, Columns);
@@ -676,42 +829,89 @@ namespace
          Rect.y + (Rect.h - Scale * 7) / 2, Value, Scale, R, G, B);
   }
 
+  int FittingTextScale(const SDL_Rect& Rect, const std::string& Value,
+                       int MaximumScale)
+  {
+    const int Length = std::max(1, int(Value.size()));
+    return Clamp(std::min(Rect.h / 11, Rect.w / (Length * 6 + 2)),
+                 1, MaximumScale);
+  }
+
+  void CenterTextAtScale(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                         const char* Value, int Scale,
+                         Uint8 R = 240, Uint8 G = 230, Uint8 B = 202)
+  {
+    const int Width = TextWidth(Value, Scale);
+    Text(Renderer, Rect.x + (Rect.w - Width) / 2,
+         Rect.y + (Rect.h - Scale * 7) / 2, Value, Scale, R, G, B);
+  }
+
+  void LeftTextAtScale(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                       const char* Value, int Scale,
+                       Uint8 R = 240, Uint8 G = 230, Uint8 B = 202)
+  {
+    Text(Renderer, Rect.x, Rect.y + (Rect.h - Scale * 7) / 2,
+         Value, Scale, R, G, B);
+  }
+
+  void SingleLineText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                      const std::string& Value)
+  {
+    std::string Visible = Value;
+    std::replace(Visible.begin(), Visible.end(), '\n', ' ');
+    std::replace(Visible.begin(), Visible.end(), '\r', ' ');
+    const int Scale = Clamp(Rect.h / 11, 2, 4);
+    const int MaximumCharacters = std::max(1, (Rect.w - 20) / (Scale * 6));
+    if((int)Visible.size() > MaximumCharacters)
+    {
+      if(MaximumCharacters > 3)
+        Visible = Visible.substr(0, MaximumCharacters - 3) + "...";
+      else
+        Visible.resize(MaximumCharacters);
+    }
+    SDL_Rect Inner = { Rect.x + 10, Rect.y, std::max(1, Rect.w - 20), Rect.h };
+    LeftTextAtScale(Renderer, Inner, Visible.c_str(), Scale);
+  }
+
+  void PaintGameplayLog(SDL_Renderer* Renderer)
+  {
+    if(!ShowGameplayLog())
+      return;
+    Frame(Renderer, State.Log);
+    std::string VisibleLog = State.LogMessage;
+    if(State.PromptActive)
+    {
+      VisibleLog = State.PromptText;
+      if(State.PromptShowsInput)
+      {
+        VisibleLog += "\n> ";
+        VisibleLog += State.PromptInput;
+        VisibleLog += "_";
+      }
+      WrappedText(Renderer, { State.Log.x + 5, State.Log.y + 5,
+                              State.Log.w - 10, State.Log.h - 10 },
+                  VisibleLog);
+    }
+    else
+      SingleLineText(Renderer, State.Log, VisibleLog);
+  }
+
   void MenuRowText(SDL_Renderer* Renderer, const SDL_Rect& Row,
-                   const std::string& Value, int Padding,
+                   const std::string& Value, int Padding, int Scale,
                    Uint8 R, Uint8 G, Uint8 B)
   {
     const int AvailableWidth = std::max(1, Row.w - Padding * 2);
-    const int MaximumScale = Clamp(Row.h / 11, 1, 5);
-    // Three-pixel glyphs remain comfortably readable on a phone.  Long
-    // desktop list entries should wrap before they are reduced below that.
-    const int MinimumScale = std::min(3, MaximumScale);
-    int Scale = MaximumScale;
-    int LinesFit = 1;
-    std::vector<std::string> Lines;
-
-    for(int Candidate = MaximumScale; Candidate >= MinimumScale; --Candidate)
-    {
-      const int Columns = std::max(1, AvailableWidth / (Candidate * 6));
-      std::vector<std::string> CandidateLines = WrapText(Value, Columns);
-      const int LineAdvance = Candidate * 8;
-      const int CandidateLinesFit = Row.h >= Candidate * 7
-        ? 1 + std::max(0, Row.h - Candidate * 7) / LineAdvance : 1;
-      if((int)CandidateLines.size() <= CandidateLinesFit
-         || Candidate == MinimumScale)
-      {
-        Scale = Candidate;
-        LinesFit = CandidateLinesFit;
-        Lines.swap(CandidateLines);
-        break;
-      }
-    }
+    const int Columns = std::max(1, AvailableWidth / (Scale * 6));
+    std::vector<std::string> Lines = WrapText(Value, Columns);
+    const int LineAdvance = Scale * 8;
+    const int LinesFit = Row.h >= Scale * 7
+      ? 1 + std::max(0, Row.h - Scale * 7) / LineAdvance : 1;
 
     if(Lines.empty())
       Lines.push_back("");
     if((int)Lines.size() > LinesFit)
     {
       Lines.resize(LinesFit);
-      const int Columns = std::max(1, AvailableWidth / (Scale * 6));
       std::string& Last = Lines.back();
       if(Columns > 3)
       {
@@ -724,7 +924,6 @@ namespace
         Last.resize(std::min(Last.size(), size_t(Columns)));
     }
 
-    const int LineAdvance = Scale * 8;
     const int TotalHeight = (int(Lines.size()) - 1) * LineAdvance + Scale * 7;
     int Y = Row.y + (Row.h - TotalHeight) / 2;
     for(size_t Index = 0; Index < Lines.size(); ++Index, Y += LineAdvance)
@@ -747,6 +946,23 @@ namespace
         ++Begin;
     }
     return Groups;
+  }
+
+  std::string ExpandedStatValue(int Index, const std::string& Value)
+  {
+    static const char* Labels[16] = {
+      "HEALTH", NULL, NULL, "ARM STRENGTH", "LEG STRENGTH",
+      "DEXTERITY", "AGILITY", "ENDURANCE", "PERCEPTION",
+      "INTELLIGENCE", "WISDOM", "WILLPOWER", "CHARISMA",
+      NULL, "TIME", NULL
+    };
+    if(Index < 0 || Index >= 16 || !Labels[Index])
+      return Value;
+    if(Index == 14)
+      return std::string(Labels[Index]) + " " + Value;
+    const size_t Number = Value.find(' ');
+    return std::string(Labels[Index])
+      + (Number == std::string::npos ? "" : Value.substr(Number));
   }
 
   void PaintStats(SDL_Renderer* Renderer)
@@ -775,6 +991,120 @@ namespace
     const int Top = State.Stats.y + 5;
     const int Width = State.Stats.w - 16;
     const int Height = State.Stats.h - 10;
+    const int CutoutRight = State.DisplayCutout.x + State.DisplayCutout.w;
+    const int CutoutBottom = State.DisplayCutout.y + State.DisplayCutout.h;
+    const bool PortraitCutout = State.Width < State.Height
+      && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0
+      && State.DisplayCutout.y <= State.Stats.y
+      && CutoutBottom < State.Stats.y + State.Stats.h;
+    if(PortraitCutout)
+    {
+      const int Pad = Clamp(int(3 * State.Density), 5, 14);
+      // The columns already split around the camera cutout horizontally, so
+      // all four stat rows can use equal heights.  Giving the bottom row the
+      // old two-fifths allocation centered it much lower than the other rows.
+      const int BottomRowTop = Top + Height * 3 / 4;
+      const int Bottom = Top + Height;
+      const int LeftWidth = std::max(1, State.DisplayCutout.x - Pad - Left);
+      const int RightX = CutoutRight + Pad;
+      const int RightWidth = std::max(1, Left + Width - RightX);
+
+      std::vector<SDL_Rect> Cells;
+      std::vector<int> CellValues;
+      auto AddGroup = [&](int Group, int Rows, int X, int Y, int W, int H)
+      {
+        for(int Row = 0; Row < Rows; ++Row)
+        {
+          const int Y0 = Y + H * Row / Rows;
+          const int Y1 = Y + H * (Row + 1) / Rows;
+          Cells.push_back({ X + 4, Y0, std::max(1, W - 8),
+                            std::max(1, Y1 - Y0) });
+          CellValues.push_back(Groups[Group][Row]);
+        }
+      };
+
+      const int LeftColumn = LeftWidth / 2;
+      const int RightColumn = RightWidth / 2;
+      AddGroup(0, 3, Left, Top, LeftColumn, BottomRowTop - Top);
+      AddGroup(1, 3, Left + LeftColumn, Top,
+               LeftWidth - LeftColumn, BottomRowTop - Top);
+      // Keep complete attribute families together around the camera hole:
+      // resources and body strength on the left, mobility/senses and mental
+      // attributes on the right.
+      AddGroup(2, 3, RightX, Top, RightColumn, BottomRowTop - Top);
+      AddGroup(3, 3, RightX + RightColumn, Top,
+               RightWidth - RightColumn, BottomRowTop - Top);
+
+      Color(Renderer, 72, 62, 47, 180);
+      SDL_RenderDrawLine(Renderer, Left + LeftColumn, Top,
+                         Left + LeftColumn, BottomRowTop);
+      SDL_RenderDrawLine(Renderer, RightX + RightColumn, Top,
+                         RightX + RightColumn, BottomRowTop);
+
+      // DAY/TIME/TURN form a single world-state strip.  Charisma occupies the
+      // fourth cell directly below INT/WIS/WILL, completing that family.
+      static const int BottomValues[4] = { 13, 14, 15, 12 };
+      const int BottomColumns[5] = {
+        Left,
+        Left + LeftColumn,
+        RightX,
+        RightX + RightColumn,
+        Left + Width
+      };
+      for(int Column = 0; Column < 4; ++Column)
+      {
+        const int X0 = BottomColumns[Column];
+        const int X1 = BottomColumns[Column + 1];
+        Cells.push_back({ X0 + 4, BottomRowTop,
+                          X1 - X0 - 8, std::max(1, Bottom - BottomRowTop) });
+        CellValues.push_back(BottomValues[Column]);
+        if(Column)
+          SDL_RenderDrawLine(Renderer, X0, BottomRowTop, X0, Bottom);
+      }
+
+      int SharedScale = 6;
+      for(size_t Index = 0; Index < Cells.size(); ++Index)
+        SharedScale = std::min(SharedScale,
+          FittingTextScale(Cells[Index], Values[CellValues[Index]], 6));
+      for(size_t Index = 0; Index < Cells.size(); ++Index)
+      {
+        const int ValueIndex = CellValues[Index];
+        const std::string Expanded = ExpandedStatValue(ValueIndex,
+                                                        Values[ValueIndex]);
+        if(FittingTextScale(Cells[Index], Expanded, 6) >= SharedScale)
+          Values[ValueIndex] = Expanded;
+      }
+      for(size_t Index = 0; Index < Cells.size(); ++Index)
+        LeftTextAtScale(Renderer, Cells[Index],
+                        Values[CellValues[Index]].c_str(), SharedScale);
+      return;
+    }
+    int SharedScale = 6;
+    for(int Column = 0; Column < 5; ++Column)
+      for(int Row = 0; Row < GroupSizes[Column]; ++Row)
+      {
+        const int X0 = Left + Width * Column / 5;
+        const int X1 = Left + Width * (Column + 1) / 5;
+        const int Y0 = Top + Height * Row / GroupSizes[Column];
+        const int Y1 = Top + Height * (Row + 1) / GroupSizes[Column];
+        const SDL_Rect Cell = { X0 + 4, Y0, X1 - X0 - 8, Y1 - Y0 };
+        SharedScale = std::min(SharedScale,
+          FittingTextScale(Cell, Values[Groups[Column][Row]], 6));
+      }
+    for(int Column = 0; Column < 5; ++Column)
+      for(int Row = 0; Row < GroupSizes[Column]; ++Row)
+      {
+        const int X0 = Left + Width * Column / 5;
+        const int X1 = Left + Width * (Column + 1) / 5;
+        const int Y0 = Top + Height * Row / GroupSizes[Column];
+        const int Y1 = Top + Height * (Row + 1) / GroupSizes[Column];
+        const SDL_Rect Cell = { X0 + 4, Y0, X1 - X0 - 8, Y1 - Y0 };
+        const int ValueIndex = Groups[Column][Row];
+        const std::string Expanded = ExpandedStatValue(ValueIndex,
+                                                        Values[ValueIndex]);
+        if(FittingTextScale(Cell, Expanded, 6) >= SharedScale)
+          Values[ValueIndex] = Expanded;
+      }
     for(int Column = 0; Column < 5; ++Column)
     {
       const int X0 = Left + Width * Column / 5;
@@ -789,7 +1119,35 @@ namespace
         const int Y0 = Top + Height * Row / GroupSizes[Column];
         const int Y1 = Top + Height * (Row + 1) / GroupSizes[Column];
         SDL_Rect Cell = { X0 + 4, Y0, X1 - X0 - 8, Y1 - Y0 };
-        CenterText(Renderer, Cell, Values[Groups[Column][Row]].c_str(), 6);
+        if(State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
+        {
+          const int CellRight = Cell.x + Cell.w;
+          const int CellBottom = Cell.y + Cell.h;
+          const int CutoutRight = State.DisplayCutout.x + State.DisplayCutout.w;
+          const int CutoutBottom = State.DisplayCutout.y + State.DisplayCutout.h;
+          if(Cell.x < CutoutRight && CellRight > State.DisplayCutout.x
+             && Cell.y < CutoutBottom && CellBottom > State.DisplayCutout.y)
+          {
+            const int Pad = Clamp(int(3 * State.Density), 4, 12);
+            const int Below = CellBottom - CutoutBottom - Pad;
+            const int LeftSpace = State.DisplayCutout.x - Cell.x - Pad;
+            const int RightSpace = CellRight - CutoutRight - Pad;
+            if(Below >= 14)
+            {
+              Cell.y = CutoutBottom + Pad;
+              Cell.h = Below;
+            }
+            else if(LeftSpace >= RightSpace && LeftSpace > 0)
+              Cell.w = LeftSpace;
+            else if(RightSpace > 0)
+            {
+              Cell.x = CutoutRight + Pad;
+              Cell.w = RightSpace;
+            }
+          }
+        }
+        LeftTextAtScale(Renderer, Cell,
+                        Values[Groups[Column][Row]].c_str(), SharedScale);
       }
     }
   }
@@ -834,6 +1192,16 @@ namespace
       ? Clamp(int(31 * State.Density), 68, 112)
       : Clamp(int(36 * State.Density), 70, 130);
     const int RowsHeight = std::min(Content.h, Count * MaximumRowHeight);
+    const int ShortestRowHeight = std::max(1, RowsHeight / Count - 4);
+    int MenuScale = Clamp(ShortestRowHeight / 11, 1, MainMenu ? 5 : 4);
+    if(MainMenu)
+      for(int Index = 0; Index < State.MenuOptionCount; ++Index)
+      {
+        SDL_Rect FitRect = { 0, 0, Content.w - Padding * 2,
+                             ShortestRowHeight };
+        MenuScale = std::min(MenuScale,
+          FittingTextScale(FitRect, State.MenuOptions[Index], 5));
+      }
     if(MainMenu)
       Content.y += std::max(0, (Content.h - RowsHeight) / 2);
     for(int Index = 0; Index < State.MenuOptionCount; ++Index)
@@ -864,27 +1232,20 @@ namespace
       const std::string& Label = State.MenuOptions[Index];
       if(MainMenu)
       {
-        int Scale = Clamp(Row.h / 11, 1, 5);
-        while(Scale > 1
-              && TextWidth(Label.c_str(), Scale) > Row.w - Padding * 2)
-          --Scale;
         std::string Visible = Label;
         const int Columns = std::max(1,
-          (Row.w - Padding * 2) / (Scale * 6));
+          (Row.w - Padding * 2) / (MenuScale * 6));
         if((int)Visible.size() > Columns)
         {
           Visible.resize(std::max(1, Columns - 3));
           Visible += "...";
         }
-        Text(Renderer,
-             Row.x + (Row.w - TextWidth(Visible.c_str(), Scale)) / 2,
-             Row.y + (Row.h - Scale * 7) / 2,
-             Visible.c_str(), Scale,
-             Selected ? 255 : 240, Selected ? 224 : 230,
-             Selected ? 205 : 202);
+        CenterTextAtScale(Renderer, Row, Visible.c_str(), MenuScale,
+                          Selected ? 255 : 240, Selected ? 224 : 230,
+                          Selected ? 205 : 202);
       }
       else
-        MenuRowText(Renderer, Row, Label, Padding, 240, 230, 202);
+        MenuRowText(Renderer, Row, Label, Padding, MenuScale, 240, 230, 202);
     }
     for(int Index = State.MenuOptionCount; Index < MAX_MENU_OPTIONS; ++Index)
       State.MenuRows[Index] = { 0, 0, 0, 0 };
@@ -911,10 +1272,16 @@ namespace
   {
     if(State.MapScreen)
     {
-      if(Key == 't')
+      if(Key == KEY_BACK_SPACE)
+        snprintf(Buffer, BufferSize, "DELETE");
+      else if(Key == KEY_ENTER || Key == KEY_CONTROLLER_A)
+        snprintf(Buffer, BufferSize, "SAVE");
+      else if(Key == 't')
         snprintf(Buffer, BufferSize, "NOTES");
       else if(Key == 'l')
-        snprintf(Buffer, BufferSize, "LOOK");
+        snprintf(Buffer, BufferSize, "CURSOR");
+      else if(Key == 'a')
+        snprintf(Buffer, BufferSize, "CREATE");
       else if(Key == 'r')
         snprintf(Buffer, BufferSize, "ROTATE");
       else if(Key == 'd')
@@ -948,7 +1315,7 @@ namespace
   void PaintConsole(SDL_Renderer* Renderer)
   {
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_NONE);
-    Color(Renderer, 0, 0, 0, 255);
+    Color(Renderer, 4, 6, 10, 255);
     SDL_RenderClear(Renderer);
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_BLEND);
     Fill(Renderer, State.Safe, 4, 6, 10, 235);
@@ -961,8 +1328,9 @@ namespace
       Frame(Renderer, GameFrame);
       CenterText(Renderer, State.Header,
                   State.MenuActive ? State.MenuTitle.c_str()
-                                   : (State.ScreenTextActive ? "STORY"
-                                      : (State.PromptActive
+                                   : (State.ScreenTextActive
+                                      ? State.ScreenTextTitle.c_str()
+                                       : (State.PromptActive
                                          && !State.PromptGameplay
                                            ? "CREATE CHARACTER" : "IVAN")),
                  7, MainMenuPresentation() ? 210
@@ -1017,22 +1385,37 @@ namespace
     {
       Frame(Renderer, State.Stats);
       Frame(Renderer, State.Game);
-      Frame(Renderer, State.Log);
       PaintStats(Renderer);
-      std::string VisibleLog = State.LogMessage;
       if(State.PromptActive)
+        PaintGameplayLog(Renderer);
+      if(State.PromptActive && State.PromptShowsInput && !State.PromptNumeric)
       {
-        VisibleLog = State.PromptText;
-        if(State.PromptShowsInput)
-        {
-          VisibleLog += "\n> ";
-          VisibleLog += State.PromptInput;
-          VisibleLog += "_";
-        }
+        const int Pad = Clamp(int(12 * State.Density), 16, 40);
+        const int CardHeight = Clamp(State.Game.h * 42 / 100, 180, 360);
+        SDL_Rect Card = { State.Game.x + Pad,
+                          State.Game.y + Pad,
+                          std::max(1, State.Game.w - Pad * 2),
+                          std::min(CardHeight, std::max(1, State.Game.h - Pad * 2)) };
+        Fill(Renderer, Card, 10, 8, 8, 248);
+        Frame(Renderer, Card);
+        const int TopicHeight = Card.h * 48 / 100;
+        WrappedText(Renderer, { Card.x + Pad, Card.y + Pad,
+                                Card.w - Pad * 2, TopicHeight - Pad },
+                    State.PromptText);
+        SDL_Rect Field = { Card.x + Pad, Card.y + TopicHeight,
+                           Card.w - Pad * 2,
+                           Clamp(int(46 * State.Density), 64, 112) };
+        Fill(Renderer, Field, 20, 17, 14, 255);
+        Outline(Renderer, Field, 156, 137, 100);
+        std::string Entry = State.PromptInput;
+        Entry += '_';
+        CenterText(Renderer, Field, Entry.c_str(), 6);
+        SDL_Rect Hint = { Card.x + Pad, Field.y + Field.h,
+                          Card.w - Pad * 2,
+                          std::max(1, Card.y + Card.h - Field.y - Field.h) };
+        CenterText(Renderer, Hint, "TAP TO TYPE - PRESS ENTER", 4,
+                   190, 180, 155);
       }
-      WrappedText(Renderer, { State.Log.x + 5, State.Log.y + 5,
-                              State.Log.w - 10, State.Log.h - 10 },
-                  VisibleLog);
     }
 
     Frame(Renderer, State.Controls);
@@ -1058,13 +1441,14 @@ namespace
     const char* ToggleLabel = State.PromptNumeric ? PromptValueLabel.c_str()
       : (MapCursor ? "BACK"
       : (ShowChoices ? (State.MapScreen ? "MAP ACTIONS" : "CHOICES")
-      : (State.ModeChooser ? "SELECT CONTROLS"
       : (!State.Gameplay ? (MainMenuPresentation() ? "MENU CONTROLS"
                            : (State.MenuDirectionMode ? "MENU" : "DIRECTIONS"))
                          : (ShowActions ? ActionGroupName(CurrentGroup)
-                                         : "DIRECTIONS")))));
-    CenterText(Renderer, State.Toggle,
-               ToggleLabel, 7, 235, 218, 174);
+                                         : "DIRECTIONS"))));
+    CenterTextAtScale(Renderer, State.Toggle,
+                      ToggleLabel, 5, 235, 218, 174);
+    if(ShowControlSectionTabs())
+      PaintControlSectionTabs(Renderer);
 
     const char* Directions[ACTION_COUNT] = {
       "NW", "N", "NE", "W", "WAIT", "E", "SW", "S", "SE"
@@ -1088,24 +1472,7 @@ namespace
              Confirm ? 71 : ((Delete || Back) ? 31 : 23),
              Confirm ? 48 : ((Delete || Back) ? 29 : 28), 245);
         Outline(Renderer, Button, 156, 137, 100);
-        CenterText(Renderer, Button, NumericLabels[Index], 5);
-      }
-    }
-    else if(State.ModeChooser && State.Gameplay && !ShowChoices)
-    {
-      static const char* ModeLabels[MODE_CHOOSER_COUNT] = {
-        "DIRECTIONS", "CONTEXT", "ITEMS", "CHARACTER", "MOVE", "SYSTEM"
-      };
-      const int SelectedMode = State.ControlMode == CONTROL_MOVEMENT
-        ? 0 : CurrentActionGroup() + 1;
-      for(int Index = 0; Index < MODE_CHOOSER_COUNT; ++Index)
-      {
-        SDL_Rect Button = ModeChooserRow(Index);
-        const bool Selected = Index == SelectedMode;
-        Fill(Renderer, Button, Selected ? 35 : 19,
-             Selected ? 71 : 23, Selected ? 48 : 28, 246);
-        Outline(Renderer, Button, 156, 137, 100);
-        CenterText(Renderer, Button, ModeLabels[Index], 7);
+        CenterTextAtScale(Renderer, Button, NumericLabels[Index], 4);
       }
     }
     else if(ShowChoices)
@@ -1120,7 +1487,7 @@ namespace
         Outline(Renderer, Button, 156, 137, 100);
         char Label[16];
         KeyLabel(State.QuestionChoices[Index], Label, sizeof(Label));
-        CenterText(Renderer, Button, Label, 7);
+        CenterTextAtScale(Renderer, Button, Label, 5);
       }
     }
     else if(!State.Gameplay)
@@ -1139,7 +1506,7 @@ namespace
              Select ? (OriginalMenu ? 18 : 48) : (Back ? 20 : 18), 238);
         Outline(Renderer, Button, OriginalMenu ? 130 : 143,
                 OriginalMenu ? 102 : 124, OriginalMenu ? 69 : 91);
-        CenterText(Renderer, Button, Buttons[Index].Label, 6);
+        CenterTextAtScale(Renderer, Button, Buttons[Index].Label, 4);
       }
     }
     else if(!ShowActions)
@@ -1150,8 +1517,9 @@ namespace
         Fill(Renderer, Button, Index == 4 ? 30 : 19, Index == 4 ? 27 : 23,
              Index == 4 ? 23 : 28, 235);
         Outline(Renderer, Button, 143, 124, 91);
-        CenterText(Renderer, Button,
-                   MapCursor && Index == 4 ? "SELECT" : Directions[Index], 7);
+        CenterTextAtScale(Renderer, Button,
+                          MapCursor && Index == 4 ? "SELECT" : Directions[Index],
+                          6);
       }
     }
     else
@@ -1161,6 +1529,15 @@ namespace
       const int PageActions = BuildActionPage(State.ActionPage,
                                               PageIndices, Group);
       const SDL_Rect Grid = ActionGridRect();
+      int ActionScale = 4;
+      for(int Index = 0; Index < PageActions; ++Index)
+      {
+        const SDL_Rect Button = GridCell(Grid, ACTION_COLUMNS, ACTION_ROWS,
+                                         Index, 3);
+        ActionScale = std::min(ActionScale,
+          FittingTextScale(Button,
+                           State.ActionLabels[PageIndices[Index]], 4));
+      }
 
       for(int Index = 0; Index < PageActions; ++Index)
       {
@@ -1168,9 +1545,9 @@ namespace
                                    Index, 3);
         Fill(Renderer, Button, 14, 18, 32, 238);
         Outline(Renderer, Button, 156, 137, 100);
-        CenterText(Renderer, Button,
-                   State.ActionLabels[PageIndices[Index]].c_str(),
-                   4);
+        CenterTextAtScale(Renderer, Button,
+                          State.ActionLabels[PageIndices[Index]].c_str(),
+                          ActionScale);
       }
 
       if(ActionPagesForGroup(Group) > 1)
@@ -1179,7 +1556,7 @@ namespace
                                  ACTION_COUNT - 1, 3);
         Fill(Renderer, More, 45, 38, 24, 238);
         Outline(Renderer, More, 156, 137, 100);
-        CenterText(Renderer, More, "MORE", 4);
+        CenterTextAtScale(Renderer, More, "MORE", ActionScale);
       }
     }
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_NONE);
@@ -1223,12 +1600,17 @@ namespace mobileui
     Env->DeleteLocalRef(Activity);
   }
 
-  void SetSafeInsets(int Left, int Top, int Right, int Bottom, float Density)
+  void SetSafeInsets(int Left, int Top, int Right, int Bottom,
+                     int CutoutLeft, int CutoutTop,
+                     int CutoutRight, int CutoutBottom, float Density)
   {
     State.Left = std::max(0, Left);
     State.Top = std::max(0, Top);
     State.Right = std::max(0, Right);
     State.Bottom = std::max(0, Bottom);
+    State.DisplayCutout = { std::max(0, CutoutLeft), std::max(0, CutoutTop),
+                        std::max(0, CutoutRight - CutoutLeft),
+                        std::max(0, CutoutBottom - CutoutTop) };
     State.Density = std::max(1.f, Density);
     ConsoleDirty = true;
 
@@ -1269,11 +1651,24 @@ namespace mobileui
   void SetLog(const char* Message)
   {
     const std::string Value = Message ? Message : "";
-    if(State.LogMessage != Value)
+    State.LogMessage = Value;
+    State.LogVisible = !Value.empty();
+    if(State.LogHideTimer)
     {
-      State.LogMessage = Value;
-      ConsoleDirty = true;
+      SDL_RemoveTimer(State.LogHideTimer);
+      State.LogHideTimer = 0;
     }
+    if(State.LogVisible)
+    {
+      State.LogHideDeadline = SDL_GetTicks() + LOG_VISIBLE_MS;
+      State.LogHideTimer = SDL_AddTimer(LOG_VISIBLE_MS, QueueLogHide, 0);
+    }
+    ConsoleDirty = true;
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type = SDL_USEREVENT;
+    Event.user.code = REDRAW_EVENT_CODE;
+    SDL_PushEvent(&Event);
   }
 
   void SetPrompt(const char* Prompt, const char* Input, bool Numeric)
@@ -1287,13 +1682,12 @@ namespace mobileui
       || State.PromptShowsInput != ShowsInput
       || State.PromptNumeric != Numeric;
     if(!State.PromptActive)
-      State.PromptGameplay = State.Gameplay;
+      State.PromptGameplay = State.Gameplay || State.MapScreen;
     State.PromptActive = true;
     State.PromptShowsInput = ShowsInput;
     State.PromptNumeric = Numeric;
     State.PromptText = NewPrompt;
     State.PromptInput = NewInput;
-    State.ModeChooser = false;
     if(Changed)
     {
       ConsoleDirty = true;
@@ -1328,7 +1722,12 @@ namespace mobileui
     if(State.MapScreen == Active)
       return;
     State.MapScreen = Active;
-    State.ModeChooser = false;
+    if(!Active)
+    {
+      State.MapNoteCount = 0;
+      for(int Index = 0; Index < layoutstate::MAX_MAP_NOTES; ++Index)
+        State.MapNoteLabels[Index].clear();
+    }
     if(Active)
       State.ControlMode = CONTROL_MOVEMENT;
     ConsoleDirty = true;
@@ -1351,10 +1750,45 @@ namespace mobileui
     ConsoleDirty = true;
   }
 
+  void SetMapNotes(const char* const* Notes, const int* X, const int* Y,
+                   int Count)
+  {
+    Count = Clamp(Count, 0, layoutstate::MAX_MAP_NOTES);
+    bool Changed = State.MapNoteCount != Count;
+    for(int Index = 0; Index < Count; ++Index)
+    {
+      const std::string Label = Notes && Notes[Index] ? Notes[Index] : "";
+      const SDL_Point Point = { X ? X[Index] : 0, Y ? Y[Index] : 0 };
+      if(State.MapNoteLabels[Index] != Label
+         || State.MapNotePoints[Index].x != Point.x
+         || State.MapNotePoints[Index].y != Point.y)
+      {
+        State.MapNoteLabels[Index] = Label;
+        State.MapNotePoints[Index] = Point;
+        Changed = true;
+      }
+    }
+    for(int Index = Count; Index < State.MapNoteCount; ++Index)
+      State.MapNoteLabels[Index].clear();
+    State.MapNoteCount = Count;
+    if(Changed)
+      ConsoleDirty = true;
+  }
+
   void SetScreenText(const char* Value)
   {
+    std::string Raw = Value ? Value : "";
+    static const char MapHelpHeading[] = "[Map Touch Help:]";
+    if(Raw.compare(0, sizeof(MapHelpHeading) - 1, MapHelpHeading) == 0)
+    {
+      State.ScreenTextTitle = "MAP HELP";
+      const size_t Body = Raw.find('\n');
+      Raw = Body == std::string::npos ? "" : Raw.substr(Body + 1);
+    }
+    else
+      State.ScreenTextTitle = "STORY";
     State.ScreenTextActive = true;
-    State.ScreenText = FormatScreenText(Value ? Value : "");
+    State.ScreenText = FormatScreenText(Raw);
     State.MenuActive = false;
     ConsoleDirty = true;
   }
@@ -1365,6 +1799,7 @@ namespace mobileui
       return;
     State.ScreenTextActive = false;
     State.ScreenText.clear();
+    State.ScreenTextTitle = "STORY";
     ConsoleDirty = true;
   }
 
@@ -1404,8 +1839,6 @@ namespace mobileui
         Changed = true;
       }
     State.QuestionChoiceCount = Count;
-    if(Count)
-      State.ModeChooser = false;
     if(Changed)
     {
       ConsoleDirty = true;
@@ -1422,7 +1855,6 @@ namespace mobileui
                int Page, int Pages)
   {
     State.MenuActive = true;
-    State.ModeChooser = false;
     State.MenuTitle = Title ? Title : "MENU";
     State.MenuSubtitle = Subtitle ? Subtitle : "";
     State.MenuOptionCount = Clamp(Count, 0, MAX_MENU_OPTIONS);
@@ -1453,33 +1885,64 @@ namespace mobileui
     State.GameHeight = GameHeight;
     State.Gameplay = GameplayPresentation();
     if(State.Gameplay && !PreviousGameplay)
-    {
       State.ControlMode = CONTROL_MOVEMENT;
-      State.ModeChooser = false;
-    }
     if(!State.Gameplay && PreviousGameplay)
     {
       State.MenuDirectionMode = false;
-      State.ModeChooser = false;
     }
     const int Gap = Clamp(int(7 * State.Density), 8, 28);
-    State.Safe = { State.Left + Gap, State.Top + Gap,
-                   std::max(1, State.Width - State.Left - State.Right - Gap * 2),
-                   std::max(1, State.Height - State.Top - State.Bottom - Gap * 2) };
+    int LayoutLeft = State.Left;
+    int LayoutTop = State.Top;
+    int LayoutRight = State.Right;
+    int LayoutBottom = State.Bottom;
+    // A portrait camera hole can overlap the centered title/menu stack, so keep
+    // those non-game screens below it.  In landscape, reserving the cutout's
+    // entire edge produces a large black sidebar; the centered menu content is
+    // already clear of the small, localized obstruction.
+    if(!State.Gameplay && State.Width < State.Height
+       && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
+    {
+      if(State.DisplayCutout.x <= 0)
+        LayoutLeft = std::max(LayoutLeft,
+                              State.DisplayCutout.x + State.DisplayCutout.w);
+      if(State.DisplayCutout.y <= 0)
+        LayoutTop = std::max(LayoutTop,
+                             State.DisplayCutout.y + State.DisplayCutout.h);
+      if(State.DisplayCutout.x + State.DisplayCutout.w >= State.Width)
+        LayoutRight = std::max(LayoutRight,
+                               State.Width - State.DisplayCutout.x);
+      if(State.DisplayCutout.y + State.DisplayCutout.h >= State.Height)
+        LayoutBottom = std::max(LayoutBottom,
+                                State.Height - State.DisplayCutout.y);
+    }
+    State.Safe = { LayoutLeft + Gap, LayoutTop + Gap,
+                   std::max(1, State.Width - LayoutLeft - LayoutRight - Gap * 2),
+                   std::max(1, State.Height - LayoutTop - LayoutBottom - Gap * 2) };
     const int HeaderHeight = Clamp(int(18 * State.Density), 34, 72);
 
     if(State.Gameplay && State.Width < State.Height)
     {
-      const int StatsHeight = Clamp(int(State.Safe.w * 75.f / 384.f), 150, 230);
+      int StatsHeight = Clamp(int(State.Safe.w * 75.f / 384.f), 150, 230);
+      if(State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0
+         && State.DisplayCutout.y <= State.Safe.y)
+      {
+        const int ExtraRow = Clamp(int(24 * State.Density), 64, 104);
+        StatsHeight = std::max(StatsHeight,
+          State.DisplayCutout.y + State.DisplayCutout.h - State.Safe.y
+          + Gap + ExtraRow);
+      }
       const int ToggleHeight = Clamp(int(28 * State.Density), 58, 100);
-      const int LogHeight = Clamp(int(State.Safe.w * 106.f / 678.f), 110, 180);
+      const int PromptLogHeight = Clamp(int(State.Safe.w * 106.f / 678.f),
+                                        110, 180);
+      const int BannerHeight = Clamp(int(24 * State.Density), 50, 84);
+      const int ReservedLogHeight = State.PromptActive ? PromptLogHeight : 0;
       const int MaximumControls = Clamp(int(State.Safe.h * .31f), 460, 700);
       int ControlsSize = std::min(State.Safe.w, MaximumControls);
       int MapTop = State.Safe.y + StatsHeight + Gap;
       int ControlsBottom = State.Safe.y + State.Safe.h;
       int ControlsTop = ControlsBottom - ControlsSize;
       int ToggleTop = ControlsTop - Gap - ToggleHeight;
-      int LogTop = ToggleTop - Gap - LogHeight;
+      int LogTop = ToggleTop - Gap - ReservedLogHeight;
       int MapHeight = std::max(1, LogTop - Gap - MapTop);
 
       // On short portrait displays, preserve the map and shrink the controls
@@ -1490,13 +1953,17 @@ namespace mobileui
         ControlsSize = std::max(360, ControlsSize - Reduction);
         ControlsTop = ControlsBottom - ControlsSize;
         ToggleTop = ControlsTop - Gap - ToggleHeight;
-        LogTop = ToggleTop - Gap - LogHeight;
+        LogTop = ToggleTop - Gap - ReservedLogHeight;
         MapHeight = std::max(1, LogTop - Gap - MapTop);
       }
 
       State.Stats = { State.Safe.x, State.Safe.y, State.Safe.w, StatsHeight };
       State.Game = { State.Safe.x, MapTop, State.Safe.w, MapHeight };
-      State.Log = { State.Safe.x, LogTop, State.Safe.w, LogHeight };
+      State.Log = State.PromptActive
+        ? SDL_Rect{ State.Safe.x, LogTop, State.Safe.w, PromptLogHeight }
+        : SDL_Rect{ State.Game.x,
+                    State.Game.y + State.Game.h - BannerHeight,
+                    State.Game.w, BannerHeight };
       State.Toggle = { State.Safe.x + (State.Safe.w - ControlsSize) / 2,
                        ToggleTop, ControlsSize, ToggleHeight };
       State.Controls = { State.Safe.x + (State.Safe.w - ControlsSize) / 2,
@@ -1504,30 +1971,42 @@ namespace mobileui
     }
     else if(State.Gameplay)
     {
-      const int StatsHeight = Clamp(int(State.Safe.h * .20f), 150, 220);
-      const int RailWidth = Clamp(int(State.Safe.w * .31f), 440, 720);
+      // Four-line stat groups need at least 44 pixels per row to preserve the
+      // same four-pixel type used in portrait.
+      const int StatsHeight = Clamp(int(State.Safe.h * .22f), 190, 240);
+      const int RailWidth = Clamp(int(State.Safe.w * .38f), 560, 900);
       const int ToggleHeight = Clamp(int(22 * State.Density), 48, 82);
-      const int LogHeight = Clamp(int(State.Safe.h * .19f), 150, 200);
+      const int PromptLogHeight = Clamp(int(State.Safe.h * .19f), 150, 200);
+      const int BannerHeight = Clamp(int(22 * State.Density), 48, 76);
       const int ContentTop = State.Safe.y + StatsHeight + Gap;
-      const int ContentBottom = State.Safe.y + State.Safe.h - LogHeight - Gap;
+      const int ControllerBottom = State.Safe.y + State.Safe.h;
+      const int GameBottom = State.PromptActive
+        ? ControllerBottom - PromptLogHeight - Gap : ControllerBottom;
       const int RailX = State.ControllerOnLeft
         ? State.Safe.x : State.Safe.x + State.Safe.w - RailWidth;
       const int GameX = State.ControllerOnLeft
         ? RailX + RailWidth + Gap : State.Safe.x;
       const int GameRight = State.ControllerOnLeft
         ? State.Safe.x + State.Safe.w : RailX - Gap;
-      const int ControlsSize = std::min(RailWidth,
-        ContentBottom - ContentTop - ToggleHeight - Gap);
+      const int SectionTabWidth = Clamp(int(38 * State.Density), 76, 118);
+      const int MaximumControlsWidth = std::max(1,
+        RailWidth - (SectionTabWidth + Gap) * 2);
+      const int ControlsSize = std::min(MaximumControlsWidth,
+        ControllerBottom - ContentTop - ToggleHeight - Gap);
       State.Stats = { State.Safe.x, State.Safe.y, State.Safe.w, StatsHeight };
       State.Game = { GameX, ContentTop,
                      std::max(1, GameRight - GameX),
-                     std::max(1, ContentBottom - ContentTop) };
+                     std::max(1, GameBottom - ContentTop) };
       State.Toggle = { RailX, ContentTop, RailWidth, ToggleHeight };
       State.Controls = { RailX + (RailWidth - ControlsSize) / 2,
                          State.Toggle.y + State.Toggle.h + Gap,
                          ControlsSize, ControlsSize };
-      State.Log = { State.Safe.x, ContentBottom + Gap,
-                    State.Safe.w, LogHeight };
+      State.Log = State.PromptActive
+        ? SDL_Rect{ GameX, GameBottom + Gap,
+                    std::max(1, GameRight - GameX), PromptLogHeight }
+        : SDL_Rect{ State.Game.x,
+                    State.Game.y + State.Game.h - BannerHeight,
+                    State.Game.w, BannerHeight };
     }
     else if(State.ScreenTextActive
             || (State.PromptActive && !State.PromptGameplay))
@@ -1658,8 +2137,10 @@ namespace mobileui
         State.MapSource = { 0, 0, State.GameWidth, State.GameHeight };
       else
       {
-        const int Padding = std::max(4,
-          std::min(State.MapSource.w, State.MapSource.h) / 20);
+        // The legacy note list begins immediately outside the map bitmap.  A
+        // large source padding captured only the top half of that text.  Keep
+        // the crop tight and render note text separately below in mobile type.
+        const int Padding = 2;
         const int Left = std::max(0, State.MapSource.x - Padding);
         const int Top = std::max(0, State.MapSource.y - Padding);
         const int Right = std::min(State.GameWidth,
@@ -1670,6 +2151,18 @@ namespace mobileui
                             std::max(1, Bottom - Top) };
       }
       SDL_Rect Destination = State.Game;
+      SDL_Rect NotesPanel = { 0, 0, 0, 0 };
+      const int VisibleNotes = std::min(State.MapNoteCount, 6);
+      const bool MoreNotes = State.MapNoteCount > VisibleNotes;
+      const int NoteRowHeight = 40;
+      if(VisibleNotes > 0)
+      {
+        const int NotesHeight = 8 + VisibleNotes * NoteRowHeight
+                              + (MoreNotes ? 28 : 0);
+        NotesPanel = { State.Game.x, State.Game.y + State.Game.h - NotesHeight,
+                       State.Game.w, NotesHeight };
+        Destination.h = std::max(1, Destination.h - NotesHeight - 8);
+      }
       const float SourceAspect = float(State.MapSource.w) / State.MapSource.h;
       const float DestinationAspect = float(Destination.w) / Destination.h;
       if(DestinationAspect > SourceAspect)
@@ -1685,6 +2178,71 @@ namespace mobileui
         Destination.h = Height;
       }
       SDL_RenderCopy(Renderer, GameTexture, &State.MapSource, &Destination);
+      if(NotesPanel.h > 0)
+      {
+        static const Uint8 NoteColors[6][3] = {
+          { 232, 194, 78 }, { 80, 196, 220 }, { 220, 104, 176 },
+          { 116, 202, 105 }, { 230, 137, 65 }, { 202, 202, 202 }
+        };
+        Fill(Renderer, NotesPanel, 18, 16, 14, 250);
+        Frame(Renderer, NotesPanel);
+        for(int Index = 0; Index < VisibleNotes; ++Index)
+        {
+          const int RowY = NotesPanel.y + 4 + Index * NoteRowHeight;
+          SDL_Rect Row = { NotesPanel.x + 4, RowY,
+                           NotesPanel.w - 8, NoteRowHeight };
+          if(Index)
+          {
+            Color(Renderer, 72, 62, 47, 180);
+            SDL_RenderDrawLine(Renderer, Row.x, Row.y,
+                               Row.x + Row.w, Row.y);
+          }
+          SDL_Rect Badge = { Row.x + 5, Row.y + 8, 24, 24 };
+          Fill(Renderer, Badge, NoteColors[Index % 6][0],
+               NoteColors[Index % 6][1], NoteColors[Index % 6][2], 255);
+          char Number[8];
+          snprintf(Number, sizeof(Number), "%d", Index + 1);
+          CenterTextAtScale(Renderer, Badge, Number, 2, 12, 10, 8);
+          SDL_Rect TextRow = { Row.x + 38, Row.y, Row.w - 43, Row.h };
+          MenuRowText(Renderer, TextRow, State.MapNoteLabels[Index],
+                      4, 4, 240, 230, 202);
+
+          const SDL_Point SourcePoint = State.MapNotePoints[Index];
+          if(SourcePoint.x >= State.MapSource.x
+             && SourcePoint.x < State.MapSource.x + State.MapSource.w
+             && SourcePoint.y >= State.MapSource.y
+             && SourcePoint.y < State.MapSource.y + State.MapSource.h)
+          {
+            const int PointX = Destination.x
+              + (SourcePoint.x - State.MapSource.x) * Destination.w
+                / State.MapSource.w;
+            const int PointY = Destination.y
+              + (SourcePoint.y - State.MapSource.y) * Destination.h
+                / State.MapSource.h;
+            const int EndX = Badge.x + Badge.w / 2;
+            const int EndY = Badge.y + Badge.h / 2;
+            Color(Renderer, NoteColors[Index % 6][0],
+                   NoteColors[Index % 6][1], NoteColors[Index % 6][2], 235);
+            SDL_RenderDrawLine(Renderer, PointX, PointY, EndX, EndY);
+            SDL_RenderDrawLine(Renderer, PointX + 1, PointY,
+                               EndX + 1, EndY);
+            SDL_Rect Marker = { PointX - 12, PointY - 12, 24, 24 };
+            Fill(Renderer, Marker, NoteColors[Index % 6][0],
+                 NoteColors[Index % 6][1], NoteColors[Index % 6][2], 245);
+            CenterTextAtScale(Renderer, Marker, Number, 2, 12, 10, 8);
+          }
+        }
+        if(MoreNotes)
+        {
+          char More[32];
+          snprintf(More, sizeof(More), "+%d MORE NOTES",
+                   State.MapNoteCount - VisibleNotes);
+          SDL_Rect MoreRow = { NotesPanel.x + 8,
+            NotesPanel.y + 4 + VisibleNotes * NoteRowHeight,
+            NotesPanel.w - 16, 24 };
+          CenterTextAtScale(Renderer, MoreRow, More, 3, 190, 180, 155);
+        }
+      }
       return;
     }
 
@@ -1715,7 +2273,11 @@ namespace mobileui
 
   void Draw(SDL_Renderer* Renderer)
   {
-    (void)Renderer;
+    // Normal message banners overlay the map so appearing and disappearing
+    // never resizes the viewport or controller. Prompts retain their larger,
+    // reserved panel and were already painted with the console background.
+    if(State.Gameplay && !State.PromptActive)
+      PaintGameplayLog(Renderer);
   }
 
   touchresult HandleFingerDown(float NormalizedX, float NormalizedY)
@@ -1724,16 +2286,19 @@ namespace mobileui
     CancelDirectionPress();
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
-    State.TogglePressActive = Contains(State.Toggle, X, Y)
-                           && !State.QuestionChoiceCount
-                           && !State.PromptActive;
-    State.TogglePressStarted = SDL_GetTicks();
+    State.LogPressActive = ShowGameplayLog() && !State.PromptActive
+                        && Contains(State.Log, X, Y);
+    if(State.LogPressActive)
+    {
+      State.LogPressStarted = SDL_GetTicks();
+      return Result;
+    }
 
     const bool CanHoldDirection = State.Gameplay
                                && State.ControlMode == CONTROL_MOVEMENT
-                               && !State.ModeChooser
                                && !State.QuestionChoiceCount
                                && !State.PromptNumeric
+                               && !State.PromptActive
                                && !State.ScreenTextActive;
     const int ControlIndex = CanHoldDirection
                            ? GridIndexAt(State.Controls, 3, 3, X, Y) : -1;
@@ -1762,6 +2327,29 @@ namespace mobileui
     return Result;
   }
 
+  void HandleLogTimeout()
+  {
+    if(!State.LogVisible)
+      return;
+
+    const Uint32 Now = SDL_GetTicks();
+    // A stale timer event from a previous message must not hide a newer one.
+    if(Sint32(State.LogHideDeadline - Now) > 0)
+      return;
+    // Keep the latest warning visible throughout continuous movement. New
+    // messages still refresh the deadline, and release resumes the timeout.
+    if(State.LogPressActive || State.DirectionPressActive)
+    {
+      State.LogHideDeadline = Now + 750;
+      State.LogHideTimer = SDL_AddTimer(750, QueueLogHide, 0);
+      return;
+    }
+
+    State.LogHideTimer = 0;
+    State.LogVisible = false;
+    ConsoleDirty = true;
+  }
+
   touchresult HandleFinger(float NormalizedX, float NormalizedY)
   {
     touchresult Result;
@@ -1770,11 +2358,22 @@ namespace mobileui
       // Directional taps fire on finger-down for immediate feedback. Releasing
       // only stops the timer, avoiding an extra step at the end of a hold.
       CancelDirectionPress();
-      State.TogglePressActive = false;
       return Result;
     }
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+
+    if(State.LogPressActive)
+    {
+      const bool LongPress = SDL_GetTicks() - State.LogPressStarted >= 500;
+      State.LogPressActive = false;
+      if(LongPress && Contains(State.Log, X, Y))
+      {
+        Result.Kind = touchresult::TOUCH_KEY;
+        Result.KeyCode = 'M';
+      }
+      return Result;
+    }
 
     if(State.PromptNumeric)
     {
@@ -1792,7 +2391,8 @@ namespace mobileui
       return Result;
     }
 
-    if(State.PromptActive && !State.PromptGameplay)
+    if(State.PromptActive && State.PromptShowsInput
+       && !Contains(State.Controls, X, Y) && !Contains(State.Toggle, X, Y))
     {
       SDL_StartTextInput();
       Result.Kind = touchresult::TOUCH_REDRAW;
@@ -1806,38 +2406,30 @@ namespace mobileui
       return Result;
     }
 
-    if(State.ModeChooser)
-    {
-      for(int Index = 0; Index < MODE_CHOOSER_COUNT; ++Index)
-        if(Contains(ModeChooserRow(Index), X, Y))
-        {
-          if(Index == 0)
-            State.ControlMode = CONTROL_MOVEMENT;
-          else
-            SelectActionGroup(Index - 1);
-          State.ModeChooser = false;
-          State.TogglePressActive = false;
-          ConsoleDirty = true;
-          Result.Kind = touchresult::TOUCH_REDRAW;
-          return Result;
-        }
-      State.ModeChooser = false;
-      State.TogglePressActive = false;
-      ConsoleDirty = true;
-      Result.Kind = touchresult::TOUCH_REDRAW;
-      return Result;
-    }
-
     const bool MapCursor = State.MapScreen && State.PromptActive
                         && State.PromptGameplay && !State.PromptShowsInput
                         && !State.QuestionChoiceCount;
     if(MapCursor && Contains(State.Toggle, X, Y))
     {
-      State.TogglePressActive = false;
       Result.Kind = touchresult::TOUCH_KEY;
       Result.KeyCode = KEY_CONTROLLER_B;
       return Result;
     }
+
+    if(ShowControlSectionTabs())
+      for(int Index = 0; Index < CONTROL_SECTION_COUNT; ++Index)
+        if(Contains(ControlSectionTab(Index), X, Y))
+        {
+          if(Index == 0)
+            State.ControlMode = CONTROL_MOVEMENT;
+          else if(ActionCountForGroup(Index - 1) > 0)
+            SelectActionGroup(Index - 1);
+          else
+            return Result;
+          ConsoleDirty = true;
+          Result.Kind = touchresult::TOUCH_REDRAW;
+          return Result;
+        }
 
     if(!State.Gameplay && State.MenuActive)
       for(int Index = 0; Index < State.MenuOptionCount; ++Index)
@@ -1848,23 +2440,14 @@ namespace mobileui
           return Result;
         }
 
-    if(Contains(State.Toggle, X, Y) && !State.QuestionChoiceCount)
+    if(Contains(State.Toggle, X, Y) && !State.QuestionChoiceCount
+       && !State.Gameplay)
     {
-      const bool LongPress = State.TogglePressActive
-                          && SDL_GetTicks() - State.TogglePressStarted >= 500;
-      State.TogglePressActive = false;
-      if(State.Gameplay && LongPress)
-        State.ModeChooser = true;
-      else if(State.Gameplay)
-        AdvanceControlSection();
-      else
-        State.MenuDirectionMode = !State.MenuDirectionMode;
+      State.MenuDirectionMode = !State.MenuDirectionMode;
       ConsoleDirty = true;
       Result.Kind = touchresult::TOUCH_REDRAW;
       return Result;
     }
-
-    State.TogglePressActive = false;
 
     const bool DynamicActionGrid = State.Gameplay
                                 && State.ControlMode == CONTROL_ACTIONS
@@ -1962,8 +2545,15 @@ namespace mobileui
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_harminoff_ivan_IvanActivity_nativeSetSafeInsets(JNIEnv*, jclass, jint Left,
                                                        jint Top, jint Right,
-                                                       jint Bottom, jfloat Density)
+                                                       jint Bottom,
+                                                       jint CutoutLeft,
+                                                       jint CutoutTop,
+                                                       jint CutoutRight,
+                                                       jint CutoutBottom,
+                                                       jfloat Density)
 {
-  mobileui::SetSafeInsets(Left, Top, Right, Bottom, Density);
+  mobileui::SetSafeInsets(Left, Top, Right, Bottom,
+                          CutoutLeft, CutoutTop, CutoutRight, CutoutBottom,
+                          Density);
 }
 #endif

@@ -60,11 +60,17 @@ rotation.
 
 - The movement pad preserves IVAN's eight directions plus wait in the center;
   holding any direction repeats movement after a short initial delay.
-- Tapping the control header cycles DIRECTIONS, CONTEXT, ITEMS, CHARACTER,
-  MOVE, and SYSTEM sections. Holding it opens a direct section chooser.
+- Six direct category tabs flank the controls: DIRECTIONS, CONTEXT, and ITEMS
+  on the left; CHARACTER, MOVE, and SYSTEM on the right. The active tab is
+  highlighted and categories with no currently usable commands are dimmed.
 - Contextual command filtering keeps actions relevant to the current game
   state, while menu, inventory, map, question, and text-prompt modes expose
   touch-specific controls.
+- The message area stays out of the way until a new message arrives. Its
+  single-row banner remains visible long enough to read, pauses while movement
+  is held, and opens the full message history when held.
+- Landscape keeps the map and transient message row separate from the enlarged
+  action rail; portrait stacks the same information into a readable layout.
 - Controller handedness can be changed from the mobile settings.
 - Named commands resolve through IVAN's active command table, preserving its
   direction layout and custom bindings.

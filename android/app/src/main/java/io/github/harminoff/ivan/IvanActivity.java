@@ -3,6 +3,9 @@ package io.github.harminoff.ivan;
 import android.os.Bundle;
 import android.system.Os;
 import android.util.Log;
+import android.graphics.Rect;
+import android.view.DisplayCutout;
+import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -19,7 +22,10 @@ public final class IvanActivity extends SDLActivity {
     private static final String CONTENT_VERSION = "0.59-de528ac-android-2";
     private boolean statusBarHidden;
 
-    private static native void nativeSetSafeInsets(int left, int top, int right, int bottom, float density);
+    private static native void nativeSetSafeInsets(int left, int top, int right, int bottom,
+                                                   int cutoutLeft, int cutoutTop,
+                                                   int cutoutRight, int cutoutBottom,
+                                                   float density);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,37 +47,94 @@ public final class IvanActivity extends SDLActivity {
 
         super.onCreate(savedInstanceState);
 
+        configureEdgeToEdgeWindow();
+
         getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
             int left = 0;
             int top = 0;
             int right = 0;
             int bottom = 0;
+            Rect displayCutout = new Rect();
             if (android.os.Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets safe = insets.getInsets(
-                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                left = safe.left;
-                top = safe.top;
-                right = safe.right;
-                bottom = safe.bottom;
-            } else if (android.os.Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
-                left = insets.getDisplayCutout().getSafeInsetLeft();
-                top = insets.getDisplayCutout().getSafeInsetTop();
-                right = insets.getDisplayCutout().getSafeInsetRight();
-                bottom = insets.getDisplayCutout().getSafeInsetBottom();
+                int barTypes = WindowInsets.Type.navigationBars();
+                if (!statusBarHidden) {
+                    barTypes |= WindowInsets.Type.statusBars();
+                }
+                android.graphics.Insets bars = insets.getInsets(barTypes);
+                android.graphics.Insets cutout = insets.getInsets(WindowInsets.Type.displayCutout());
+                left = statusBarHidden ? bars.left : Math.max(bars.left, cutout.left);
+                top = statusBarHidden ? bars.top : Math.max(bars.top, cutout.top);
+                right = statusBarHidden ? bars.right : Math.max(bars.right, cutout.right);
+                bottom = statusBarHidden ? bars.bottom : Math.max(bars.bottom, cutout.bottom);
+                displayCutout = findDisplayCutout(insets.getDisplayCutout());
+            } else if (android.os.Build.VERSION.SDK_INT >= 28) {
+                DisplayCutout cutout = insets.getDisplayCutout();
+                left = statusBarHidden ? insets.getSystemWindowInsetLeft()
+                        : Math.max(insets.getSystemWindowInsetLeft(),
+                                   cutout != null ? cutout.getSafeInsetLeft() : 0);
+                top = statusBarHidden ? 0 : Math.max(insets.getSystemWindowInsetTop(),
+                                cutout != null ? cutout.getSafeInsetTop() : 0);
+                right = statusBarHidden ? insets.getSystemWindowInsetRight()
+                        : Math.max(insets.getSystemWindowInsetRight(),
+                                   cutout != null ? cutout.getSafeInsetRight() : 0);
+                bottom = statusBarHidden ? insets.getSystemWindowInsetBottom()
+                        : Math.max(insets.getSystemWindowInsetBottom(),
+                                   cutout != null ? cutout.getSafeInsetBottom() : 0);
+                displayCutout = findDisplayCutout(cutout);
             } else {
                 left = insets.getSystemWindowInsetLeft();
-                top = insets.getSystemWindowInsetTop();
+                top = statusBarHidden ? 0 : insets.getSystemWindowInsetTop();
                 right = insets.getSystemWindowInsetRight();
                 bottom = insets.getSystemWindowInsetBottom();
             }
+            if (!statusBarHidden) {
+                displayCutout.setEmpty();
+            }
             try {
-                nativeSetSafeInsets(left, top, right, bottom, getResources().getDisplayMetrics().density);
+                nativeSetSafeInsets(left, top, right, bottom,
+                        displayCutout.left, displayCutout.top,
+                        displayCutout.right, displayCutout.bottom,
+                        getResources().getDisplayMetrics().density);
             } catch (UnsatisfiedLinkError ignored) {
                 Log.d(TAG, "Native layout is not ready for insets yet");
             }
             return insets;
         });
         getWindow().getDecorView().requestApplyInsets();
+    }
+
+    private void configureEdgeToEdgeWindow() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.layoutInDisplayCutoutMode = android.os.Build.VERSION.SDK_INT >= 30
+                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attributes);
+        }
+    }
+
+    private Rect findDisplayCutout(DisplayCutout cutout) {
+        if (cutout == null) {
+            return new Rect();
+        }
+        Rect result = new Rect();
+        for (Rect bounds : cutout.getBoundingRects()) {
+            if (!bounds.isEmpty()) {
+                if (result.isEmpty() || bounds.width() * bounds.height()
+                        > result.width() * result.height()) {
+                    result.set(bounds);
+                }
+            }
+        }
+        return result;
     }
 
     @Override
@@ -93,6 +156,7 @@ public final class IvanActivity extends SDLActivity {
     }
 
     private void applyStatusBarVisibility() {
+        configureEdgeToEdgeWindow();
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) {
