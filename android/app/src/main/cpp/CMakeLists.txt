@@ -12,7 +12,7 @@ add_compile_definitions(
     ANDROID
     UNIX
     USE_SDL
-    IVAN_VERSION="0.59-android.1"
+    IVAN_VERSION="0.59-android.4"
     PCRE_STATIC
     XBRZLIB_NOINLINEGETSETPIX
 )
