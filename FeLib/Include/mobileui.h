@@ -18,6 +18,17 @@ namespace mobileui
     ACTION_SYSTEM = 4,
     ACTION_GROUPS = 5
   };
+  enum feedbacktype
+  {
+    FEEDBACK_UI = 0,
+    FEEDBACK_HIT = 1,
+    FEEDBACK_DAMAGE = 2,
+    FEEDBACK_CRITICAL = 3,
+    FEEDBACK_WARNING = 4,
+    FEEDBACK_DEATH = 5,
+    FEEDBACK_ZOOM_LIMIT = 6,
+    FEEDBACK_BLOCK = 7
+  };
 
   struct touchresult
   {
@@ -33,13 +44,18 @@ namespace mobileui
                      int CutoutRight, int CutoutBottom, float Density);
   void SetControllerOnLeft(bool OnLeft);
   void SetStatusBarHidden(bool Hidden);
-  void SetMapFocus(int X, int Y);
+  void SetHapticsEnabled(bool Enabled);
+  void SetHapticStrength(int Strength);
+  void Pulse(feedbacktype Type, int Magnitude = 100);
+  void SetMapFocus(int X, int Y, int PlayerX, int PlayerY);
   void SetStats(const char* Line1, const char* Line2,
                 const char* Line3, const char* Line4);
   void SetLog(const char* Message);
   void SetPrompt(const char* Prompt, const char* Input = 0,
                  bool Numeric = false);
   void ClearPrompt();
+  void SetPaperDollScreen(bool Active, int X = 0, int Y = 0,
+                          int Width = 0, int Height = 0);
   void SetMapScreen(bool Active);
   void SetMapSourceBounds(int X, int Y, int Width, int Height);
   void SetMapNotes(const char* const* Notes, const int* X, const int* Y,
@@ -59,6 +75,9 @@ namespace mobileui
   void DrawGame(SDL_Renderer* Renderer, SDL_Texture* GameTexture);
   void Draw(SDL_Renderer* Renderer);
   touchresult HandleFingerDown(float NormalizedX, float NormalizedY);
+  bool HandleFingerMotion(float NormalizedX, float NormalizedY);
+  bool HandlePinch(float NormalizedX, float NormalizedY, float DistanceDelta,
+                   int FingerCount);
   touchresult HandleDirectionRepeat();
   void HandleLogTimeout();
   touchresult HandleFinger(float NormalizedX, float NormalizedY);

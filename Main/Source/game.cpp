@@ -903,8 +903,13 @@ truth game::Init(cfestring& loadBaseName)
       commandsystem::ClearSwapWeapons(); //to clear the memory from possibly previously loaded game
       craftcore::ClearSuspendedList(); //to clear the memory from possibly previously loaded game
       bool PlayerHasReceivedAllGodsKnownBonus = false;
+#ifdef ANDROID
+      ADD_MESSAGE("You commence your journey to Attnam. Use the direction pad "
+                  "to move and the action categories for other commands.");
+#else
       ADD_MESSAGE("You commence your journey to Attnam. Use direction keys to "
                   "move, '>' to enter an area and '?' to view other commands.");
+#endif
 
       if(IsXMas())
       {
@@ -3112,7 +3117,8 @@ void game::DrawEverythingNoBlit(truth AnimationDraw)
   if(Player->IsEnabled())
   {
     v2 MobileFocus = CalculateScreenCoordinates(Player->GetPos()) + v2(8, 8);
-    mobileui::SetMapFocus(MobileFocus.X, MobileFocus.Y);
+    mobileui::SetMapFocus(MobileFocus.X, MobileFocus.Y,
+                          Player->GetPos().X, Player->GetPos().Y);
   }
 #endif
 
@@ -4421,12 +4427,18 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
       BackGround.ActivateFastFlag();
       DOUBLE_BUFFER->FastBlit(&BackGround);
       festring msg =
+#ifdef ANDROID
+        "Use the direction pad to move the cursor.\n"
+        "SELECT accepts the current tile.\n"
+        "BACK cancels.";
+#else
         "Direction keys move cursor\n"
         "space accepts\n"
         "ESC cancels\n"
         "< find upstairs\n"
         "> find downstairs\n"
         "mouse wheel scrolls when the mouse is on the map edge";
+#endif
       specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp, msg);
       BackGround.FastBlit(DOUBLE_BUFFER);
       continue;
@@ -6921,8 +6933,13 @@ truth game::CommandQuestion()
   else
   {
     v2 Pos = PetVector[0]->GetPos();
+#ifdef ANDROID
+    Pos = PositionQuestion(CONST_S("Choose a companion to command."),
+                           Pos, &PetHandler, &CommandKeyHandler);
+#else
     Pos = PositionQuestion(CONST_S("Whom do you wish to command? [direction keys/'+'/'-'/'a'll/space/esc]"),
                            Pos, &PetHandler, &CommandKeyHandler);
+#endif
 
     if(Pos == ERROR_V2)
       return false;
@@ -6962,8 +6979,13 @@ void game::NameQuestion()
   if(PetVector.size() == 1)
     PetVector[0]->TryToName();
   else
+#ifdef ANDROID
+    PositionQuestion(CONST_S("Choose a companion to name."),
+                     PetVector[0]->GetPos(), &PetHandler, &NameKeyHandler);
+#else
     PositionQuestion(CONST_S("Who do you want to name? [direction keys/'+'/'-'/'n'ame/esc]"),
                      PetVector[0]->GetPos(), &PetHandler, &NameKeyHandler);
+#endif
 }
 
 void game::PetHandler(v2 CursorPos)

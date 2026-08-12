@@ -865,6 +865,10 @@ int character::TakeHit(character* Enemy, item* Weapon,
 
     if(!TrueDamage || (Weapon && !Weapon->Exists()))
     {
+#ifdef ANDROID
+      if(IsPlayer())
+        mobileui::Pulse(mobileui::FEEDBACK_BLOCK);
+#endif
       if(Enemy->CanBeSeenByPlayer())
         DeActivateVoluntaryAction(CONST_S("The attack of ")
                                   + Enemy->GetName(DEFINITE)
@@ -883,6 +887,12 @@ int character::TakeHit(character* Enemy, item* Weapon,
                                          Dir, false, Critical, true,
                                          Type == BITE_ATTACK
                                          && Enemy->BiteCapturesBodyPart());
+#ifdef ANDROID
+  if(DoneDamage > 0 && Enemy->IsPlayer() && !IsPlayer())
+    mobileui::Pulse(Critical ? mobileui::FEEDBACK_CRITICAL
+                             : mobileui::FEEDBACK_HIT,
+                    Min(100, 40 + DoneDamage * 60 / Max(GetMaxHP(), 1)));
+#endif
   truth Succeeded = (GetBodyPart(BodyPart)
                      && HitEffect(Enemy, Weapon, HitPos, Type,
                                   BodyPart, Dir, !DoneDamage, Critical, DoneDamage))
@@ -2678,6 +2688,10 @@ truth character::CheckDeath(cfestring& Msg, ccharacter* Murderer, ulong DeathFla
     if(IsPlayer() && game::WizardModeIsActive())
       ADD_MESSAGE("Death message: %s. Score: %ld.", NewMsg.CStr(), game::GetScore());
 
+#ifdef ANDROID
+    if(IsPlayer())
+      mobileui::Pulse(mobileui::FEEDBACK_DEATH);
+#endif
     Die(Murderer, NewMsg, DeathFlags);
     return true;
   }
@@ -3659,6 +3673,13 @@ truth character::AutoPlayAICommand(int& rKey)
 void character::PerformPlayerCommand(int Key, bool& HasActed, bool& ValidKeyPressed)
 {
 #ifdef ANDROID
+  if(Key == KEY_MOBILE_PAPER_DOLL)
+  {
+    HasActed = commandsystem::ShowPaperDoll(this);
+    ValidKeyPressed = true;
+    return;
+  }
+
   // Named mobile buttons refer to IVAN's command table instead of fixed
   // characters, so alternate/custom key maps continue to work.
   if(Key > KEY_MOBILE_COMMAND_BASE && Key <= KEY_MOBILE_COMMAND_MAX)
@@ -3798,10 +3819,16 @@ void character::GetPlayerCommand()
           BeginTemporaryState(PANIC, 500 + RAND_N(500));
         }
 
+#ifdef ANDROID
+        mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
         game::AskForKeyPress(CONST_S("You are horrified by your situation! [press any key to continue]"));
       }
       else if(ivanconfig::GetWarnAboutDanger())
       {
+#ifdef ANDROID
+        mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
         if(game::GetDangerFound() > 50.)
           game::AskForKeyPress(CONST_S("You sense great danger! [press any key to continue]"));
         else
@@ -5279,6 +5306,13 @@ int character::ReceiveBodyPartDamage(character* Damager, int Damage, int Type, i
     }
   }
 
+#ifdef ANDROID
+  if(IsPlayer())
+    mobileui::Pulse(Critical ? mobileui::FEEDBACK_CRITICAL
+                             : mobileui::FEEDBACK_DAMAGE,
+                    Min(100, 35 + Damage * 65 / Max(GetMaxHP(), 1)));
+#endif
+
   if(BodyPart->GetMainMaterial())
   {
     if(BodyPart->CanBeBurned()
@@ -5324,7 +5358,12 @@ int character::ReceiveBodyPartDamage(character* Damager, int Damage, int Type, i
       SendNewDrawRequest();
 
       if(IsPlayer())
+      {
+#ifdef ANDROID
+        mobileui::Pulse(mobileui::FEEDBACK_CRITICAL);
+#endif
         game::AskForKeyPress(CONST_S("Bodypart destroyed! [press any key to continue]"));
+      }
     }
     else
     {
@@ -5366,7 +5405,12 @@ int character::ReceiveBodyPartDamage(character* Damager, int Damage, int Type, i
         ADD_MESSAGE("It vanishes.");
 
       if(IsPlayer())
+      {
+#ifdef ANDROID
+        mobileui::Pulse(mobileui::FEEDBACK_CRITICAL);
+#endif
         game::AskForKeyPress(CONST_S("Bodypart severed! [press any key to continue]"));
+      }
     }
 
     if(CanPanicFromSeveredBodyPart()
@@ -11567,7 +11611,11 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
 
   int Chosen = 0;
   truth EquipmentChanged = false;
+#ifdef ANDROID
+  felist List(CONST_S("Equipment"));
+#else
   felist List(CONST_S("Equipment menu [ESC exits]"));
+#endif
   festring Entry;
   long TotalEquippedWeight;
 

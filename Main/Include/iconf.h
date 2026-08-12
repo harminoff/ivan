@@ -76,6 +76,8 @@ class ivanconfig
 #ifdef ANDROID
   static truth IsMobileControllerOnLeft() { return MobileControllerSide.Value == 1; }
   static truth IsMobileStatusBarHidden() { return MobileStatusBarHidden.Value; }
+  static truth IsMobileVibrationEnabled() { return MobileVibration.Value; }
+  static int GetMobileVibrationStrength() { return MobileVibrationStrength.Value; }
 #endif
   static truth IsOutlinedGfx() { return OutlinedGfx.Value; }
   static long GetVolume() { return Volume.Value; }
@@ -163,6 +165,9 @@ class ivanconfig
   static void MobileControllerSideDisplayer(const cycleoption*, festring&);
   static void MobileControllerSideChanger(cycleoption*, long);
   static void MobileStatusBarHiddenChanger(truthoption*, truth);
+  static void MobileVibrationChanger(truthoption*, truth);
+  static void MobileVibrationStrengthDisplayer(const cycleoption*, festring&);
+  static void MobileVibrationStrengthChanger(cycleoption*, long);
 #endif
   static void UseExtraMenuGraphicsChanger(truthoption*, truth);
   static void WorldSizeConfigDisplayer(const cycleoption* O, festring& Entry);
@@ -290,6 +295,8 @@ class ivanconfig
 #ifdef ANDROID
   static cycleoption MobileControllerSide;
   static truthoption MobileStatusBarHidden;
+  static truthoption MobileVibration;
+  static cycleoption MobileVibrationStrength;
 #endif
   static truthoption UseExtraMenuGraphics;
 };

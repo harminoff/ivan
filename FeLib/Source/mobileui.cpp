@@ -78,6 +78,22 @@ namespace
     int QuestionChoices[MAX_QUESTION_CHOICES] = { 0 };
     int MapFocusX = 352;
     int MapFocusY = 240;
+    int PlayerMapX = 0;
+    int PlayerMapY = 0;
+    bool HasPlayerMapPosition = false;
+    float CanvasZoom = 2.f;
+    int CanvasPanX = 0;
+    int CanvasPanY = 0;
+    bool CanvasPressActive = false;
+    bool CanvasPanning = false;
+    Uint32 CanvasPressStarted = 0;
+    int CanvasPressX = 0;
+    int CanvasPressY = 0;
+    int CanvasLastX = 0;
+    int CanvasLastY = 0;
+    int SuppressedFingerUps = 0;
+    bool HapticsEnabled = true;
+    int HapticStrength = 75;
     SDL_Rect Safe = { 0, 0, 1, 1 };
     SDL_Rect Header = { 0, 0, 1, 1 };
     SDL_Rect Game = { 0, 0, 1, 1 };
@@ -86,6 +102,7 @@ namespace
     SDL_Rect Controls = { 0, 0, 1, 1 };
     SDL_Rect Toggle = { 0, 0, 1, 1 };
     SDL_Rect MapSource = { 0, 0, 1, 1 };
+    SDL_Rect CanvasDestination = { 0, 0, 1, 1 };
     std::string StatsLines[4];
     std::string LogMessage;
     bool PromptActive = false;
@@ -97,6 +114,8 @@ namespace
     bool ScreenTextActive = false;
     std::string ScreenText;
     std::string ScreenTextTitle = "STORY";
+    bool PaperDollScreen = false;
+    SDL_Rect PaperDollSource = { 0, 0, 0, 0 };
     bool MapScreen = false;
     SDL_Rect MapOverlaySource = { 0, 0, 0, 0 };
     enum { MAX_MAP_NOTES = 12 };
@@ -122,7 +141,9 @@ namespace
 
   enum { DIRECTION_REPEAT_DELAY_MS = 350,
          DIRECTION_REPEAT_INTERVAL_MS = 110,
-         LOG_VISIBLE_MS = 6000 };
+         LOG_VISIBLE_MS = 6000,
+         CANVAS_PAN_HOLD_MS = 250,
+         CANVAS_PAN_SLOP = 8 };
 
   Uint32 QueueDirectionRepeat(Uint32, void*)
   {
@@ -776,6 +797,50 @@ namespace
     while(!Result.empty()
           && (Result.back() == ' ' || Result.back() == '\n'))
       Result.pop_back();
+
+    const char DesktopContinue[] = "Press any key to continue.";
+    size_t Instruction = Result.find(DesktopContinue);
+    while(Instruction != std::string::npos)
+    {
+      Result.replace(Instruction, sizeof(DesktopContinue) - 1,
+                     "Tap anywhere to continue.");
+      Instruction = Result.find(DesktopContinue,
+                                Instruction + sizeof(DesktopContinue));
+    }
+    return Result;
+  }
+
+  std::string FormatPromptText(const std::string& Value)
+  {
+    std::string Result = Value;
+
+    // Desktop commands embed keyboard directions in their question text.
+    // The Android input surface already shows the available direction pad, so
+    // replace those instructions without changing the underlying command.
+    size_t Start = Result.find("[press a direction key");
+    if(Start != std::string::npos)
+    {
+      const size_t End = Result.find(']', Start);
+      if(End != std::string::npos)
+        Result.replace(Start, End - Start + 1,
+                       "Choose a direction below.");
+    }
+
+    const char* ObsoleteHelp[] = { "[F1 - help]", "[press F1 for help]" };
+    for(size_t Index = 0;
+        Index < sizeof(ObsoleteHelp) / sizeof(ObsoleteHelp[0]); ++Index)
+    {
+      while((Start = Result.find(ObsoleteHelp[Index])) != std::string::npos)
+        Result.erase(Start, std::strlen(ObsoleteHelp[Index]));
+    }
+
+    const char ContinueText[] = "[press any key to continue]";
+    while((Start = Result.find(ContinueText)) != std::string::npos)
+      Result.replace(Start, sizeof(ContinueText) - 1,
+                     "Tap a control to continue.");
+
+    while(!Result.empty() && std::isspace((unsigned char)Result.back()))
+      Result.pop_back();
     return Result;
   }
 
@@ -815,6 +880,39 @@ namespace
       ? Rect.y + (Rect.h - TotalHeight) / 2 : Rect.y + 8;
     for(size_t Index = 0; Index < Lines.size(); ++Index, Y += LineAdvance)
       Text(Renderer, Rect.x + 10, Y, Lines[Index].c_str(), Scale);
+  }
+
+  void CenteredWrappedText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                           const std::string& Value, int MaximumScale = 4)
+  {
+    if(Value.empty())
+      return;
+    int Scale = 1;
+    std::vector<std::string> Lines;
+    for(int Candidate = MaximumScale; Candidate >= 1; --Candidate)
+    {
+      const int Columns = std::max(1, (Rect.w - 20) / (Candidate * 6));
+      std::vector<std::string> CandidateLines = WrapText(Value, Columns);
+      const int LineAdvance = Candidate * 8;
+      if((int(CandidateLines.size()) * LineAdvance <= Rect.h - 16)
+         || Candidate == 1)
+      {
+        Scale = Candidate;
+        Lines.swap(CandidateLines);
+        break;
+      }
+    }
+    const int LineAdvance = Scale * 8;
+    const int TotalHeight = (int(Lines.size()) - 1) * LineAdvance
+                          + Scale * 7;
+    int Y = Rect.y + (Rect.h - TotalHeight) / 2;
+    for(const std::string& Line : Lines)
+    {
+      const int Width = TextWidth(Line.c_str(), Scale);
+      Text(Renderer, Rect.x + (Rect.w - Width) / 2, Y,
+           Line.c_str(), Scale);
+      Y += LineAdvance;
+    }
   }
 
   void CenterText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
@@ -1156,10 +1254,12 @@ namespace
   {
     const bool MainMenu = MainMenuPresentation();
     const int Padding = Clamp(int(8 * State.Density), 10, 28);
-    const int SubtitleHeight = MainMenu
+    int SubtitleHeight = MainMenu
       ? Clamp(int(24 * State.Density), 48, 86)
       : (State.MenuSubtitle.empty() ? 0
       : Clamp(int(18 * State.Density), 36, 64));
+    if(!MainMenu && State.MenuSubtitle.size() > 80)
+      SubtitleHeight = Clamp(int(42 * State.Density), 96, 160);
     const int FooterHeight = MainMenu ? 0
       : Clamp(int(16 * State.Density), 32, 54);
     SDL_Rect Content = { State.Game.x + Padding, State.Game.y + Padding,
@@ -1169,11 +1269,11 @@ namespace
     if(SubtitleHeight)
     {
       SDL_Rect Subtitle = { Content.x, Content.y, Content.w, SubtitleHeight };
-      CenterText(Renderer, Subtitle,
-                 MainMenu ? "ITER VEHEMENS AD NECEM"
-                          : State.MenuSubtitle.c_str(),
-                 5, MainMenu ? 205 : 190,
-                 MainMenu ? 48 : 180, MainMenu ? 42 : 155);
+      if(MainMenu)
+        CenterText(Renderer, Subtitle, "ITER VEHEMENS AD NECEM",
+                   5, 205, 48, 42);
+      else
+        WrappedText(Renderer, Subtitle, State.MenuSubtitle, true, 140, 4);
       Content.y += SubtitleHeight;
       Content.h -= SubtitleHeight;
     }
@@ -1296,6 +1396,18 @@ namespace
         snprintf(Buffer, BufferSize, "OPTION");
       return;
     }
+    if(State.PromptText.find("engrave a square") != std::string::npos)
+    {
+      if(Key == '.')
+        snprintf(Buffer, BufferSize, "SQUARE");
+      else if(Key == 'i')
+        snprintf(Buffer, BufferSize, "ITEM");
+      else if(Key == KEY_ESC || Key == KEY_CONTROLLER_B)
+        snprintf(Buffer, BufferSize, "BACK");
+      else
+        snprintf(Buffer, BufferSize, "OPTION");
+      return;
+    }
     if(Key == KEY_ESC || Key == KEY_CONTROLLER_B)
       snprintf(Buffer, BufferSize, "BACK");
     else if(Key == KEY_ENTER || Key == KEY_CONTROLLER_A)
@@ -1322,49 +1434,77 @@ namespace
 
     if(!State.Gameplay)
     {
+      Fill(Renderer, State.Header, 18, 16, 14, 245);
       Frame(Renderer, State.Header);
       SDL_Rect GameFrame = { State.Game.x - 5, State.Game.y - 5,
                              State.Game.w + 10, State.Game.h + 10 };
       Frame(Renderer, GameFrame);
-      CenterText(Renderer, State.Header,
-                  State.MenuActive ? State.MenuTitle.c_str()
-                                   : (State.ScreenTextActive
-                                      ? State.ScreenTextTitle.c_str()
-                                       : (State.PromptActive
-                                         && !State.PromptGameplay
-                                           ? "CREATE CHARACTER" : "IVAN")),
-                 7, MainMenuPresentation() ? 210
-                                            : (State.MenuActive ? 240 : 210),
-                 MainMenuPresentation() ? 55
-                                            : (State.MenuActive ? 230 : 55),
-                 MainMenuPresentation() ? 45
-                                            : (State.MenuActive ? 202 : 45));
+      SDL_Rect HeaderText = State.Header;
+      if(State.Width < State.Height
+         && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
+      {
+        const int CutoutBottom = State.DisplayCutout.y
+                               + State.DisplayCutout.h;
+        if(State.DisplayCutout.y < HeaderText.y + HeaderText.h
+           && CutoutBottom > HeaderText.y)
+        {
+          const int Pad = Clamp(int(3 * State.Density), 5, 14);
+          const int HeaderBottom = HeaderText.y + HeaderText.h;
+          HeaderText.y = std::min(HeaderBottom - 1, CutoutBottom + Pad);
+          HeaderText.h = std::max(1, HeaderBottom - HeaderText.y);
+        }
+      }
+      const std::string HeaderTitle = State.MenuActive
+        ? State.MenuTitle
+        : (State.ScreenTextActive
+           ? State.ScreenTextTitle
+           : (State.PromptActive && !State.PromptGameplay
+              ? (State.PromptNumeric ? "SELECT QUANTITY" : "CREATE CHARACTER")
+              : "IVAN"));
+      if(State.MenuActive && HeaderTitle.size() > 24)
+        CenteredWrappedText(Renderer, HeaderText, HeaderTitle, 5);
+      else
+        CenterText(Renderer, HeaderText, HeaderTitle.c_str(), 7,
+                   MainMenuPresentation() ? 210
+                                           : (State.MenuActive ? 240 : 210),
+                   MainMenuPresentation() ? 55
+                                           : (State.MenuActive ? 230 : 55),
+                   MainMenuPresentation() ? 45
+                                           : (State.MenuActive ? 202 : 45));
       if(State.PromptActive && !State.PromptGameplay)
       {
         const int Pad = Clamp(int(18 * State.Density), 24, 54);
         SDL_Rect Body = { State.Game.x + Pad, State.Game.y + Pad,
                           State.Game.w - Pad * 2, State.Game.h - Pad * 2 };
-        const int TopicHeight = Clamp(Body.h * 28 / 100, 90, 240);
-        SDL_Rect Topic = { Body.x, Body.y, Body.w, TopicHeight };
-        WrappedText(Renderer, Topic, State.PromptText);
+        if(State.PromptNumeric)
+        {
+          WrappedText(Renderer, Body, State.PromptText);
+        }
+        else
+        {
+          const int TopicHeight = Clamp(Body.h * 28 / 100, 90, 240);
+          SDL_Rect Topic = { Body.x, Body.y, Body.w, TopicHeight };
+          WrappedText(Renderer, Topic, State.PromptText);
 
-        const int FieldHeight = Clamp(int(52 * State.Density), 92, 150);
-        SDL_Rect Field = { Body.x + Clamp(Body.w / 14, 18, 64),
-                           Body.y + TopicHeight + Clamp(Body.h / 18, 14, 48),
-                           Body.w - Clamp(Body.w / 7, 36, 128), FieldHeight };
-        Fill(Renderer, Field, 10, 8, 8, 245);
-        Frame(Renderer, Field);
-        std::string Entry = State.PromptInput;
-        Entry += '_';
-        CenterText(Renderer, Field, Entry.c_str(), 7, 240, 230, 202);
+          const int FieldHeight = Clamp(int(52 * State.Density), 92, 150);
+          SDL_Rect Field = { Body.x + Clamp(Body.w / 14, 18, 64),
+                             Body.y + TopicHeight + Clamp(Body.h / 18, 14, 48),
+                             Body.w - Clamp(Body.w / 7, 36, 128), FieldHeight };
+          Fill(Renderer, Field, 10, 8, 8, 245);
+          Frame(Renderer, Field);
+          std::string Entry = State.PromptInput;
+          Entry += '_';
+          CenterText(Renderer, Field, Entry.c_str(), 7, 240, 230, 202);
 
-        SDL_Rect Hint = { Body.x,
-                          std::min(Body.y + Body.h - FieldHeight,
-                                   Field.y + Field.h + Clamp(Body.h / 12, 20, 64)),
-                          Body.w, FieldHeight };
-        CenterText(Renderer, Hint, "TYPE YOUR NAME - PRESS ENTER", 4,
-                   190, 180, 155);
-        return;
+          SDL_Rect Hint = { Body.x,
+                            std::min(Body.y + Body.h - FieldHeight,
+                                     Field.y + Field.h
+                                       + Clamp(Body.h / 12, 20, 64)),
+                            Body.w, FieldHeight };
+          CenterText(Renderer, Hint, "TAP FIELD, TYPE, THEN TAP DONE", 4,
+                     190, 180, 155);
+          return;
+        }
       }
       if(State.ScreenTextActive)
       {
@@ -1413,7 +1553,7 @@ namespace
         SDL_Rect Hint = { Card.x + Pad, Field.y + Field.h,
                           Card.w - Pad * 2,
                           std::max(1, Card.y + Card.h - Field.y - Field.h) };
-        CenterText(Renderer, Hint, "TAP TO TYPE - PRESS ENTER", 4,
+        CenterText(Renderer, Hint, "TAP FIELD TO TYPE, THEN SELECT", 4,
                    190, 180, 155);
       }
     }
@@ -1600,6 +1740,44 @@ namespace mobileui
     Env->DeleteLocalRef(Activity);
   }
 
+  void SetHapticsEnabled(bool Enabled)
+  {
+    State.HapticsEnabled = Enabled;
+  }
+
+  void SetHapticStrength(int Strength)
+  {
+    static const int StrengthPercent[] = { 50, 75, 100 };
+    State.HapticStrength = StrengthPercent[Clamp(Strength, 0, 2)];
+  }
+
+  void Pulse(feedbacktype Type, int Magnitude)
+  {
+    if(!State.HapticsEnabled)
+      return;
+
+    JNIEnv* Env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    jobject Activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if(!Env || !Activity)
+      return;
+
+    jclass ActivityClass = Env->GetObjectClass(Activity);
+    if(ActivityClass)
+    {
+      jmethodID Method = Env->GetMethodID(ActivityClass,
+                                          "vibrateFeedback", "(II)V");
+      if(Method)
+      {
+        const int Strength = Clamp(State.HapticStrength
+                                   * Clamp(Magnitude, 1, 100) / 100,
+                                   1, 100);
+        Env->CallVoidMethod(Activity, Method, int(Type), Strength);
+      }
+      Env->DeleteLocalRef(ActivityClass);
+    }
+    Env->DeleteLocalRef(Activity);
+  }
+
   void SetSafeInsets(int Left, int Top, int Right, int Bottom,
                      int CutoutLeft, int CutoutTop,
                      int CutoutRight, int CutoutBottom, float Density)
@@ -1624,10 +1802,22 @@ namespace mobileui
     SDL_PushEvent(&Event);
   }
 
-  void SetMapFocus(int X, int Y)
+  void SetMapFocus(int X, int Y, int PlayerX, int PlayerY)
   {
+    const bool PlayerMoved = State.HasPlayerMapPosition
+      && (State.PlayerMapX != PlayerX || State.PlayerMapY != PlayerY);
     State.MapFocusX = X;
     State.MapFocusY = Y;
+    State.PlayerMapX = PlayerX;
+    State.PlayerMapY = PlayerY;
+    State.HasPlayerMapPosition = true;
+    if(PlayerMoved)
+    {
+      State.CanvasPanX = 0;
+      State.CanvasPanY = 0;
+      State.CanvasPressActive = false;
+      State.CanvasPanning = false;
+    }
   }
 
   void SetStats(const char* Line1, const char* Line2,
@@ -1673,7 +1863,7 @@ namespace mobileui
 
   void SetPrompt(const char* Prompt, const char* Input, bool Numeric)
   {
-    const std::string NewPrompt = Prompt ? Prompt : "";
+    const std::string NewPrompt = FormatPromptText(Prompt ? Prompt : "");
     const std::string NewInput = Input ? Input : "";
     const bool ShowsInput = Input != 0;
     const bool Changed = !State.PromptActive
@@ -1709,6 +1899,19 @@ namespace mobileui
     State.PromptNumeric = false;
     State.PromptText.clear();
     State.PromptInput.clear();
+    ConsoleDirty = true;
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type = SDL_USEREVENT;
+    Event.user.code = REDRAW_EVENT_CODE;
+    SDL_PushEvent(&Event);
+  }
+
+  void SetPaperDollScreen(bool Active, int X, int Y, int Width, int Height)
+  {
+    State.PaperDollScreen = Active;
+    State.PaperDollSource = Active
+      ? SDL_Rect{ X, Y, Width, Height } : SDL_Rect{ 0, 0, 0, 0 };
     ConsoleDirty = true;
     SDL_Event Event;
     SDL_zero(Event);
@@ -1778,8 +1981,17 @@ namespace mobileui
   void SetScreenText(const char* Value)
   {
     std::string Raw = Value ? Value : "";
+    static const char TouchHelpHeading[] = "[Android Touch Help:]";
     static const char MapHelpHeading[] = "[Map Touch Help:]";
-    if(Raw.compare(0, sizeof(MapHelpHeading) - 1, MapHelpHeading) == 0)
+    if(Raw.compare(0, sizeof(TouchHelpHeading) - 1,
+                   TouchHelpHeading) == 0)
+    {
+      State.ScreenTextTitle = "TOUCH HELP";
+      const size_t Body = Raw.find('\n');
+      Raw = Body == std::string::npos ? "" : Raw.substr(Body + 1);
+    }
+    else if(Raw.compare(0, sizeof(MapHelpHeading) - 1,
+                        MapHelpHeading) == 0)
     {
       State.ScreenTextTitle = "MAP HELP";
       const size_t Body = Raw.find('\n');
@@ -1891,34 +2103,26 @@ namespace mobileui
       State.MenuDirectionMode = false;
     }
     const int Gap = Clamp(int(7 * State.Density), 8, 28);
-    int LayoutLeft = State.Left;
-    int LayoutTop = State.Top;
-    int LayoutRight = State.Right;
-    int LayoutBottom = State.Bottom;
-    // A portrait camera hole can overlap the centered title/menu stack, so keep
-    // those non-game screens below it.  In landscape, reserving the cutout's
-    // entire edge produces a large black sidebar; the centered menu content is
-    // already clear of the small, localized obstruction.
+    State.Safe = { State.Left + Gap, State.Top + Gap,
+                   std::max(1, State.Width - State.Left - State.Right - Gap * 2),
+                   std::max(1, State.Height - State.Top - State.Bottom - Gap * 2) };
+    const int BaseHeaderHeight = Clamp(int(24 * State.Density), 48, 96);
+    int HeaderHeight = BaseHeaderHeight;
+    if(!State.Gameplay && State.MenuActive && State.MenuTitle.size() > 24)
+      HeaderHeight = std::max(HeaderHeight, 96);
+    // When edge-to-edge mode is active, keep the header panel in the camera
+    // row and reserve only enough internal height to place its title below the
+    // physical cutout. This uses the pixels around the hole instead of turning
+    // the whole top strip into an inset.
     if(!State.Gameplay && State.Width < State.Height
        && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
     {
-      if(State.DisplayCutout.x <= 0)
-        LayoutLeft = std::max(LayoutLeft,
-                              State.DisplayCutout.x + State.DisplayCutout.w);
-      if(State.DisplayCutout.y <= 0)
-        LayoutTop = std::max(LayoutTop,
-                             State.DisplayCutout.y + State.DisplayCutout.h);
-      if(State.DisplayCutout.x + State.DisplayCutout.w >= State.Width)
-        LayoutRight = std::max(LayoutRight,
-                               State.Width - State.DisplayCutout.x);
-      if(State.DisplayCutout.y + State.DisplayCutout.h >= State.Height)
-        LayoutBottom = std::max(LayoutBottom,
-                                State.Height - State.DisplayCutout.y);
+      const int CutoutBottom = State.DisplayCutout.y
+                             + State.DisplayCutout.h;
+      if(CutoutBottom > State.Safe.y)
+        HeaderHeight = std::max(HeaderHeight,
+          CutoutBottom - State.Safe.y + Gap + BaseHeaderHeight);
     }
-    State.Safe = { LayoutLeft + Gap, LayoutTop + Gap,
-                   std::max(1, State.Width - LayoutLeft - LayoutRight - Gap * 2),
-                   std::max(1, State.Height - LayoutTop - LayoutBottom - Gap * 2) };
-    const int HeaderHeight = Clamp(int(18 * State.Density), 34, 72);
 
     if(State.Gameplay && State.Width < State.Height)
     {
@@ -2009,7 +2213,8 @@ namespace mobileui
                     State.Game.w, BannerHeight };
     }
     else if(State.ScreenTextActive
-            || (State.PromptActive && !State.PromptGameplay))
+            || (State.PromptActive && !State.PromptGameplay
+                && !State.PromptNumeric))
     {
       State.Header = { State.Safe.x, State.Safe.y,
                        State.Safe.w, HeaderHeight };
@@ -2130,6 +2335,34 @@ namespace mobileui
       return;
     }
 
+    if(State.PaperDollScreen)
+    {
+      SDL_Rect Source = State.PaperDollSource;
+      const int Left = Clamp(Source.x, 0, State.GameWidth - 1);
+      const int Top = Clamp(Source.y, 0, State.GameHeight - 1);
+      const int Right = Clamp(Source.x + Source.w, Left + 1, State.GameWidth);
+      const int Bottom = Clamp(Source.y + Source.h, Top + 1, State.GameHeight);
+      Source = { Left, Top, Right - Left, Bottom - Top };
+
+      SDL_Rect Destination = State.Game;
+      const float SourceAspect = float(Source.w) / Source.h;
+      const float DestinationAspect = float(Destination.w) / Destination.h;
+      if(DestinationAspect > SourceAspect)
+      {
+        const int Width = std::max(1, int(Destination.h * SourceAspect));
+        Destination.x += (Destination.w - Width) / 2;
+        Destination.w = Width;
+      }
+      else
+      {
+        const int Height = std::max(1, int(Destination.w / SourceAspect));
+        Destination.y += (Destination.h - Height) / 2;
+        Destination.h = Height;
+      }
+      SDL_RenderCopy(Renderer, GameTexture, &Source, &Destination);
+      return;
+    }
+
     if(State.MapScreen)
     {
       State.MapSource = State.MapOverlaySource;
@@ -2246,28 +2479,68 @@ namespace mobileui
       return;
     }
 
+    // Zooming far enough out changes the source aspect ratio as each map axis
+    // reaches its full extent. Clear the whole viewport before fitting that
+    // source so the resulting letterbox remains part of the black map canvas
+    // instead of exposing the brown console panel beneath it.
+    Fill(Renderer, State.Game, 0, 0, 0, 255);
+
     const int MapLeft = 16;
     const int MapTop = 32;
     const int MapWidth = std::max(1, State.GameWidth - 128);
     const int MapHeight = std::max(1, State.GameHeight - 184);
     const float DestAspect = float(State.Game.w) / float(State.Game.h);
-    // Half the old source dimensions gives the gameplay viewport a true 2x
-    // zoom while retaining the player-centred camera and aspect-ratio crop.
-    const int MaximumSourceHeight = State.Width >= State.Height ? 120 : 160;
-    int SourceHeight = std::min(MapHeight, MaximumSourceHeight);
-    int SourceWidth = int(SourceHeight * DestAspect);
-    if(SourceWidth > MapWidth)
+    // Above 1x, keep the familiar player-centred crop. Below 1x, expand each
+    // source dimension independently until the complete rendered map is in
+    // view. The destination is then aspect-fitted so the final overview does
+    // not stretch the tiles.
+    const int BaseSourceHeight = State.Width >= State.Height ? 240 : 320;
+    int OneXHeight = std::min(MapHeight, BaseSourceHeight);
+    int OneXWidth = std::max(1, int(OneXHeight * DestAspect));
+    if(OneXWidth > MapWidth)
+    {
+      OneXWidth = MapWidth;
+      OneXHeight = std::max(1, int(OneXWidth / DestAspect));
+    }
+    const float MinimumZoom = std::max(.05f, std::min(
+      float(OneXWidth) / MapWidth, float(OneXHeight) / MapHeight));
+    State.CanvasZoom = std::max(MinimumZoom, State.CanvasZoom);
+    int SourceWidth = std::min(MapWidth,
+      std::max(1, int(OneXWidth / State.CanvasZoom + .5f)));
+    int SourceHeight = std::min(MapHeight,
+      std::max(1, int(OneXHeight / State.CanvasZoom + .5f)));
+    if(State.CanvasZoom <= MinimumZoom + .001f)
     {
       SourceWidth = MapWidth;
-      SourceHeight = std::max(1, int(SourceWidth / DestAspect));
+      SourceHeight = MapHeight;
     }
     State.MapSource.w = SourceWidth;
     State.MapSource.h = SourceHeight;
-    State.MapSource.x = Clamp(State.MapFocusX - SourceWidth / 2,
+    State.MapSource.x = Clamp(State.MapFocusX + State.CanvasPanX
+                                - SourceWidth / 2,
                               MapLeft, MapLeft + MapWidth - SourceWidth);
-    State.MapSource.y = Clamp(State.MapFocusY - SourceHeight / 2,
+    State.MapSource.y = Clamp(State.MapFocusY + State.CanvasPanY
+                                - SourceHeight / 2,
                               MapTop, MapTop + MapHeight - SourceHeight);
-    SDL_RenderCopy(Renderer, GameTexture, &State.MapSource, &State.Game);
+    State.CanvasPanX = State.MapSource.x + SourceWidth / 2 - State.MapFocusX;
+    State.CanvasPanY = State.MapSource.y + SourceHeight / 2 - State.MapFocusY;
+
+    State.CanvasDestination = State.Game;
+    const float SourceAspect = float(SourceWidth) / SourceHeight;
+    if(DestAspect > SourceAspect)
+    {
+      const int Width = std::max(1, int(State.Game.h * SourceAspect));
+      State.CanvasDestination.x += (State.Game.w - Width) / 2;
+      State.CanvasDestination.w = Width;
+    }
+    else if(DestAspect < SourceAspect)
+    {
+      const int Height = std::max(1, int(State.Game.w / SourceAspect));
+      State.CanvasDestination.y += (State.Game.h - Height) / 2;
+      State.CanvasDestination.h = Height;
+    }
+    SDL_RenderCopy(Renderer, GameTexture, &State.MapSource,
+                   &State.CanvasDestination);
 
   }
 
@@ -2294,6 +2567,20 @@ namespace mobileui
       return Result;
     }
 
+    const bool CanPanCanvas = State.Gameplay && !State.MapScreen
+                           && !State.PaperDollScreen && !State.PromptActive
+                           && !State.ScreenTextActive
+                           && Contains(State.CanvasDestination, X, Y);
+    if(CanPanCanvas)
+    {
+      State.CanvasPressActive = true;
+      State.CanvasPanning = false;
+      State.CanvasPressStarted = SDL_GetTicks();
+      State.CanvasPressX = State.CanvasLastX = X;
+      State.CanvasPressY = State.CanvasLastY = Y;
+      return Result;
+    }
+
     const bool CanHoldDirection = State.Gameplay
                                && State.ControlMode == CONTROL_MOVEMENT
                                && !State.QuestionChoiceCount
@@ -2314,6 +2601,90 @@ namespace mobileui
       Result.KeyCode = State.DirectionPressKey;
     }
     return Result;
+  }
+
+  bool HandleFingerMotion(float NormalizedX, float NormalizedY)
+  {
+    if(!State.CanvasPressActive)
+      return false;
+
+    const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
+    const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+    const int FromStartX = X - State.CanvasPressX;
+    const int FromStartY = Y - State.CanvasPressY;
+    if(!State.CanvasPanning)
+    {
+      const bool Held = SDL_GetTicks() - State.CanvasPressStarted
+                      >= CANVAS_PAN_HOLD_MS;
+      const bool Moved = FromStartX * FromStartX + FromStartY * FromStartY
+                       >= CANVAS_PAN_SLOP * CANVAS_PAN_SLOP;
+      if(!Held || !Moved)
+        return false;
+      State.CanvasPanning = true;
+    }
+
+    const int DeltaX = X - State.CanvasLastX;
+    const int DeltaY = Y - State.CanvasLastY;
+    State.CanvasLastX = X;
+    State.CanvasLastY = Y;
+    if(!DeltaX && !DeltaY)
+      return false;
+
+    // Drag the map directly beneath the finger. Source-pixel scaling keeps
+    // the gesture consistent at every zoom and in both orientations.
+    State.CanvasPanX -= int(float(DeltaX) * State.MapSource.w
+                          / std::max(1, State.CanvasDestination.w));
+    State.CanvasPanY -= int(float(DeltaY) * State.MapSource.h
+                          / std::max(1, State.CanvasDestination.h));
+    ConsoleDirty = true;
+    return true;
+  }
+
+  bool HandlePinch(float NormalizedX, float NormalizedY, float DistanceDelta,
+                   int FingerCount)
+  {
+    if(FingerCount < 2 || !State.Gameplay || State.MapScreen
+       || State.PaperDollScreen || State.PromptActive
+       || State.ScreenTextActive)
+      return false;
+
+    const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
+    const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+    if(!Contains(State.Game, X, Y))
+      return false;
+
+    CancelDirectionPress();
+    State.LogPressActive = false;
+    State.CanvasPressActive = false;
+    State.CanvasPanning = false;
+    State.SuppressedFingerUps = std::max(State.SuppressedFingerUps,
+                                         FingerCount);
+
+    const float OldZoom = State.CanvasZoom;
+    const int MapWidth = std::max(1, State.GameWidth - 128);
+    const int MapHeight = std::max(1, State.GameHeight - 184);
+    const float DestAspect = float(State.Game.w) / std::max(1, State.Game.h);
+    int OneXHeight = std::min(MapHeight,
+      State.Width >= State.Height ? 240 : 320);
+    int OneXWidth = std::max(1, int(OneXHeight * DestAspect));
+    if(OneXWidth > MapWidth)
+    {
+      OneXWidth = MapWidth;
+      OneXHeight = std::max(1, int(OneXWidth / DestAspect));
+    }
+    const float MinimumZoom = std::max(.05f, std::min(
+      float(OneXWidth) / MapWidth, float(OneXHeight) / MapHeight));
+    State.CanvasZoom = std::max(MinimumZoom, std::min(4.f,
+      State.CanvasZoom * std::exp(DistanceDelta * 4.f)));
+    if((OldZoom > MinimumZoom + .001f
+        && State.CanvasZoom <= MinimumZoom + .001f)
+       || (OldZoom < 3.999f && State.CanvasZoom >= 3.999f))
+      Pulse(FEEDBACK_ZOOM_LIMIT);
+    if(std::fabs(State.CanvasZoom - OldZoom) < 0.001f)
+      return false;
+
+    ConsoleDirty = true;
+    return true;
   }
 
   touchresult HandleDirectionRepeat()
@@ -2353,6 +2724,13 @@ namespace mobileui
   touchresult HandleFinger(float NormalizedX, float NormalizedY)
   {
     touchresult Result;
+    if(State.SuppressedFingerUps > 0)
+    {
+      --State.SuppressedFingerUps;
+      CancelDirectionPress();
+      State.LogPressActive = false;
+      return Result;
+    }
     if(State.DirectionPressActive)
     {
       // Directional taps fire on finger-down for immediate feedback. Releasing
@@ -2362,6 +2740,21 @@ namespace mobileui
     }
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+
+    if(State.CanvasPressActive)
+    {
+      const int DeltaX = X - State.CanvasPressX;
+      const int DeltaY = Y - State.CanvasPressY;
+      const bool Held = SDL_GetTicks() - State.CanvasPressStarted
+                      >= CANVAS_PAN_HOLD_MS;
+      const bool Moved = DeltaX * DeltaX + DeltaY * DeltaY
+                       >= CANVAS_PAN_SLOP * CANVAS_PAN_SLOP;
+      const bool SuppressTap = State.CanvasPanning || Held || Moved;
+      State.CanvasPressActive = false;
+      State.CanvasPanning = false;
+      if(SuppressTap || !Contains(State.CanvasDestination, X, Y))
+        return Result;
+    }
 
     if(State.LogPressActive)
     {
@@ -2522,15 +2915,17 @@ namespace mobileui
       return Result;
     }
 
-    if(Contains(State.Game, X, Y))
+    const SDL_Rect& TouchGame = State.Gameplay
+                              ? State.CanvasDestination : State.Game;
+    if(Contains(TouchGame, X, Y))
     {
       Result.Kind = touchresult::TOUCH_MOUSE;
       if(State.Gameplay)
       {
         Result.MouseX = State.MapSource.x
-          + (X - State.Game.x) * State.MapSource.w / State.Game.w;
+          + (X - TouchGame.x) * State.MapSource.w / TouchGame.w;
         Result.MouseY = State.MapSource.y
-          + (Y - State.Game.y) * State.MapSource.h / State.Game.h;
+          + (Y - TouchGame.y) * State.MapSource.h / TouchGame.h;
       }
       else
       {

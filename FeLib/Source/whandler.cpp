@@ -880,8 +880,39 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
      break;
    }
 
+   case SDL_MULTIGESTURE:
+   {
+     if(mobileui::HandlePinch(Event->mgesture.x, Event->mgesture.y,
+                              Event->mgesture.dDist,
+                              Event->mgesture.numFingers))
+     {
+       SDL_Event RedrawEvent;
+       SDL_zero(RedrawEvent);
+       RedrawEvent.type = SDL_USEREVENT;
+       RedrawEvent.user.code = mobileui::REDRAW_EVENT_CODE;
+       SDL_PushEvent(&RedrawEvent);
+     }
+     break;
+   }
+
+   case SDL_FINGERMOTION:
+   {
+     if(mobileui::HandleFingerMotion(Event->tfinger.x, Event->tfinger.y))
+     {
+       SDL_Event RedrawEvent;
+       SDL_zero(RedrawEvent);
+       RedrawEvent.type = SDL_USEREVENT;
+       RedrawEvent.user.code = mobileui::REDRAW_EVENT_CODE;
+       SDL_PushEvent(&RedrawEvent);
+     }
+     break;
+   }
+
    case SDL_FINGERUP: {
      mobileui::touchresult Result = mobileui::HandleFinger(Event->tfinger.x, Event->tfinger.y);
+     if(Result.Kind == mobileui::touchresult::TOUCH_KEY
+        || Result.Kind == mobileui::touchresult::TOUCH_REDRAW)
+       mobileui::Pulse(mobileui::FEEDBACK_UI);
      if(Result.Kind == mobileui::touchresult::TOUCH_KEY)
        AddKeyToBuffer(0xE000 + Result.KeyCode);
      else if(Result.Kind == mobileui::touchresult::TOUCH_REDRAW)

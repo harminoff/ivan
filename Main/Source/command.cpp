@@ -1119,8 +1119,34 @@ truth commandsystem::Dip(character* Char)
 
 truth commandsystem::ShowKeyLayout(character* Who)
 {
+#ifdef ANDROID
+  festring Help = CONST_S(
+    "[Android Touch Help:]\n"
+    "MOVEMENT\n"
+    "Tap a direction to move one tile. Hold a direction to keep moving. "
+    "WAIT passes one turn. Pinch the game canvas to zoom in or all the way "
+    "out. Hold, then drag the canvas to look around; moving recenters it.\n\n"
+    "ACTIONS\n"
+    "Use the six category icons around the pad: Directions, Context, Items, "
+    "Character, Move, and System. Only actions usable now are shown. Tap MORE "
+    "when a category has another page.\n\n"
+    "MENUS\n"
+    "Tap a visible row to choose it. Use the menu controls for paging, "
+    "selection, and Back. Tap the control header to switch between menu "
+    "navigation and directions when a menu asks for a direction.\n\n"
+    "MESSAGES\n"
+    "New messages appear above the controls. Hold the message bar to open "
+    "message history.\n\n"
+    "MAP\n"
+    "Open Map from System. Use Cursor to move to a tile, then create, edit, or "
+    "delete its note.\n\n"
+    "DISPLAY\n"
+    "Controller side, Android status-bar, and vibration options are in "
+    "Configuration.");
+  game::TextScreen(Help);
+  return false;
+#else
   felist List(CONST_S("Keyboard Layout"));
-
   List.AddDescription(CONST_S(""));
 
   List.AddDescription("IVAN uses most of the keyboard for command key bindings, though some ");
@@ -1203,6 +1229,7 @@ truth commandsystem::ShowKeyLayout(character* Who)
   }
 
   return false;
+#endif
 }
 
 void commandsystem::PlayerDiedLookMode(bool bSeeWholeMapCheatMode){
@@ -1255,7 +1282,13 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
   while(!(Key == KEY_ESC || Key == ' ' || Key == KEY_CONTROLLER_B))
   {
     if(!bEngraveMapNote)
+#ifdef ANDROID
+      Key = game::KeyQuestion(
+        CONST_S("Do you want to engrave a square or inscribe an item?"),
+        KEY_ESC, 3, '.', 'i', KEY_ESC);
+#else
       Key = game::AskForKeyPress(CONST_S("Do you want to (.) engrave a square, or inscribe an (i)tem? ['.' or 'i', ESC exits]"));
+#endif
 
     int iLSqrLimit=80;
     if(bEngraveMapNote)
@@ -2031,6 +2064,16 @@ truth commandsystem::SpawnRoute(character* Char, v2 Pos)
 
 truth commandsystem::Go(character* Char)
 {
+#ifdef ANDROID
+  struct mobilefastwalkprompt
+  {
+    mobilefastwalkprompt()
+    {
+      mobileui::SetPrompt("Choose a direction to fast-walk.");
+    }
+    ~mobilefastwalkprompt() { mobileui::ClearPrompt(); }
+  } MobileFastWalkPrompt;
+#endif
   int Key;
   if(LevelRouteGoOn!=Char->GetLevel())
     v2RouteTarget=v2(0,0);
@@ -2039,10 +2082,12 @@ truth commandsystem::Go(character* Char)
     v2RouteTarget=v2(0,0);
 
   while(true) {
+#ifndef ANDROID
     festring options = "Press a direction key to fast-walk, '.'/'<'/'>' to route, 'x' to autoexplore";
     if(!v2RouteTarget.Is0()) options << ", 'g' to continue";
 
     FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", options.CStr());
+#endif
     Key = GET_KEY();
     igraph::BlitBackGround(v2(16, 6), v2(game::GetMaxScreenXSize() << 4, 23));
 
@@ -2133,6 +2178,24 @@ truth commandsystem::EquipmentScreen(character* Char)
 {
   return Char->EquipmentScreen(Char->GetStack(), 0);
 }
+
+#ifdef ANDROID
+truth commandsystem::ShowPaperDoll(character*)
+{
+  v2 Silhouette = humanoid::GetSilhouetteWhereDefault();
+  if(Silhouette.Is0())
+    Silhouette = v2(RES.X - SILHOUETTE_SIZE.X - 39, 53);
+
+  // Include the equipment slots surrounding the 48x64 body silhouette.
+  mobileui::SetPaperDollScreen(true, Silhouette.X - 16, Silhouette.Y - 24,
+                               SILHOUETTE_SIZE.X + 48,
+                               SILHOUETTE_SIZE.Y + 48);
+  game::KeyQuestion(CONST_S("Limb colors show condition. Equipped items surround the figure."),
+                    KEY_ESC, 2, KEY_ESC, KEY_CONTROLLER_B);
+  mobileui::SetPaperDollScreen(false);
+  return false;
+}
+#endif
 
 truth commandsystem::ScrollMessagesDown(character*)
 {
@@ -2870,10 +2933,14 @@ void commandsystem::UpdateMobileActions(character* Char)
   Add(37, "OPTIONS", mobileui::ACTION_SYSTEM, true);
   Add(38, "HELP", mobileui::ACTION_SYSTEM, true);
   Add(39, "SKILLS", mobileui::ACTION_CHARACTER, true);
+  if(Human && Count < MaximumActions)
+  {
+    Labels[Count] = "BODY STATUS";
+    Keys[Count] = KEY_MOBILE_PAPER_DOLL;
+    Groups[Count] = mobileui::ACTION_CHARACTER;
+    ++Count;
+  }
   Add(32, "SAVE", mobileui::ACTION_SYSTEM, true);
-  Add(33, "QUIT", mobileui::ACTION_SYSTEM, true);
-  Add(47, "SEED", mobileui::ACTION_SYSTEM, true);
-  Add(48, "CONSOLE", mobileui::ACTION_SYSTEM, true);
 
   mobileui::SetActions(Labels, Keys, Groups, Count);
 }

@@ -55,6 +55,7 @@ class commandsystem
   static truth SpawnRoute(character* Char, v2 Pos);
 #ifdef ANDROID
   static void UpdateMobileActions(character*);
+  static truth ShowPaperDoll(character*);
 #endif
  private:
   static truth Apply(character*);

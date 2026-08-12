@@ -157,6 +157,20 @@ truthoption ivanconfig::MobileStatusBarHidden("MobileStatusBarHidden",
                                           &configsystem::NormalTruthDisplayer,
                                           &configsystem::NormalTruthChangeInterface,
                                           &MobileStatusBarHiddenChanger);
+truthoption ivanconfig::MobileVibration("MobileVibration",
+                                          "Vibration feedback",
+                                          "Enable restrained vibration for accepted controls, combat, danger warnings, traps, severe injuries, and death.",
+                                          true,
+                                          &configsystem::NormalTruthDisplayer,
+                                          &configsystem::NormalTruthChangeInterface,
+                                          &MobileVibrationChanger);
+cycleoption ivanconfig::MobileVibrationStrength("MobileVibrationStrength",
+                                          "Vibration strength",
+                                          "Choose the overall strength of Android vibration feedback.",
+                                          1, 3,
+                                          &MobileVibrationStrengthDisplayer,
+                                          &configsystem::NormalCycleChangeInterface,
+                                          &MobileVibrationStrengthChanger);
 #endif
 truthoption ivanconfig::ShowMapAtDetectMaterial("ShowMapAtDetectMaterial",
                                           "Show map while detecting material",
@@ -1171,6 +1185,27 @@ void ivanconfig::MobileStatusBarHiddenChanger(truthoption* O, truth What)
     O->Value = What;
   mobileui::SetStatusBarHidden(What);
 }
+
+void ivanconfig::MobileVibrationChanger(truthoption* O, truth What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetHapticsEnabled(What);
+}
+
+void ivanconfig::MobileVibrationStrengthDisplayer(const cycleoption* O,
+                                                  festring& Entry)
+{
+  static const char* Labels[] = { "low", "normal", "strong" };
+  Entry << Labels[Max<long>(0, Min<long>(O->Value, 2))];
+}
+
+void ivanconfig::MobileVibrationStrengthChanger(cycleoption* O, long What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetHapticStrength(What);
+}
 #endif
 
 void ivanconfig::UseExtraMenuGraphicsChanger(truthoption* O, truth What)
@@ -1267,6 +1302,8 @@ void ivanconfig::Initialize()
 #ifdef ANDROID
   configsystem::AddOption(fsCategory,&MobileControllerSide);
   configsystem::AddOption(fsCategory,&MobileStatusBarHidden);
+  configsystem::AddOption(fsCategory,&MobileVibration);
+  configsystem::AddOption(fsCategory,&MobileVibrationStrength);
 #endif
   configsystem::AddOption(fsCategory,&DefaultName);
   configsystem::AddOption(fsCategory,&FantasyNamePattern);
@@ -1297,11 +1334,13 @@ void ivanconfig::Initialize()
 
   fsCategory="Game Window";
   configsystem::AddOption(fsCategory,&Contrast);
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&WindowWidth);
   configsystem::AddOption(fsCategory,&WindowHeight);
 #ifndef __DJGPP__
   configsystem::AddOption(fsCategory,&GraphicsScale);
   configsystem::AddOption(fsCategory,&FullScreenMode);
+#endif
 #endif
 
   fsCategory="Graphics";
@@ -1345,13 +1384,17 @@ void ivanconfig::Initialize()
   configsystem::AddOption(fsCategory,&SfxVolume);
 
   fsCategory="Input and Interface";
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&DirectionKeyMap);
   configsystem::AddOption(fsCategory,&SetupCustomKeys);
+#endif
   configsystem::AddOption(fsCategory,&SaveGameSortMode);
   configsystem::AddOption(fsCategory,&ShowTurn);
   configsystem::AddOption(fsCategory,&ShowFullDungeonName);
   configsystem::AddOption(fsCategory,&SelectedBkgColor);
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&AllowMouseOnFelist);
+#endif
 
   fsCategory="Advanced Options";
   configsystem::AddOption(fsCategory,&AllowImportOldSavegame);
@@ -1400,6 +1443,8 @@ void ivanconfig::Initialize()
 #ifdef ANDROID
   MobileControllerSideChanger(NULL, MobileControllerSide.Value);
   MobileStatusBarHiddenChanger(NULL, MobileStatusBarHidden.Value);
+  MobileVibrationChanger(NULL, MobileVibration.Value);
+  MobileVibrationStrengthChanger(NULL, MobileVibrationStrength.Value);
 #endif
   UseExtraMenuGraphicsChanger(NULL, UseExtraMenuGraphics.Value);
 

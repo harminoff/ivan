@@ -1,6 +1,9 @@
 package io.github.harminoff.ivan;
 
+import android.annotation.TargetApi;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.system.Os;
 import android.util.Log;
 import android.graphics.Rect;
@@ -21,6 +24,7 @@ public final class IvanActivity extends SDLActivity {
     private static final String TAG = "IVAN";
     private static final String CONTENT_VERSION = "0.59-de528ac-android-2";
     private boolean statusBarHidden;
+    private Vibrator vibrator;
 
     private static native void nativeSetSafeInsets(int left, int top, int right, int bottom,
                                                    int cutoutLeft, int cutoutTop,
@@ -46,6 +50,7 @@ public final class IvanActivity extends SDLActivity {
         }
 
         super.onCreate(savedInstanceState);
+        vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
 
         configureEdgeToEdgeWindow();
 
@@ -121,6 +126,7 @@ public final class IvanActivity extends SDLActivity {
         }
     }
 
+    @TargetApi(28)
     private Rect findDisplayCutout(DisplayCutout cutout) {
         if (cutout == null) {
             return new Rect();
@@ -145,6 +151,69 @@ public final class IvanActivity extends SDLActivity {
     public void setStatusBarHidden(boolean hidden) {
         statusBarHidden = hidden;
         runOnUiThread(this::applyStatusBarVisibility);
+    }
+
+    public void vibrateFeedback(int effect, int strengthPercent) {
+        if (vibrator == null || !vibrator.hasVibrator() || strengthPercent <= 0) {
+            return;
+        }
+
+        long[] timings;
+        int[] amplitudes;
+        switch (effect) {
+            case 1: // Successful player hit.
+                timings = new long[] { 0, 24 };
+                amplitudes = new int[] { 0, scaledAmplitude(105, strengthPercent) };
+                break;
+            case 2: // Player damage.
+                timings = new long[] { 0, 60 };
+                amplitudes = new int[] { 0, scaledAmplitude(180, strengthPercent) };
+                break;
+            case 3: // Critical hit or severe limb damage.
+                timings = new long[] { 0, 55, 40, 85 };
+                amplitudes = new int[] { 0, scaledAmplitude(255, strengthPercent),
+                                         0, scaledAmplitude(225, strengthPercent) };
+                break;
+            case 4: // Danger or trap warning.
+                timings = new long[] { 0, 35, 70, 35 };
+                amplitudes = new int[] { 0, scaledAmplitude(185, strengthPercent),
+                                         0, scaledAmplitude(185, strengthPercent) };
+                break;
+            case 5: // Player death.
+                timings = new long[] { 0, 140, 65, 220 };
+                amplitudes = new int[] { 0, scaledAmplitude(255, strengthPercent),
+                                         0, scaledAmplitude(170, strengthPercent) };
+                break;
+            case 6: // Zoom limit.
+                timings = new long[] { 0, 15 };
+                amplitudes = new int[] { 0, scaledAmplitude(80, strengthPercent) };
+                break;
+            case 7: // Successful block.
+                timings = new long[] { 0, 32 };
+                amplitudes = new int[] { 0, scaledAmplitude(105, strengthPercent) };
+                break;
+            default: // Accepted UI control.
+                timings = new long[] { 0, 12 };
+                amplitudes = new int[] { 0, scaledAmplitude(70, strengthPercent) };
+                break;
+        }
+        try {
+            vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1));
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to play vibration feedback", error);
+        }
+    }
+
+    private int scaledAmplitude(int amplitude, int strengthPercent) {
+        return Math.max(1, Math.min(255, amplitude * strengthPercent / 100));
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (vibrator != null) {
+            vibrator.cancel();
+        }
+        super.onDestroy();
     }
 
     @Override

@@ -216,6 +216,7 @@ inline int GetMinColor24(col24 Color)
 #define KEY_MOBILE_COMMAND_MAX   0x33F
 #define KEY_MOBILE_MENU_SELECT_BASE 0x400 /* visible list row is added */
 #define KEY_MOBILE_MENU_SELECT_MAX  0x41F
+#define KEY_MOBILE_PAPER_DOLL       0x420
 
 #define NO_FLAME 0xFFFF
 

@@ -138,10 +138,16 @@ void configsystem::Show(void (*BackGroundDrawer)(),
   int Chosen;
   truth TruthChange = false;
 
+#ifdef ANDROID
+  felist List(CONST_S("OPTIONS"));
+#else
   felist List(CONST_S("Which setting do you wish to configure? (* requires restart)"));
+#endif
 
+#ifndef ANDROID
   List.AddDescription(CONST_S(""));
   List.AddDescription(CONST_S("Setting                                                        Value"));
+#endif
 
   for(;;)
   {
@@ -155,6 +161,10 @@ void configsystem::Show(void (*BackGroundDrawer)(),
     {
       festring Entry = Option[c]->Description;
       Entry.Capitalize();
+#ifdef ANDROID
+      Entry << ": ";
+      Option[c]->DisplayValue(Entry);
+#else
       int iLim=60;
       if(Entry.GetSize()>iLim-1){
         Entry.Resize(iLim-4);
@@ -164,6 +174,7 @@ void configsystem::Show(void (*BackGroundDrawer)(),
       Entry<<" "; //space between "columns"
       Option[c]->DisplayValue(Entry);
       Entry.Resize(iLim+30);
+#endif
 
       if(fsLastCategory!=Option[c]->fsCategory){
         List.AddEntry(Option[c]->fsCategory, WHITE, 0, NO_IMAGE, false);

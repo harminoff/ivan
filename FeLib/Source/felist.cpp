@@ -582,6 +582,14 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
           fs<<"\n";
         }
         fs<<
+#ifdef ANDROID
+          "Touch controls:\n"
+          " Tap an entry to choose it.\n"
+          " UP / DOWN move the selection.\n"
+          " PG UP / PG DOWN change pages.\n"
+          " SELECT confirms; BACK exits.\n"
+          " Tap the control header to switch between menu controls and directions.\n";
+#else
           "Commands:\n"
           " F1           show help\n"
           " Ctrl + F     filter entries\n"
@@ -590,6 +598,7 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
           " PgUp / PgDn\n"
           " Esc          exit menu\n"
           " Space        next page\n";
+#endif
         specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp,fs);
         bJustRefreshOnce=true;
         break;
@@ -1039,8 +1048,13 @@ truth felist::DrawPage(bitmap* Buffer, v2* pv2FinalPageSize, std::vector<EntryRe
         int iPg = (PageBegin/PageLength)+1;
         int iPgTot = Entry.size()/PageLength + (Entry.size()%PageLength>0 ? 1 : 0);
         if(iPgTot==0)iPgTot=1;
+#ifdef ANDROID
+        FONT->Printf(Buffer, v2(Pos.X + 13, LastFillBottom + 10), WHITE,
+                     "- Page %d/%d -",iPg,iPgTot);
+#else
         FONT->Printf(Buffer, v2(Pos.X + 13, LastFillBottom + 10), WHITE,
                      "- Page %d/%d (Press F1 for help) -",iPg,iPgTot);
+#endif
         LastFillBottom += 30;
       }
       else

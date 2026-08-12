@@ -1056,7 +1056,12 @@ void mine::StepOnEffect(character* Stepper)
   SendNewDrawAndMemorizedUpdateRequest();
 
   if(Stepper->IsPlayer())
+  {
+#ifdef ANDROID
+    mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
     game::AskForKeyPress(CONST_S("Trap activated! [press any key to continue]"));
+  }
 
   lsquare* Square = GetLSquareUnder();
   RemoveFromSlot();
@@ -1582,7 +1587,12 @@ void beartrap::StepOnEffect(character* Stepper)
     SendNewDrawAndMemorizedUpdateRequest();
 
     if(Stepper->IsPlayer())
+    {
+#ifdef ANDROID
+      mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
       game::AskForKeyPress(CONST_S("Trap activated! [press any key to continue]"));
+    }
 
     Stepper->ReceiveBodyPartDamage(0, GetBaseTrapDamage() << 1, PHYSICAL_DAMAGE,
                                    StepperBodyPart, YOURSELF, false, false, false);
@@ -1725,7 +1735,12 @@ truth beartrap::Apply(character* User)
     SendNewDrawAndMemorizedUpdateRequest();
 
     if(User->IsPlayer())
+    {
+#ifdef ANDROID
+      mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
       game::AskForKeyPress(CONST_S("Trap activated! [press any key to continue]"));
+    }
 
     User->ReceiveBodyPartDamage(0, 1 + (RAND() & 1), PHYSICAL_DAMAGE, UserBodyPart, YOURSELF, false, false, false);
     User->CheckDeath(CONST_S("died failing to set ") + GetName(INDEFINITE), 0, IGNORE_TRAPS);
@@ -3948,7 +3963,12 @@ void gastrap::StepOnEffect(character* Stepper)
       ADD_MESSAGE("%s steps on %s.", Stepper->CHAR_NAME(DEFINITE), GetExtendedDescription().CStr());
 
     if(Stepper->IsPlayer())
+    {
+#ifdef ANDROID
+      mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
       game::AskForKeyPress(CONST_S("Trap activated! [press any key to continue]"));
+    }
 
     // Reveal the trap when we step on it.
     int ViewerTeam = Stepper->GetTeam()->GetID();
