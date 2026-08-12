@@ -126,6 +126,7 @@ class ivanconfig
   static void AltListItemWidthDisplayer(const numberoption* O, festring& Entry);
   static void ContrastDisplayer(const numberoption*, festring&);
   static void DirectionKeyMapDisplayer(const cycleoption*, festring&);
+  static void AutoPickUpMatchingDisplayer(const stringoption*, festring&);
   static truth DefaultNameChangeInterface(stringoption*);
   static truth FantasyNameChangeInterface(stringoption* O);
   static truth SelectedBkgColorChangeInterface(stringoption* O);

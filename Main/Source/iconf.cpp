@@ -26,6 +26,79 @@
 #include "sfx.h"
 #ifdef ANDROID
 #include "mobileui.h"
+
+namespace
+{
+  struct autopickupchoice
+  {
+    const char* Label;
+    const char* Pattern;
+    bool RejectBrokenOrEmpty;
+  };
+
+  const autopickupchoice AutoPickupChoices[] = {
+    { "BOOKS", "book", false },
+    { "CANS", "can", false },
+    { "DAGGERS", "dagger", false },
+    { "GRENADES", "grenade", false },
+    { "HORNS", "horn of", false },
+    { "KIWIS", "kiwi", false },
+    { "KEYS", "key", false },
+    { "RINGS", "ring", false },
+    { "SCROLLS", "scroll", false },
+    { "WANDS", "wand", false },
+    { "WHISTLES", "whistle", false },
+    { "BOTTLES", "bottle", true },
+    { "VIALS", "vial", true },
+    { "SOL STONES", "sol stone", false }
+  };
+
+  const int AutoPickupChoiceCount = sizeof(AutoPickupChoices)
+                                  / sizeof(AutoPickupChoices[0]);
+
+  bool AutoPickupPatternContains(cfestring& Value, const char* Pattern)
+  {
+    return std::string(Value.CStr()).find(Pattern) != std::string::npos;
+  }
+
+  festring BuildAutoPickupPattern(const bool* Selected, bool Enabled)
+  {
+    std::string Ordinary;
+    std::string Protected;
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+      if(Selected[Index])
+      {
+        std::string& Group = AutoPickupChoices[Index].RejectBrokenOrEmpty
+                           ? Protected : Ordinary;
+        if(!Group.empty())
+          Group += '|';
+        Group += AutoPickupChoices[Index].Pattern;
+      }
+
+    if(Ordinary.empty() && Protected.empty())
+      return CONST_S("!");
+
+    std::string Pattern("(");
+    if(!Ordinary.empty())
+    {
+      Pattern += '(';
+      Pattern += Ordinary;
+      Pattern += ')';
+    }
+    if(!Protected.empty())
+    {
+      if(!Ordinary.empty())
+        Pattern += '|';
+      Pattern += "^(?:(?!(broken|empty)).)*(";
+      Pattern += Protected;
+      Pattern += ')';
+    }
+    Pattern += ')';
+    if(!Enabled)
+      Pattern.insert(Pattern.begin(), '!');
+    return festring(Pattern.c_str());
+  }
+}
 #endif
 
 stringoption ivanconfig::DefaultName(     "DefaultName",
@@ -54,10 +127,14 @@ stringoption ivanconfig::SelectedBkgColor("SelectedBkgColor",
                                           &SelectedBkgColorChangeInterface,
                                           &SelectedBkgColorChanger);
 stringoption ivanconfig::AutoPickUpMatching("AutoPickUpMatching",
-                                          "Auto pick up regex",
-                                          "Automatically pick up items according to a regular expression. To disable something, you can invalidate it with '_' without removing it from the expression (eg. '_dagger'). To disable everything at once, begin this config option with '!'. Due to current constraints on length of options, editing is easier to do externally for now.",  //TODO if multiline text editing is implemented, remove the last help statement.
+                                          "Auto pick up items",
+#ifdef ANDROID
+                                          "Choose which common item types should be picked up automatically when you walk over them.",
+#else
+                                          "Automatically pick up items according to a regular expression. To disable something, you can invalidate it with '_' without removing it from the expression (eg. '_dagger'). To disable everything at once, begin this config option with '!'.",
+#endif
                                           "!((book|can|dagger|grenade|horn of|kiwi|key|ring|scroll|wand|whistle)|^(?:(?!(broken|empty)).)*(bottle|vial)|sol stone)",
-                                          &configsystem::NormalStringDisplayer,
+                                          &AutoPickUpMatchingDisplayer,
                                           &AutoPickUpMatchingChangeInterface,
                                           &AutoPickUpMatchingChanger);
 numberoption ivanconfig::AutoSaveInterval("AutoSaveInterval",
@@ -730,8 +807,85 @@ truth ivanconfig::SelectedBkgColorChangeInterface(stringoption* O)
   return false;
 }
 
+void ivanconfig::AutoPickUpMatchingDisplayer(const stringoption* O,
+                                             festring& Entry)
+{
+#ifdef ANDROID
+  if(!O || O->Value.IsEmpty() || O->Value[0] == '!')
+  {
+    Entry << "disabled";
+    return;
+  }
+
+  int Selected = 0;
+  for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+    if(AutoPickupPatternContains(O->Value, AutoPickupChoices[Index].Pattern))
+      ++Selected;
+  Entry << Selected << (Selected == 1 ? " type" : " types");
+#else
+  configsystem::NormalStringDisplayer(O, Entry);
+#endif
+}
+
 truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
 {
+#ifdef ANDROID
+  if(!O)
+    return false;
+
+  bool Enabled = !O->Value.IsEmpty() && O->Value[0] != '!';
+  bool Selected[AutoPickupChoiceCount];
+  for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+    Selected[Index] = AutoPickupPatternContains(
+      O->Value, AutoPickupChoices[Index].Pattern);
+
+  for(;;)
+  {
+    felist List(CONST_S("AUTO PICK UP ITEMS"));
+    game::SetStandardListAttributes(List);
+    List.SetPageLength(AutoPickupChoiceCount + 3);
+    List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+
+    festring Entry;
+    Entry << (Enabled ? "(X) " : "(-) ") << "AUTO PICK UP ENABLED";
+    List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
+    List.SetLastEntryHelp(CONST_S(
+      "Turns automatic pickup on or off without changing your item choices."));
+
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+    {
+      Entry.Empty();
+      Entry << (Selected[Index] ? "(X) " : "(-) ")
+            << AutoPickupChoices[Index].Label;
+      List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
+    }
+
+    List.AddEntry(CONST_S("SAVE CHANGES"), GREEN,
+                  0, NO_IMAGE, true);
+    List.AddEntry(CONST_S("CANCEL"), RED,
+                  0, NO_IMAGE, true);
+
+    const int Chosen = List.Draw();
+    if(Chosen == ESCAPED || Chosen == NOTHING_SELECTED
+       || Chosen == LIST_WAS_EMPTY
+       || Chosen == AutoPickupChoiceCount + 2)
+    {
+      clearToBackgroundAfterChangeInterface();
+      return false;
+    }
+    if(Chosen == 0)
+      Enabled = !Enabled;
+    else if(Chosen >= 1 && Chosen <= AutoPickupChoiceCount)
+      Selected[Chosen - 1] = !Selected[Chosen - 1];
+    else if(Chosen == AutoPickupChoiceCount + 1)
+    {
+      festring Pattern = BuildAutoPickupPattern(Selected, Enabled);
+      O->ChangeValue(Pattern);
+      clearToBackgroundAfterChangeInterface();
+      return true;
+    }
+  }
+#else
   festring String;
   if(O)String<<O->Value;
 
@@ -742,6 +896,7 @@ truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
   clearToBackgroundAfterChangeInterface();
 
   return false;
+#endif
 }
 
 truth ivanconfig::DefaultPetNameChangeInterface(stringoption* O)

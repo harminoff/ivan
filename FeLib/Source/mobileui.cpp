@@ -844,6 +844,58 @@ namespace
     return Result;
   }
 
+  bool IsSettingTextPrompt(const std::string& Prompt)
+  {
+    return Prompt.compare(0, 4, "Set ") == 0;
+  }
+
+  std::string SettingPromptTitle(const std::string& Prompt)
+  {
+    size_t Start = Prompt.compare(0, 8, "Set new ") == 0 ? 8 : 4;
+    size_t End = Prompt.find('(', Start);
+    const size_t Colon = Prompt.find(':', Start);
+    if(End == std::string::npos || (Colon != std::string::npos && Colon < End))
+      End = Colon;
+    if(End == std::string::npos)
+      End = Prompt.size();
+
+    std::string Title = Prompt.substr(Start, End - Start);
+    while(!Title.empty() && std::isspace((unsigned char)Title.back()))
+      Title.pop_back();
+
+    if(Title == "default name for the starting pet")
+      return "STARTING PET NAME";
+    if(Title == "default name")
+      return "DEFAULT PLAYER NAME";
+    if(Title == "RGB color")
+      return "BACKGROUND COLOR";
+    return Title.empty() ? "EDIT SETTING" : Title;
+  }
+
+  std::string SettingPromptHelp(const std::string& Prompt)
+  {
+    const size_t Details = Prompt.find('(');
+    if(Details == std::string::npos)
+      return "ENTER A NEW VALUE.";
+
+    std::string Help = Prompt.substr(Details);
+    while(!Help.empty() && (Help.back() == ':'
+                            || std::isspace((unsigned char)Help.back())))
+      Help.pop_back();
+    if(!Help.empty() && Help.front() == '(')
+    {
+      const size_t Closing = Help.find(')');
+      if(Closing != std::string::npos)
+      {
+        Help.erase(Closing, 1);
+        Help.erase(0, 1);
+        if(Closing - 1 < Help.size() && Help[Closing - 1] == ',')
+          Help.erase(Closing - 1, 1);
+      }
+    }
+    return Help;
+  }
+
   void WrappedText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
                    const std::string& Value, bool CenterVertically = true,
                    int LineSpacingPercent = 0, int MaximumScale = 4)
@@ -971,6 +1023,49 @@ namespace
     LeftTextAtScale(Renderer, Inner, Visible.c_str(), Scale);
   }
 
+  void GameplayBannerText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                          const std::string& Value)
+  {
+    std::string Visible = Value;
+    std::replace(Visible.begin(), Visible.end(), '\n', ' ');
+    std::replace(Visible.begin(), Visible.end(), '\r', ' ');
+
+    const int SingleScale = Clamp(Rect.h / 11, 2, 4);
+    const int SingleColumns = std::max(1,
+      (Rect.w - 20) / (SingleScale * 6));
+    if((int)Visible.size() <= SingleColumns)
+    {
+      SingleLineText(Renderer, Rect, Visible);
+      return;
+    }
+
+    const int Scale = Clamp(Rect.h / 19, 2, 4);
+    const int Columns = std::max(1, (Rect.w - 20) / (Scale * 6));
+    std::vector<std::string> Lines = WrapText(Visible, Columns);
+    if(Lines.size() > 2)
+    {
+      Lines.resize(2);
+      std::string& Last = Lines.back();
+      if(Columns > 3)
+      {
+        Last.resize(std::min(Last.size(), size_t(Columns - 3)));
+        while(!Last.empty() && std::isspace((unsigned char)Last.back()))
+          Last.pop_back();
+        Last += "...";
+      }
+    }
+
+    const int LineAdvance = Scale * 8;
+    const int TotalHeight = Lines.empty() ? 0
+      : (int(Lines.size()) - 1) * LineAdvance + Scale * 7;
+    int Y = Rect.y + (Rect.h - TotalHeight) / 2;
+    for(const std::string& Line : Lines)
+    {
+      Text(Renderer, Rect.x + 10, Y, Line.c_str(), Scale);
+      Y += LineAdvance;
+    }
+  }
+
   void PaintGameplayLog(SDL_Renderer* Renderer)
   {
     if(!ShowGameplayLog())
@@ -991,7 +1086,7 @@ namespace
                   VisibleLog);
     }
     else
-      SingleLineText(Renderer, State.Log, VisibleLog);
+      GameplayBannerText(Renderer, State.Log, VisibleLog);
   }
 
   void MenuRowText(SDL_Renderer* Renderer, const SDL_Rect& Row,
@@ -1431,6 +1526,9 @@ namespace
     SDL_RenderClear(Renderer);
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_BLEND);
     Fill(Renderer, State.Safe, 4, 6, 10, 235);
+    const bool SettingTextPrompt = State.PromptActive
+                                && !State.PromptNumeric
+                                && IsSettingTextPrompt(State.PromptText);
 
     if(!State.Gameplay)
     {
@@ -1459,18 +1557,25 @@ namespace
         : (State.ScreenTextActive
            ? State.ScreenTextTitle
            : (State.PromptActive && !State.PromptGameplay
-              ? (State.PromptNumeric ? "SELECT QUANTITY" : "CREATE CHARACTER")
+              ? (State.PromptNumeric
+                 ? "SELECT QUANTITY"
+                 : (SettingTextPrompt
+                    ? SettingPromptTitle(State.PromptText)
+                    : "CREATE CHARACTER"))
               : "IVAN"));
-      if(State.MenuActive && HeaderTitle.size() > 24)
+      if(HeaderTitle.size() > 24)
         CenteredWrappedText(Renderer, HeaderText, HeaderTitle, 5);
       else
+      {
+        const bool NeutralHeader = State.MenuActive || SettingTextPrompt;
         CenterText(Renderer, HeaderText, HeaderTitle.c_str(), 7,
                    MainMenuPresentation() ? 210
-                                           : (State.MenuActive ? 240 : 210),
+                                           : (NeutralHeader ? 240 : 210),
                    MainMenuPresentation() ? 55
-                                           : (State.MenuActive ? 230 : 55),
+                                           : (NeutralHeader ? 230 : 55),
                    MainMenuPresentation() ? 45
-                                           : (State.MenuActive ? 202 : 45));
+                                           : (NeutralHeader ? 202 : 45));
+      }
       if(State.PromptActive && !State.PromptGameplay)
       {
         const int Pad = Clamp(int(18 * State.Density), 24, 54);
@@ -1484,7 +1589,11 @@ namespace
         {
           const int TopicHeight = Clamp(Body.h * 28 / 100, 90, 240);
           SDL_Rect Topic = { Body.x, Body.y, Body.w, TopicHeight };
-          WrappedText(Renderer, Topic, State.PromptText);
+          if(SettingTextPrompt)
+            CenteredWrappedText(Renderer, Topic,
+                                SettingPromptHelp(State.PromptText));
+          else
+            WrappedText(Renderer, Topic, State.PromptText);
 
           const int FieldHeight = Clamp(int(52 * State.Density), 92, 150);
           SDL_Rect Field = { Body.x + Clamp(Body.w / 14, 18, 64),
@@ -1501,8 +1610,12 @@ namespace
                                      Field.y + Field.h
                                        + Clamp(Body.h / 12, 20, 64)),
                             Body.w, FieldHeight };
-          CenterText(Renderer, Hint, "TAP FIELD, TYPE, THEN TAP DONE", 4,
-                     190, 180, 155);
+          if(SettingTextPrompt)
+            CenteredWrappedText(Renderer, Hint,
+                                "TYPE THE NEW VALUE\nTAP ENTER TO SAVE", 4);
+          else
+            CenterText(Renderer, Hint, "TYPE YOUR NAME, THEN TAP ENTER", 4,
+                       190, 180, 155);
           return;
         }
       }
@@ -1539,9 +1652,17 @@ namespace
         Fill(Renderer, Card, 10, 8, 8, 248);
         Frame(Renderer, Card);
         const int TopicHeight = Card.h * 48 / 100;
-        WrappedText(Renderer, { Card.x + Pad, Card.y + Pad,
-                                Card.w - Pad * 2, TopicHeight - Pad },
-                    State.PromptText);
+        const SDL_Rect Topic = { Card.x + Pad, Card.y + Pad,
+                                 Card.w - Pad * 2, TopicHeight - Pad };
+        if(SettingTextPrompt)
+        {
+          std::string SettingText = SettingPromptTitle(State.PromptText);
+          SettingText += "\n\n";
+          SettingText += SettingPromptHelp(State.PromptText);
+          CenteredWrappedText(Renderer, Topic, SettingText);
+        }
+        else
+          WrappedText(Renderer, Topic, State.PromptText);
         SDL_Rect Field = { Card.x + Pad, Card.y + TopicHeight,
                            Card.w - Pad * 2,
                            Clamp(int(46 * State.Density), 64, 112) };
@@ -1553,8 +1674,12 @@ namespace
         SDL_Rect Hint = { Card.x + Pad, Field.y + Field.h,
                           Card.w - Pad * 2,
                           std::max(1, Card.y + Card.h - Field.y - Field.h) };
-        CenterText(Renderer, Hint, "TAP FIELD TO TYPE, THEN SELECT", 4,
-                   190, 180, 155);
+        if(SettingTextPrompt)
+          CenteredWrappedText(Renderer, Hint,
+                              "TYPE THE NEW VALUE\nTAP ENTER TO SAVE", 4);
+        else
+          CenterText(Renderer, Hint, "TAP FIELD TO TYPE, THEN SELECT", 4,
+                     190, 180, 155);
       }
     }
 

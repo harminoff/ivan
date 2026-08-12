@@ -682,7 +682,9 @@ truth commandsystem::ShowInventory(character* Char)
     }
 
     festring Buffer;
+#ifndef ANDROID
     if(Key) Buffer << game::ToCharIfPossible(Key) << ": ";
+#endif
     if(Description[0] == 0)
       Buffer << GetCommand(Index)->GetDescription();
     else
@@ -1122,25 +1124,25 @@ truth commandsystem::ShowKeyLayout(character* Who)
 #ifdef ANDROID
   festring Help = CONST_S(
     "[Android Touch Help:]\n"
-    "MOVEMENT\n"
+    "MOVEMENT\n\n"
     "Tap a direction to move one tile. Hold a direction to keep moving. "
     "WAIT passes one turn. Pinch the game canvas to zoom in or all the way "
     "out. Hold, then drag the canvas to look around; moving recenters it.\n\n"
-    "ACTIONS\n"
+    "ACTIONS\n\n"
     "Use the six category icons around the pad: Directions, Context, Items, "
     "Character, Move, and System. Only actions usable now are shown. Tap MORE "
     "when a category has another page.\n\n"
-    "MENUS\n"
+    "MENUS\n\n"
     "Tap a visible row to choose it. Use the menu controls for paging, "
     "selection, and Back. Tap the control header to switch between menu "
     "navigation and directions when a menu asks for a direction.\n\n"
-    "MESSAGES\n"
+    "MESSAGES\n\n"
     "New messages appear above the controls. Hold the message bar to open "
     "message history.\n\n"
-    "MAP\n"
+    "MAP\n\n"
     "Open Map from System. Use Cursor to move to a tile, then create, edit, or "
     "delete its note.\n\n"
-    "DISPLAY\n"
+    "DISPLAY\n\n"
     "Controller side, Android status-bar, and vibration options are in "
     "Configuration.");
   game::TextScreen(Help);

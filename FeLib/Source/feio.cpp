@@ -81,9 +81,18 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
 {
   bInUse=true;
 #ifdef ANDROID
-  const bool MobileTextScreen = GKey && !BitmapEditor;
-  if(MobileTextScreen)
+  // Ordinary Android text screens are fully rendered by the responsive
+  // mobile overlay.  Drawing the desktop framebuffer underneath first can
+  // consume the action-pad release that opened the screen and leave its
+  // oversized legacy text on the map instead of the touch help.
+  if(GKey && !BitmapEditor)
+  {
     mobileui::SetScreenText(Text.CStr());
+    GET_KEY();
+    mobileui::ClearScreenText();
+    bInUse=false;
+    return;
+  }
 #endif
 
   bitmap Buffer(RES, 0);
@@ -96,26 +105,28 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
       ++LineNumber;
 
   LineNumber >>= 1;
-  char Line[200];
-  int Lines = 0, LastBeginningOfLine = 0;
+  // Text screens normally contain short, pre-wrapped desktop lines.  Mobile
+  // help deliberately uses longer paragraphs so the responsive overlay can
+  // wrap them to the device width.  Keep the legacy framebuffer copy dynamic
+  // as well, otherwise a long paragraph writes past the old 200-byte buffer.
+  std::string Line;
+  int Lines = 0;
 
   for(c = 0; c < Text.GetSize(); ++c)
     if(Text[c] == '\n')
     {
-      Line[c - LastBeginningOfLine] = 0;
-      v2 PrintPos((RES.X >> 1) - (strlen(Line) << 2) + Disp.X,
+      v2 PrintPos((RES.X >> 1) - (Line.size() << 2) + Disp.X,
                   (RES.Y << 1) / 5 - (LineNumber - Lines) * 15 + Disp.Y);
-      FONT->Printf(&Buffer, PrintPos, Color, "%s", Line);
+      FONT->Printf(&Buffer, PrintPos, Color, "%s", Line.c_str());
       ++Lines;
-      LastBeginningOfLine = c + 1;
+      Line.clear();
     }
     else
-      Line[c - LastBeginningOfLine] = Text[c];
+      Line += Text[c];
 
-  Line[c - LastBeginningOfLine] = 0;
-  v2 PrintPos((RES.X >> 1) - (strlen(Line) << 2) + Disp.X,
+  v2 PrintPos((RES.X >> 1) - (Line.size() << 2) + Disp.X,
               (RES.Y << 1) / 5 - (LineNumber - Lines) * 15 + Disp.Y);
-  FONT->Printf(&Buffer, PrintPos, Color, "%s", Line);
+  FONT->Printf(&Buffer, PrintPos, Color, "%s", Line.c_str());
 
   if(Fade)
     Buffer.FadeToScreen(BitmapEditor);
@@ -136,10 +147,6 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
   }
 
   bInUse=false;
-#ifdef ANDROID
-  if(MobileTextScreen)
-    mobileui::ClearScreenText();
-#endif
 }
 
 /* Returns amount of chars cSF in string sSH */
