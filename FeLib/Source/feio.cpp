@@ -1487,6 +1487,12 @@ festring iosystem::ContinueMenu(col16 TopicColor, col16 ListColor,
   }
   else
   {
+#ifdef ANDROID
+    // Save descriptions can include versions, timestamps, progress and
+    // recovery status. Keep the normal mobile font and let those details wrap
+    // in taller rows instead of squeezing or truncating ten saves at once.
+    List.SetPageLength(7);
+#endif
     int Check = List.Draw();
 
     /* an error has occured in felist */

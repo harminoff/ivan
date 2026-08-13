@@ -22,13 +22,12 @@ import java.io.InputStream;
 
 public final class IvanActivity extends SDLActivity {
     private static final String TAG = "IVAN";
-    private static final String CONTENT_VERSION = "0.59-de528ac-android-2";
+    private static final String CONTENT_VERSION = "0.59-de528ac-android-5";
     private boolean statusBarHidden;
     private Vibrator vibrator;
 
     private static native void nativeSetSafeInsets(int left, int top, int right, int bottom,
-                                                   int cutoutLeft, int cutoutTop,
-                                                   int cutoutRight, int cutoutBottom,
+                                                   int[] cutoutRects,
                                                    float density);
 
     @Override
@@ -59,7 +58,7 @@ public final class IvanActivity extends SDLActivity {
             int top = 0;
             int right = 0;
             int bottom = 0;
-            Rect displayCutout = new Rect();
+            int[] displayCutouts = new int[0];
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 int barTypes = WindowInsets.Type.navigationBars();
                 if (!statusBarHidden) {
@@ -71,7 +70,7 @@ public final class IvanActivity extends SDLActivity {
                 top = statusBarHidden ? bars.top : Math.max(bars.top, cutout.top);
                 right = statusBarHidden ? bars.right : Math.max(bars.right, cutout.right);
                 bottom = statusBarHidden ? bars.bottom : Math.max(bars.bottom, cutout.bottom);
-                displayCutout = findDisplayCutout(insets.getDisplayCutout());
+                displayCutouts = findDisplayCutouts(insets.getDisplayCutout());
             } else if (android.os.Build.VERSION.SDK_INT >= 28) {
                 DisplayCutout cutout = insets.getDisplayCutout();
                 left = statusBarHidden ? insets.getSystemWindowInsetLeft()
@@ -85,7 +84,7 @@ public final class IvanActivity extends SDLActivity {
                 bottom = statusBarHidden ? insets.getSystemWindowInsetBottom()
                         : Math.max(insets.getSystemWindowInsetBottom(),
                                    cutout != null ? cutout.getSafeInsetBottom() : 0);
-                displayCutout = findDisplayCutout(cutout);
+                displayCutouts = findDisplayCutouts(cutout);
             } else {
                 left = insets.getSystemWindowInsetLeft();
                 top = statusBarHidden ? 0 : insets.getSystemWindowInsetTop();
@@ -93,12 +92,11 @@ public final class IvanActivity extends SDLActivity {
                 bottom = insets.getSystemWindowInsetBottom();
             }
             if (!statusBarHidden) {
-                displayCutout.setEmpty();
+                displayCutouts = new int[0];
             }
             try {
                 nativeSetSafeInsets(left, top, right, bottom,
-                        displayCutout.left, displayCutout.top,
-                        displayCutout.right, displayCutout.bottom,
+                        displayCutouts,
                         getResources().getDisplayMetrics().density);
             } catch (UnsatisfiedLinkError ignored) {
                 Log.d(TAG, "Native layout is not ready for insets yet");
@@ -127,18 +125,22 @@ public final class IvanActivity extends SDLActivity {
     }
 
     @TargetApi(28)
-    private Rect findDisplayCutout(DisplayCutout cutout) {
+    private int[] findDisplayCutouts(DisplayCutout cutout) {
         if (cutout == null) {
-            return new Rect();
+            return new int[0];
         }
-        Rect result = new Rect();
+        int count = 0;
         for (Rect bounds : cutout.getBoundingRects()) {
-            if (!bounds.isEmpty()) {
-                if (result.isEmpty() || bounds.width() * bounds.height()
-                        > result.width() * result.height()) {
-                    result.set(bounds);
-                }
-            }
+            if (!bounds.isEmpty()) count++;
+        }
+        int[] result = new int[count * 4];
+        int index = 0;
+        for (Rect bounds : cutout.getBoundingRects()) {
+            if (bounds.isEmpty()) continue;
+            result[index++] = bounds.left;
+            result[index++] = bounds.top;
+            result[index++] = bounds.right;
+            result[index++] = bounds.bottom;
         }
         return result;
     }

@@ -2930,8 +2930,6 @@ void commandsystem::UpdateMobileActions(character* Char)
   Add(22, "MAP", mobileui::ACTION_SYSTEM,
       Human && HumanHasUsableArm);
   Add(34, "HISTORY", mobileui::ACTION_SYSTEM, true);
-  Add(35, "LOG DOWN", mobileui::ACTION_SYSTEM, true);
-  Add(36, "LOG UP", mobileui::ACTION_SYSTEM, true);
   Add(37, "OPTIONS", mobileui::ACTION_SYSTEM, true);
   Add(38, "HELP", mobileui::ACTION_SYSTEM, true);
   Add(39, "SKILLS", mobileui::ACTION_CHARACTER, true);

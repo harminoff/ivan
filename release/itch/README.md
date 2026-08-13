@@ -6,12 +6,12 @@ https://harminoff.itch.io/ivan-android-unofficial
 
 ## Current release candidate
 
-- Version: `0.59-android.4` (`versionCode` 4)
+- Version: `0.59-android.5` (`versionCode` 5)
 - Application ID: `io.github.harminoff.ivan`
 - Minimum Android version: Android 8.0 / API 26
 - Architectures: `arm64-v8a` and `x86_64`
-- APK: `builds/ivan-android-0.59-android.4.apk` (ignored by Git)
-- APK SHA-256: `BB2CF6C5B3E17453571CBC372971B60DB50A59F8351B2B84D7CBF1DD6CB777BE`
+- APK: `builds/ivan-android-0.59-android.5.apk` (ignored by Git)
+- APK SHA-256: `F24444E64CD88093F7EFDF7290538FEF88DE4DBDE499449568ED242523CE50C1`
 - Signing certificate SHA-256: `966DB1CE3EC261589D8699192D371A8908A3A31959CB4A65E25ED9F71BA539CB`
 
 The release keystore and recovery information live in the ignored

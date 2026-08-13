@@ -14,6 +14,7 @@
 #include <bitset>
 #include <algorithm>
 #include <sstream>
+#include <string>
 
 #include "feio.h"
 #include "felist.h"
@@ -332,8 +333,12 @@ uint felist::Draw()
 #ifdef ANDROID
   // Desktop lists can place up to 26 choices on one page.  Ten comfortably
   // sized rows are a better phone target and keep direct-touch selection
-  // reliable in both orientations.
-  PageLength = std::min(PageLength, uint(10));
+  // reliable in both orientations. Equipment exposes all of its slots to the
+  // mobile overlay because that screen supplies its own clipped scroll view.
+  const bool MobileEquipmentList = !Description.empty()
+                                && Description[0]->String == "Equipment";
+  if(!MobileEquipmentList)
+    PageLength = std::min(PageLength, uint(10));
 #endif
 
   for(;;){
@@ -464,9 +469,15 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     if(FlagsChk != Flags)ABORT("flags changed during felist draw %s %s",std::bitset<16>(FlagsChk).to_string().c_str(), std::bitset<16>(Flags).to_string().c_str());
 
 #ifdef ANDROID
+    std::vector<std::string> MobileOptionStrings;
     std::vector<const char*> MobileOptions;
     int MobileSelected = -1;
     uint SelectableIndex = 0;
+    const bool MobileEquipmentList = !Description.empty()
+                                  && Description[0]->String == "Equipment";
+    const bool MobileMessageHistory = !Description.empty()
+                                   && Description[0]->String
+                                      == "Message history";
     for(uint EntryIndex = 0; EntryIndex < Entry.size(); ++EntryIndex)
       if(Entry[EntryIndex]->Selectable)
       {
@@ -474,8 +485,22 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
            && SelectableIndex < PageBegin + PageLength)
         {
           if(SelectableIndex == Selected)
-            MobileSelected = int(MobileOptions.size());
-          MobileOptions.push_back(Entry[EntryIndex]->String.CStr());
+            MobileSelected = int(MobileOptionStrings.size());
+          std::string MobileEntry = Entry[EntryIndex]->String.CStr();
+          if(MobileEquipmentList)
+          {
+            const size_t Colon = MobileEntry.find(':');
+            if(Colon != std::string::npos)
+            {
+              size_t Details = Colon + 1;
+              while(Details < MobileEntry.size()
+                    && MobileEntry[Details] == ' ')
+                ++Details;
+              MobileEntry = MobileEntry.substr(0, Colon + 1) + " "
+                          + MobileEntry.substr(Details);
+            }
+          }
+          MobileOptionStrings.push_back(MobileEntry);
         }
         ++SelectableIndex;
       }
@@ -487,7 +512,10 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
           EntryIndex < Entry.size()
           && EntryIndex < PageBegin + PageLength; ++EntryIndex)
         if(!Entry[EntryIndex]->String.IsEmpty())
-          MobileOptions.push_back(Entry[EntryIndex]->String.CStr());
+          MobileOptionStrings.push_back(Entry[EntryIndex]->String.CStr());
+
+    for(size_t Index = 0; Index < MobileOptionStrings.size(); ++Index)
+      MobileOptions.push_back(MobileOptionStrings[Index].c_str());
 
     festring MobileSubtitle;
     for(uint DescriptionIndex = 1; DescriptionIndex < Description.size();
@@ -668,6 +696,54 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
         break;
       }
     }
+
+    if(MobileEquipmentList
+       && (Pressed == KEY_PAGE_DOWN || Pressed == KEY_PAGE_UP))
+    {
+      Selected = mobileui::PageMenu(Selected,
+                                    Pressed == KEY_PAGE_DOWN ? 1 : -1,
+                                    Selectables);
+      JustRedrawEverythingOnce = true;
+      continue;
+    }
+
+    if(MobileMessageHistory
+       && (Pressed == KEY_UP || Pressed == KEY_DOWN))
+    {
+      const uint PreviousSelected = Selected;
+      if(Pressed == KEY_UP)
+      {
+        if(Selected > 0)
+          --Selected;
+      }
+      else if(Selected + 1 < Selectables)
+        ++Selected;
+
+      if(Selected != PreviousSelected)
+      {
+        if(Selected < PageBegin || Selected >= PageBegin + PageLength)
+          PageBegin = Selected - Selected % std::max(uint(1), PageLength);
+        BackGround.FastBlit(Buffer);
+        JustRedrawEverythingOnce = true;
+      }
+      continue;
+    }
+
+    if(MobileMessageHistory
+       && (Pressed == KEY_PAGE_UP || Pressed == KEY_PAGE_DOWN))
+    {
+      const uint PageStep = std::max(uint(1), PageLength);
+      if(Pressed == KEY_PAGE_UP)
+        Selected = Selected > PageStep ? Selected - PageStep : 0;
+      else if(Selectables)
+        Selected = std::min(Selected + PageStep, Selectables - 1);
+
+      PageBegin = Selected - Selected % PageStep;
+      BackGround.FastBlit(Buffer);
+      JustRedrawEverythingOnce = true;
+      continue;
+    }
+
 #endif
 
     if(Pressed == KEY_ESC || Pressed == KEY_CONTROLLER_B) // this here grants will be preferred over everything else below

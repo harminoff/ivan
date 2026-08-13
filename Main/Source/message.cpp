@@ -186,7 +186,14 @@ void msgsystem::DrawMessageHistory()
   game::RegionListItemEnable(false); //this fix the problem that happens on death
   game::RegionSilhouetteEnable(false);
 
+#ifdef ANDROID
+  // Mobile history rows keep the normal font and Story-style line spacing.
+  // Seven entries leave enough vertical room for wrapped messages plus the
+  // visual section break; the remaining history stays available by paging.
+  MessageHistory.SetPageLength(7);
+#else
   MessageHistory.SetPageLength(ivanconfig::GetStackListPageLength());
+#endif
   MessageHistory.Draw();
 }
 

@@ -26,6 +26,7 @@ namespace
   enum { ACTION_ROWS = 3, ACTION_COLUMNS = 3, ACTION_COUNT = 9,
          ACTIONS_PER_PAGE = 8, MAX_MOBILE_ACTIONS = 48,
          MAX_QUESTION_CHOICES = 9, MAX_MENU_OPTIONS = 26,
+         MAX_DISPLAY_CUTOUTS = 8,
          CONTROL_MOVEMENT = 0, CONTROL_ACTIONS = 1,
          CONTROL_SECTION_COUNT = mobileui::ACTION_GROUPS + 1 };
 
@@ -60,9 +61,14 @@ namespace
     int Right = 0;
     int Bottom = 0;
     SDL_Rect DisplayCutout = { 0, 0, 0, 0 };
+    SDL_Rect DisplayCutouts[MAX_DISPLAY_CUTOUTS];
+    int DisplayCutoutCount = 0;
     float Density = 1.f;
     int ActionPage = 0;
     int ControlMode = CONTROL_MOVEMENT;
+    int PinnedActionGroup = -1;
+    int LastControlSectionTap = -1;
+    Uint32 LastControlSectionTapTime = 0;
     bool DirectionPressActive = false;
     int DirectionPressKey = 0;
     SDL_TimerID DirectionRepeatTimer = 0;
@@ -135,12 +141,20 @@ namespace
     int MenuSelected = -1;
     int MenuPage = 1;
     int MenuPages = 1;
+    SDL_Rect MenuViewport = { 0, 0, 0, 0 };
+    int MenuScrollY = 0;
+    int MenuMaxScrollY = 0;
+    bool MenuPressActive = false;
+    bool MenuScrolling = false;
+    int MenuPressY = 0;
+    int MenuLastY = 0;
   } State;
 
   bool ConsoleDirty = true;
 
   enum { DIRECTION_REPEAT_DELAY_MS = 350,
          DIRECTION_REPEAT_INTERVAL_MS = 110,
+         CONTROL_SECTION_DOUBLE_TAP_MS = 400,
          LOG_VISIBLE_MS = 6000,
          CANVAS_PAN_HOLD_MS = 250,
          CANVAS_PAN_SLOP = 8 };
@@ -537,6 +551,16 @@ namespace
            IsSelected ? 71 : 23, IsSelected ? 48 : 28, 246);
       Outline(Renderer, Button, Enabled ? 156 : 76,
               Enabled ? 137 : 68, Enabled ? 100 : 55);
+      if(IsSelected && State.PinnedActionGroup == Index - 1)
+      {
+        const int Inset = Clamp(int(3 * State.Density), 3, 9);
+        const SDL_Rect PinnedOutline = {
+          Button.x + Inset, Button.y + Inset,
+          std::max(1, Button.w - Inset * 2),
+          std::max(1, Button.h - Inset * 2)
+        };
+        Outline(Renderer, PinnedOutline, 235, 218, 174);
+      }
       PaintControlSectionIcon(Renderer, Index, Button, IsSelected, Enabled);
     }
   }
@@ -1023,23 +1047,39 @@ namespace
     LeftTextAtScale(Renderer, Inner, Visible.c_str(), Scale);
   }
 
-  void GameplayBannerText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
-                          const std::string& Value)
+  std::string FlattenGameplayBannerText(const std::string& Value)
   {
     std::string Visible = Value;
     std::replace(Visible.begin(), Visible.end(), '\n', ' ');
     std::replace(Visible.begin(), Visible.end(), '\r', ' ');
+    return Visible;
+  }
 
-    const int SingleScale = Clamp(Rect.h / 11, 2, 4);
-    const int SingleColumns = std::max(1,
-      (Rect.w - 20) / (SingleScale * 6));
-    if((int)Visible.size() <= SingleColumns)
+  bool GameplayBannerNeedsTwoLines(const SDL_Rect& Rect,
+                                   const std::string& Value)
+  {
+    const int Scale = Clamp(Rect.h / 11, 2, 4);
+    const int Columns = std::max(1, (Rect.w - 20) / (Scale * 6));
+    return (int)FlattenGameplayBannerText(Value).size() > Columns;
+  }
+
+  SDL_Rect GameplayLogRect()
+  {
+    SDL_Rect Rect = State.Log;
+    if(!State.PromptActive
+       && GameplayBannerNeedsTwoLines(Rect, State.LogMessage))
     {
-      SingleLineText(Renderer, Rect, Visible);
-      return;
+      Rect.y -= Rect.h;
+      Rect.h *= 2;
     }
+    return Rect;
+  }
 
-    const int Scale = Clamp(Rect.h / 19, 2, 4);
+  void GameplayBannerText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
+                          const std::string& Value, int RowHeight)
+  {
+    const std::string Visible = FlattenGameplayBannerText(Value);
+    const int Scale = Clamp(RowHeight / 11, 2, 4);
     const int Columns = std::max(1, (Rect.w - 20) / (Scale * 6));
     std::vector<std::string> Lines = WrapText(Visible, Columns);
     if(Lines.size() > 2)
@@ -1070,7 +1110,8 @@ namespace
   {
     if(!ShowGameplayLog())
       return;
-    Frame(Renderer, State.Log);
+    const SDL_Rect LogRect = GameplayLogRect();
+    Frame(Renderer, LogRect);
     std::string VisibleLog = State.LogMessage;
     if(State.PromptActive)
     {
@@ -1081,22 +1122,26 @@ namespace
         VisibleLog += State.PromptInput;
         VisibleLog += "_";
       }
-      WrappedText(Renderer, { State.Log.x + 5, State.Log.y + 5,
-                              State.Log.w - 10, State.Log.h - 10 },
+      WrappedText(Renderer, { LogRect.x + 5, LogRect.y + 5,
+                              LogRect.w - 10, LogRect.h - 10 },
                   VisibleLog);
     }
     else
-      GameplayBannerText(Renderer, State.Log, VisibleLog);
+      GameplayBannerText(Renderer, LogRect, VisibleLog, State.Log.h);
   }
 
   void MenuRowText(SDL_Renderer* Renderer, const SDL_Rect& Row,
                    const std::string& Value, int Padding, int Scale,
                    Uint8 R, Uint8 G, Uint8 B)
   {
+    // Match Story text's 140% baseline spacing so wrapped menu rows preserve
+    // a clear gap between the 7-pixel-high glyph lines.
+    const int LineSpacingPercent = 140;
     const int AvailableWidth = std::max(1, Row.w - Padding * 2);
     const int Columns = std::max(1, AvailableWidth / (Scale * 6));
     std::vector<std::string> Lines = WrapText(Value, Columns);
-    const int LineAdvance = Scale * 8;
+    const int LineAdvance = std::max(1,
+      (Scale * 7 * LineSpacingPercent + 50) / 100);
     const int LinesFit = Row.h >= Scale * 7
       ? 1 + std::max(0, Row.h - Scale * 7) / LineAdvance : 1;
 
@@ -1348,6 +1393,13 @@ namespace
   void PaintMobileMenu(SDL_Renderer* Renderer)
   {
     const bool MainMenu = MainMenuPresentation();
+    const bool ScrollableEquipment = State.MenuTitle == "Equipment"
+                                  && State.MenuPages == 1;
+    const bool MessageHistory = State.MenuTitle == "Message history";
+    const bool SaveGameChooser =
+      State.MenuTitle == "Choose a file and be sorry:";
+    const bool RoomyWrappedRows = MessageHistory || ScrollableEquipment
+                               || SaveGameChooser;
     const int Padding = Clamp(int(8 * State.Density), 10, 28);
     int SubtitleHeight = MainMenu
       ? Clamp(int(24 * State.Density), 48, 86)
@@ -1355,7 +1407,7 @@ namespace
       : Clamp(int(18 * State.Density), 36, 64));
     if(!MainMenu && State.MenuSubtitle.size() > 80)
       SubtitleHeight = Clamp(int(42 * State.Density), 96, 160);
-    const int FooterHeight = MainMenu ? 0
+    const int FooterHeight = MainMenu || ScrollableEquipment ? 0
       : Clamp(int(16 * State.Density), 32, 54);
     SDL_Rect Content = { State.Game.x + Padding, State.Game.y + Padding,
                          State.Game.w - Padding * 2,
@@ -1367,6 +1419,8 @@ namespace
       if(MainMenu)
         CenterText(Renderer, Subtitle, "ITER VEHEMENS AD NECEM",
                    5, 205, 48, 42);
+      else if(ScrollableEquipment)
+        CenteredWrappedText(Renderer, Subtitle, State.MenuSubtitle, 4);
       else
         WrappedText(Renderer, Subtitle, State.MenuSubtitle, true, 140, 4);
       Content.y += SubtitleHeight;
@@ -1385,9 +1439,14 @@ namespace
     const int Count = std::max(1, State.MenuOptionCount);
     const int MaximumRowHeight = MainMenu
       ? Clamp(int(31 * State.Density), 68, 112)
-      : Clamp(int(36 * State.Density), 70, 130);
-    const int RowsHeight = std::min(Content.h, Count * MaximumRowHeight);
-    const int ShortestRowHeight = std::max(1, RowsHeight / Count - 4);
+      : (RoomyWrappedRows
+         ? Clamp(int(57 * State.Density), 120, 180)
+         : Clamp(int(36 * State.Density), 70, 130));
+    const int RowsHeight = ScrollableEquipment
+      ? Count * MaximumRowHeight
+      : std::min(Content.h, Count * MaximumRowHeight);
+    const int ShortestRowHeight = ScrollableEquipment
+      ? MaximumRowHeight - 4 : std::max(1, RowsHeight / Count - 4);
     int MenuScale = Clamp(ShortestRowHeight / 11, 1, MainMenu ? 5 : 4);
     if(MainMenu)
       for(int Index = 0; Index < State.MenuOptionCount; ++Index)
@@ -1399,12 +1458,40 @@ namespace
       }
     if(MainMenu)
       Content.y += std::max(0, (Content.h - RowsHeight) / 2);
+    State.MenuViewport = Content;
+    State.MenuMaxScrollY = ScrollableEquipment
+      ? std::max(0, RowsHeight - Content.h) : 0;
+    State.MenuScrollY = Clamp(State.MenuScrollY, 0, State.MenuMaxScrollY);
+    if(ScrollableEquipment && State.MenuSelected >= 0
+       && State.MenuSelected < Count)
+    {
+      // Directional keys still select entries normally. Only move the
+      // viewport when the newly selected row crosses an edge, keeping the
+      // highlight visible without turning Up/Down into standalone scrolling.
+      const int SelectedTop = Content.y
+        + RowsHeight * State.MenuSelected / Count;
+      const int SelectedBottom = Content.y
+        + RowsHeight * (State.MenuSelected + 1) / Count;
+      if(SelectedTop - State.MenuScrollY < Content.y)
+        State.MenuScrollY = SelectedTop - Content.y;
+      else if(SelectedBottom - State.MenuScrollY > Content.y + Content.h)
+        State.MenuScrollY = SelectedBottom - Content.y - Content.h;
+      State.MenuScrollY = Clamp(State.MenuScrollY, 0, State.MenuMaxScrollY);
+    }
+    if(ScrollableEquipment)
+      SDL_RenderSetClipRect(Renderer, &Content);
     for(int Index = 0; Index < State.MenuOptionCount; ++Index)
     {
-      const int Y0 = Content.y + RowsHeight * Index / Count;
-      const int Y1 = Content.y + RowsHeight * (Index + 1) / Count;
-      SDL_Rect Row = { Content.x, Y0 + 2, Content.w,
-                       std::max(1, Y1 - Y0 - 4) };
+      const int ScrollY = ScrollableEquipment ? State.MenuScrollY : 0;
+      const int Y0 = Content.y + RowsHeight * Index / Count - ScrollY;
+      const int Y1 = Content.y + RowsHeight * (Index + 1) / Count - ScrollY;
+      // Verbose mobile rows often wrap to multiple lines. Leave a strong,
+      // density-aware section break so adjacent bordered entries do not read
+      // as one continuous paragraph (24 px on the Pixel's 3x density).
+      const int RowGap = RoomyWrappedRows
+        ? Clamp(int(8 * State.Density), 20, 32) : 4;
+      SDL_Rect Row = { Content.x, Y0 + RowGap / 2, Content.w,
+                       std::max(1, Y1 - Y0 - RowGap) };
       State.MenuRows[Index] = Row;
       const bool Selected = Index == State.MenuSelected;
       if(MainMenu)
@@ -1442,10 +1529,12 @@ namespace
       else
         MenuRowText(Renderer, Row, Label, Padding, MenuScale, 240, 230, 202);
     }
+    if(ScrollableEquipment)
+      SDL_RenderSetClipRect(Renderer, 0);
     for(int Index = State.MenuOptionCount; Index < MAX_MENU_OPTIONS; ++Index)
       State.MenuRows[Index] = { 0, 0, 0, 0 };
 
-    if(!MainMenu)
+    if(!MainMenu && !ScrollableEquipment)
     {
       char PageLabel[32];
       snprintf(PageLabel, sizeof(PageLabel), "PAGE %d/%d",
@@ -1519,6 +1608,72 @@ namespace
       snprintf(Buffer, BufferSize, "OPTION");
   }
 
+  std::string CurrentHeaderTitle()
+  {
+    const bool SettingTextPrompt = State.PromptActive
+                                && !State.PromptNumeric
+                                && IsSettingTextPrompt(State.PromptText);
+    return State.MenuActive ? State.MenuTitle
+      : (State.ScreenTextActive ? State.ScreenTextTitle
+      : (State.PromptActive && !State.PromptGameplay
+         ? (State.PromptNumeric ? "SELECT QUANTITY"
+            : (SettingTextPrompt ? SettingPromptTitle(State.PromptText)
+                                 : "CREATE CHARACTER"))
+         : "IVAN"));
+  }
+
+  SDL_Rect SegmentedHeaderTextRect(const SDL_Rect& Header,
+                                   const std::string& Title)
+  {
+    if(State.DisplayCutoutCount <= 0)
+      return Header;
+
+    std::vector<SDL_Rect> Segments(1, Header);
+    int LowestCutout = Header.y;
+    for(int Index = 0; Index < State.DisplayCutoutCount; ++Index)
+    {
+      const SDL_Rect& Cutout = State.DisplayCutouts[Index];
+      if(Cutout.y >= Header.y + Header.h
+         || Cutout.y + Cutout.h <= Header.y)
+        continue;
+      LowestCutout = std::max(LowestCutout, Cutout.y + Cutout.h);
+      std::vector<SDL_Rect> Remaining;
+      for(const SDL_Rect& Segment : Segments)
+      {
+        const int CutoutLeft = std::max(Segment.x, Cutout.x);
+        const int CutoutRight = std::min(Segment.x + Segment.w,
+                                         Cutout.x + Cutout.w);
+        if(CutoutLeft >= CutoutRight)
+        {
+          Remaining.push_back(Segment);
+          continue;
+        }
+        if(CutoutLeft > Segment.x)
+          Remaining.push_back({ Segment.x, Segment.y,
+                                CutoutLeft - Segment.x, Segment.h });
+        if(CutoutRight < Segment.x + Segment.w)
+          Remaining.push_back({ CutoutRight, Segment.y,
+                                Segment.x + Segment.w - CutoutRight,
+                                Segment.h });
+      }
+      Segments.swap(Remaining);
+    }
+
+    const int Pad = Clamp(int(4 * State.Density), 7, 18);
+    SDL_Rect Best = { Header.x, Header.y, 0, Header.h };
+    for(const SDL_Rect& Segment : Segments)
+      if(Segment.w > Best.w)
+        Best = Segment;
+    const int PreferredScale = Title.size() > 24 ? 5 : 7;
+    if(Best.w >= TextWidth(Title.c_str(), PreferredScale) + Pad * 2)
+      return { Best.x + Pad, Best.y, std::max(1, Best.w - Pad * 2), Best.h };
+
+    const int Below = std::min(Header.y + Header.h, LowestCutout + Pad);
+    return { Header.x + Pad, Below,
+             std::max(1, Header.w - Pad * 2),
+             std::max(1, Header.y + Header.h - Below) };
+  }
+
   void PaintConsole(SDL_Renderer* Renderer)
   {
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_NONE);
@@ -1537,32 +1692,9 @@ namespace
       SDL_Rect GameFrame = { State.Game.x - 5, State.Game.y - 5,
                              State.Game.w + 10, State.Game.h + 10 };
       Frame(Renderer, GameFrame);
-      SDL_Rect HeaderText = State.Header;
-      if(State.Width < State.Height
-         && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
-      {
-        const int CutoutBottom = State.DisplayCutout.y
-                               + State.DisplayCutout.h;
-        if(State.DisplayCutout.y < HeaderText.y + HeaderText.h
-           && CutoutBottom > HeaderText.y)
-        {
-          const int Pad = Clamp(int(3 * State.Density), 5, 14);
-          const int HeaderBottom = HeaderText.y + HeaderText.h;
-          HeaderText.y = std::min(HeaderBottom - 1, CutoutBottom + Pad);
-          HeaderText.h = std::max(1, HeaderBottom - HeaderText.y);
-        }
-      }
-      const std::string HeaderTitle = State.MenuActive
-        ? State.MenuTitle
-        : (State.ScreenTextActive
-           ? State.ScreenTextTitle
-           : (State.PromptActive && !State.PromptGameplay
-              ? (State.PromptNumeric
-                 ? "SELECT QUANTITY"
-                 : (SettingTextPrompt
-                    ? SettingPromptTitle(State.PromptText)
-                    : "CREATE CHARACTER"))
-              : "IVAN"));
+      const std::string HeaderTitle = CurrentHeaderTitle();
+      const SDL_Rect HeaderText = SegmentedHeaderTextRect(State.Header,
+                                                          HeaderTitle);
       if(HeaderTitle.size() > 24)
         CenteredWrappedText(Renderer, HeaderText, HeaderTitle, 5);
       else
@@ -1904,16 +2036,26 @@ namespace mobileui
   }
 
   void SetSafeInsets(int Left, int Top, int Right, int Bottom,
-                     int CutoutLeft, int CutoutTop,
-                     int CutoutRight, int CutoutBottom, float Density)
+                     const int* CutoutRects, int CutoutCount, float Density)
   {
     State.Left = std::max(0, Left);
     State.Top = std::max(0, Top);
     State.Right = std::max(0, Right);
     State.Bottom = std::max(0, Bottom);
-    State.DisplayCutout = { std::max(0, CutoutLeft), std::max(0, CutoutTop),
-                        std::max(0, CutoutRight - CutoutLeft),
-                        std::max(0, CutoutBottom - CutoutTop) };
+    State.DisplayCutout = { 0, 0, 0, 0 };
+    State.DisplayCutoutCount = Clamp(CutoutCount, 0, MAX_DISPLAY_CUTOUTS);
+    for(int Index = 0; Index < State.DisplayCutoutCount; ++Index)
+    {
+      const int* Rect = CutoutRects + Index * 4;
+      State.DisplayCutouts[Index] = {
+        std::max(0, Rect[0]), std::max(0, Rect[1]),
+        std::max(0, Rect[2] - Rect[0]), std::max(0, Rect[3] - Rect[1])
+      };
+      const SDL_Rect& Candidate = State.DisplayCutouts[Index];
+      if(Candidate.w * Candidate.h
+         > State.DisplayCutout.w * State.DisplayCutout.h)
+        State.DisplayCutout = Candidate;
+    }
     State.Density = std::max(1.f, Density);
     ConsoleDirty = true;
 
@@ -2160,6 +2302,9 @@ namespace mobileui
       State.ActionGroups[Index] = Group;
     }
     State.ActionCount = Count;
+    if(State.PinnedActionGroup >= 0
+       && ActionCountForGroup(State.PinnedActionGroup) <= 0)
+      State.PinnedActionGroup = -1;
     State.ActionPage = Clamp(State.ActionPage, 0, ActionPageCount() - 1);
     if(Changed)
       ConsoleDirty = true;
@@ -2191,8 +2336,10 @@ namespace mobileui
                const char* const* Options, int Count, int Selected,
                int Page, int Pages)
   {
+    const std::string NewTitle = Title ? Title : "MENU";
+    const bool NewMenu = !State.MenuActive || State.MenuTitle != NewTitle;
     State.MenuActive = true;
-    State.MenuTitle = Title ? Title : "MENU";
+    State.MenuTitle = NewTitle;
     State.MenuSubtitle = Subtitle ? Subtitle : "";
     State.MenuOptionCount = Clamp(Count, 0, MAX_MENU_OPTIONS);
     for(int Index = 0; Index < State.MenuOptionCount; ++Index)
@@ -2201,7 +2348,26 @@ namespace mobileui
                                std::max(-1, State.MenuOptionCount - 1));
     State.MenuPage = std::max(1, Page);
     State.MenuPages = std::max(1, Pages);
+    if(NewMenu)
+      State.MenuScrollY = 0;
     ConsoleDirty = true;
+  }
+
+  int PageMenu(int Selected, int Direction, int Count)
+  {
+    if(State.MenuTitle != "Equipment" || !Direction || Count <= 0
+       || State.MenuMaxScrollY <= 0)
+      return Selected;
+
+    const int PageStep = std::max(1, State.MenuViewport.h);
+    State.MenuScrollY = Clamp(State.MenuScrollY
+                                + (Direction > 0 ? PageStep : -PageStep),
+                              0, State.MenuMaxScrollY);
+    const int RowHeight = Clamp(int(57 * State.Density), 120, 180);
+    // Select the first completely visible row in the new set. At the final
+    // partial page this still exposes every remaining equipment slot.
+    return Clamp((State.MenuScrollY + RowHeight - 1) / RowHeight,
+                 0, Count - 1);
   }
 
   void ClearMenu()
@@ -2209,6 +2375,10 @@ namespace mobileui
     State.MenuActive = false;
     State.MenuOptionCount = 0;
     State.MenuSelected = -1;
+    State.MenuPressActive = false;
+    State.MenuScrolling = false;
+    State.MenuScrollY = 0;
+    State.MenuMaxScrollY = 0;
     ConsoleDirty = true;
   }
 
@@ -2222,7 +2392,13 @@ namespace mobileui
     State.GameHeight = GameHeight;
     State.Gameplay = GameplayPresentation();
     if(State.Gameplay && !PreviousGameplay)
-      State.ControlMode = CONTROL_MOVEMENT;
+    {
+      if(State.PinnedActionGroup >= 0
+         && ActionCountForGroup(State.PinnedActionGroup) > 0)
+        SelectActionGroup(State.PinnedActionGroup);
+      else
+        State.ControlMode = CONTROL_MOVEMENT;
+    }
     if(!State.Gameplay && PreviousGameplay)
     {
       State.MenuDirectionMode = false;
@@ -2235,18 +2411,25 @@ namespace mobileui
     int HeaderHeight = BaseHeaderHeight;
     if(!State.Gameplay && State.MenuActive && State.MenuTitle.size() > 24)
       HeaderHeight = std::max(HeaderHeight, 96);
-    // When edge-to-edge mode is active, keep the header panel in the camera
-    // row and reserve only enough internal height to place its title below the
-    // physical cutout. This uses the pixels around the hole instead of turning
-    // the whole top strip into an inset.
+    // Keep a compact header when the title fits beside every top cutout. Only
+    // reserve a full row below the hardware when no unobstructed segment is
+    // wide enough at the title's preferred scale.
     if(!State.Gameplay && State.Width < State.Height
-       && State.DisplayCutout.w > 0 && State.DisplayCutout.h > 0)
+       && State.DisplayCutoutCount > 0)
     {
-      const int CutoutBottom = State.DisplayCutout.y
-                             + State.DisplayCutout.h;
-      if(CutoutBottom > State.Safe.y)
+      const SDL_Rect CompactHeader = { State.Safe.x, State.Safe.y,
+                                       State.Safe.w, HeaderHeight };
+      const SDL_Rect CompactText = SegmentedHeaderTextRect(
+        CompactHeader, CurrentHeaderTitle());
+      if(CompactText.y > CompactHeader.y)
+      {
+        int CutoutBottom = State.Safe.y;
+        for(int Index = 0; Index < State.DisplayCutoutCount; ++Index)
+          CutoutBottom = std::max(CutoutBottom,
+            State.DisplayCutouts[Index].y + State.DisplayCutouts[Index].h);
         HeaderHeight = std::max(HeaderHeight,
           CutoutBottom - State.Safe.y + Gap + BaseHeaderHeight);
+      }
     }
 
     if(State.Gameplay && State.Width < State.Height)
@@ -2684,8 +2867,16 @@ namespace mobileui
     CancelDirectionPress();
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+    if(!State.Gameplay && State.MenuActive && State.MenuMaxScrollY > 0
+       && Contains(State.MenuViewport, X, Y))
+    {
+      State.MenuPressActive = true;
+      State.MenuScrolling = false;
+      State.MenuPressY = State.MenuLastY = Y;
+      return Result;
+    }
     State.LogPressActive = ShowGameplayLog() && !State.PromptActive
-                        && Contains(State.Log, X, Y);
+                        && Contains(GameplayLogRect(), X, Y);
     if(State.LogPressActive)
     {
       State.LogPressStarted = SDL_GetTicks();
@@ -2730,11 +2921,29 @@ namespace mobileui
 
   bool HandleFingerMotion(float NormalizedX, float NormalizedY)
   {
+    if(State.MenuPressActive)
+    {
+      const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+      if(!State.MenuScrolling
+         && std::abs(Y - State.MenuPressY) < CANVAS_PAN_SLOP)
+        return false;
+      State.MenuScrolling = true;
+      const int DeltaY = Y - State.MenuLastY;
+      State.MenuLastY = Y;
+      const int OldScrollY = State.MenuScrollY;
+      State.MenuScrollY = Clamp(State.MenuScrollY - DeltaY,
+                                0, State.MenuMaxScrollY);
+      if(State.MenuScrollY == OldScrollY)
+        return false;
+      ConsoleDirty = true;
+      return true;
+    }
     if(!State.CanvasPressActive)
       return false;
 
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+
     const int FromStartX = X - State.CanvasPressX;
     const int FromStartY = Y - State.CanvasPressY;
     if(!State.CanvasPanning)
@@ -2866,6 +3075,15 @@ namespace mobileui
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
 
+    if(State.MenuPressActive)
+    {
+      const bool SuppressTap = State.MenuScrolling;
+      State.MenuPressActive = false;
+      State.MenuScrolling = false;
+      if(SuppressTap)
+        return Result;
+    }
+
     if(State.CanvasPressActive)
     {
       const int DeltaX = X - State.CanvasPressX;
@@ -2885,7 +3103,7 @@ namespace mobileui
     {
       const bool LongPress = SDL_GetTicks() - State.LogPressStarted >= 500;
       State.LogPressActive = false;
-      if(LongPress && Contains(State.Log, X, Y))
+      if(LongPress && Contains(GameplayLogRect(), X, Y))
       {
         Result.Kind = touchresult::TOUCH_KEY;
         Result.KeyCode = 'M';
@@ -2938,12 +3156,25 @@ namespace mobileui
       for(int Index = 0; Index < CONTROL_SECTION_COUNT; ++Index)
         if(Contains(ControlSectionTab(Index), X, Y))
         {
+          const Uint32 Now = SDL_GetTicks();
           if(Index == 0)
+          {
             State.ControlMode = CONTROL_MOVEMENT;
+            State.PinnedActionGroup = -1;
+          }
           else if(ActionCountForGroup(Index - 1) > 0)
+          {
+            const bool DoubleTap = State.LastControlSectionTap == Index
+              && Now - State.LastControlSectionTapTime
+                 <= CONTROL_SECTION_DOUBLE_TAP_MS;
+            if(State.PinnedActionGroup != Index - 1)
+              State.PinnedActionGroup = DoubleTap ? Index - 1 : -1;
             SelectActionGroup(Index - 1);
+          }
           else
             return Result;
+          State.LastControlSectionTap = Index;
+          State.LastControlSectionTapTime = Now;
           ConsoleDirty = true;
           Result.Kind = touchresult::TOUCH_REDRAW;
           return Result;
@@ -2951,7 +3182,8 @@ namespace mobileui
 
     if(!State.Gameplay && State.MenuActive)
       for(int Index = 0; Index < State.MenuOptionCount; ++Index)
-        if(Contains(State.MenuRows[Index], X, Y))
+        if(Contains(State.MenuViewport, X, Y)
+           && Contains(State.MenuRows[Index], X, Y))
         {
           Result.Kind = touchresult::TOUCH_KEY;
           Result.KeyCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
@@ -2987,8 +3219,9 @@ namespace mobileui
     {
       const actiondef* Buttons = State.MenuDirectionMode
                                ? MenuDirections : MenuNavigation;
+      const int KeyCode = Buttons[ControlIndex].KeyCode;
       Result.Kind = touchresult::TOUCH_KEY;
-      Result.KeyCode = Buttons[ControlIndex].KeyCode;
+      Result.KeyCode = KeyCode;
       return Result;
     }
 
@@ -3031,10 +3264,16 @@ namespace mobileui
           return Result;
         Result.Kind = touchresult::TOUCH_KEY;
         Result.KeyCode = State.ActionKeys[PageIndices[ControlIndex]];
+        // An action between category taps breaks the double-tap gesture. This
+        // prevents a quick return to the same category from pinning it by
+        // accident after an ordinary single-tap action.
+        State.LastControlSectionTap = -1;
+        State.LastControlSectionTapTime = 0;
         // Commands commonly ask for a direction next (open, look, throw,
         // apply, and so on). Return to movement immediately so that the
         // follow-up direction is one tap away.
-        State.ControlMode = CONTROL_MOVEMENT;
+        if(State.PinnedActionGroup != Group)
+          State.ControlMode = CONTROL_MOVEMENT;
         ConsoleDirty = true;
       }
       return Result;
@@ -3063,17 +3302,18 @@ namespace mobileui
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_io_github_harminoff_ivan_IvanActivity_nativeSetSafeInsets(JNIEnv*, jclass, jint Left,
+Java_io_github_harminoff_ivan_IvanActivity_nativeSetSafeInsets(JNIEnv* Env, jclass, jint Left,
                                                        jint Top, jint Right,
                                                        jint Bottom,
-                                                       jint CutoutLeft,
-                                                       jint CutoutTop,
-                                                       jint CutoutRight,
-                                                       jint CutoutBottom,
+                                                       jintArray CutoutRects,
                                                        jfloat Density)
 {
+  const jsize ValueCount = CutoutRects ? Env->GetArrayLength(CutoutRects) : 0;
+  jint* Values = ValueCount
+    ? Env->GetIntArrayElements(CutoutRects, NULL) : NULL;
   mobileui::SetSafeInsets(Left, Top, Right, Bottom,
-                          CutoutLeft, CutoutTop, CutoutRight, CutoutBottom,
-                          Density);
+                          Values, ValueCount / 4, Density);
+  if(Values)
+    Env->ReleaseIntArrayElements(CutoutRects, Values, JNI_ABORT);
 }
 #endif

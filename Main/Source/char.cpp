@@ -11613,6 +11613,9 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
   truth EquipmentChanged = false;
 #ifdef ANDROID
   felist List(CONST_S("Equipment"));
+  // Expose every equipment slot to the mobile overlay at once. The overlay
+  // uses a clipped, vertically scrollable viewport rather than list pages.
+  List.SetPageLength(MAX_EQUIPMENT_SLOTS);
 #else
   felist List(CONST_S("Equipment menu [ESC exits]"));
 #endif

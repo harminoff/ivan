@@ -40,8 +40,8 @@ namespace mobileui
   };
 
   void SetSafeInsets(int Left, int Top, int Right, int Bottom,
-                     int CutoutLeft, int CutoutTop,
-                     int CutoutRight, int CutoutBottom, float Density);
+                     const int* CutoutRects, int CutoutCount,
+                     float Density);
   void SetControllerOnLeft(bool OnLeft);
   void SetStatusBarHidden(bool Hidden);
   void SetHapticsEnabled(bool Enabled);
@@ -68,6 +68,7 @@ namespace mobileui
   void SetMenu(const char* Title, const char* Subtitle,
                const char* const* Options, int Count, int Selected,
                int Page, int Pages);
+  int PageMenu(int Selected, int Direction, int Count);
   void ClearMenu();
   void UpdateLayout(SDL_Renderer* Renderer, int GameWidth, int GameHeight);
   const SDL_Rect& GetGameRect();
