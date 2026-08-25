@@ -31,6 +31,8 @@ struct EntryRect {
   uint iSelectableIndex;
   v2 v2TopLeft;
   v2 v2BottomRight;
+  v2 v2ImageTopLeft;
+  bool bHasImage;
 };
 
 class felist
@@ -41,6 +43,14 @@ class felist
   void AddEntry(cfestring&, col16, uint = 0,
                 uint = NO_IMAGE, truth = true);
   void SetLastEntryHelp(cfestring Help);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  void SetLastEntryAdaptiveGroup(cfestring Group);
+  void SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
+                               truth Armor, truth Weapon,
+                               truth Shield, int ArmorValue,
+                               int MinimumDamage, int MaximumDamage,
+                               int ToHit, int Block, int Enchantment);
+#endif
   void AddDescription(cfestring&, col16 = WHITE);
   static void SetAllowMouse(bool b);
   uint Draw();

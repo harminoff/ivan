@@ -94,6 +94,9 @@ void itemtrapbase::Search(ccharacter* Char, int Perception)
 
     if(Char->IsPlayer())
     {
+#ifdef ANDROID
+      mobileui::Pulse(mobileui::FEEDBACK_WARNING);
+#endif
       game::AskForKeyPress(CONST_S("Trap found! [press any key to continue]"));
       ADD_MESSAGE("You find %s.", CHAR_NAME(INDEFINITE));
     }

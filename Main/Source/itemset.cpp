@@ -52,6 +52,9 @@ EXTENDED_SYSTEM_SPECIALIZATIONS(item)(0, 0, 0, "item");
 #include "iconf.h"
 #include "worldmap.h"
 #include "wterras.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 #include "item.cpp"
 #include "bodypart.cpp"

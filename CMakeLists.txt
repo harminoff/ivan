@@ -10,7 +10,7 @@ set(PROJECT_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}")
 #set(PROJECT_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
-add_definitions(-DIVAN_VERSION="${PROJECT_VERSION}" -DUSE_SDL)
+add_definitions(-DIVAN_VERSION="${PROJECT_VERSION}" -DUSE_SDL -DADAPTIVE_UI)
 
 option(BUILD_MAC_APP "Build standalone application for MacOS" OFF)
 option(USE_HOME_FOR_STATE_DIR "Statedir will be /.ivan/ in current user's homedir" OFF)
@@ -83,3 +83,26 @@ add_subdirectory(mihail)
 add_subdirectory(xbrzscale)
 add_subdirectory(fantasyname)
 add_subdirectory(FastNoise)
+
+include(CTest)
+if(BUILD_TESTING)
+  find_package(SDL2 REQUIRED)
+  add_executable(adaptiveui_layout_test
+                 Tests/adaptiveui_layout_test.cpp
+                 FeLib/Source/adaptiveui.cpp)
+  target_include_directories(adaptiveui_layout_test PRIVATE
+                             FeLib/Include ${SDL2_INCLUDE_DIR})
+  target_link_libraries(adaptiveui_layout_test ${SDL2_LIBRARY})
+  if(MSVC)
+    target_compile_options(adaptiveui_layout_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(adaptiveui_layout_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME adaptiveui_layout_test COMMAND adaptiveui_layout_test)
+  if(WIN32)
+    # The portable i686 runtime DLLs are staged beside ivan.exe. Run the test
+    # there as well so Windows does not pick up incompatible DLLs from PATH.
+    set_tests_properties(adaptiveui_layout_test PROPERTIES
+                         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ivan>")
+  endif()
+endif()

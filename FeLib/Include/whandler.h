@@ -38,6 +38,7 @@ struct mouseclick{
  v2 pos;
  int wheelY=0;
  truth IsMotion=false;
+ truth IsCanvasCoordinates=false;
 };
 
 class globalwindowhandler
@@ -51,6 +52,7 @@ class globalwindowhandler
   static truth IsKeyTimeoutEnabled();
   static void SetKeyTimeout(int iTimeoutMillis,int iDefaultReturnedKey);
   static mouseclick GetLastMouseEvent() { return LastMouseEvent; } // after GetKey() returns KEY_MOUSE_EVENT
+  static void BufferPresentationMouseEvent(mouseclick mc) { MouseBuffer.push(mc); }
   static void SetPlayInBackground(truth b){playInBackground=b;}
   static float GetFPS(bool bInsta);
   static truth HasKeysOnBuffer();

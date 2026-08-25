@@ -50,3 +50,17 @@ See Doc/Lore for fiction and short stories from the world of IVAN.
 --------------------------
 
 FREE SOFTWARE FOREVER!
+
+Android port
+------------
+
+This fork includes an unofficial Android port with touch-first portrait and
+landscape layouts. Android build, control, storage, and verification details
+are in [android/README.md](android/README.md).
+
+The Android combination includes GPLv3-or-later xBRZ code and is therefore
+distributed as a whole under GNU GPL version 3 or any later version. Original
+IVAN material remains available under its GPLv2-or-later terms. See
+[ANDROID_PORT_NOTICE.md](ANDROID_PORT_NOTICE.md) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for modification and bundled
+component notices.

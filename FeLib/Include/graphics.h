@@ -34,6 +34,12 @@ typedef void (*drawabove)(bitmap*);
 class graphics
 {
  public:
+  enum presentationmode
+  {
+    PRESENTATION_CLASSIC,
+    PRESENTATION_ENHANCED
+  };
+
   friend class bitmap;
   static void Init();
   static void DeInit();
@@ -42,8 +48,19 @@ class graphics
 
 #ifdef USE_SDL
   static void SetScale(int);
+  static void StartControllerDiscovery();
   static void SwitchMode();
   static void SetMode(cchar*, cchar*, v2, int, int, truth);
+  static void SetMode(cchar*, cchar*, v2 CanvasRes, v2 OutputSize,
+                      int, int, truth, presentationmode);
+  static v2 GetOutputSize();
+  static v2 MapWindowToOutput(v2);
+  static v2 MapOutputToCanvas(v2);
+  static v2 MapPointerToCanvas(v2);
+  static bool IsEnhancedPresentation() { return Presentation == PRESENTATION_ENHANCED; }
+#if SDL_MAJOR_VERSION == 2
+  static void RecreateTexture();
+#endif
 #endif
 
 #ifdef __DJGPP__
@@ -163,6 +180,8 @@ class graphics
   static truth bSpecialListItemAltPos;
   static v2 Res;
   static int Scale;
+  static v2 OutputRes;
+  static presentationmode Presentation;
   static int ColorDepth;
   static rawbitmap* DefaultFont;
 };

@@ -31,6 +31,11 @@ class ivanconfig
   static long GetShowItemsAtPlayerSquare(){ return ShowItemsAtPlayerSquare.Value; }
   static long GetStartingWindowWidth() { return iStartingWindowWidth; }
   static long GetStartingWindowHeight() { return iStartingWindowHeight; }
+#ifdef ADAPTIVE_UI
+  static long GetStartingEnhancedWindowWidth() { return iStartingEnhancedWindowWidth; }
+  static long GetStartingEnhancedWindowHeight() { return iStartingEnhancedWindowHeight; }
+  static truth IsEnhancedDesktopUI() { return DesktopUIStyle.Value == 0; }
+#endif
   static long GetFrameSkip() { return FrameSkip.Value; }
   static long GetGoOnStopMode() { return GoOnStopMode.Value; }
   static long GetHoldPosMaxDist() { return HoldPosMaxDist.Value; }
@@ -68,11 +73,19 @@ class ivanconfig
   static int GetStackListPageLength() { return StackListPageLength.Value; }
   static truth GetSmartOpenCloseApply() { return SmartOpenCloseApply.Value; }
   static truth IsSetupCustomKeys() { return SetupCustomKeys.Value; }
+  static void EnableCustomKeysForDirectRemap()
+  { SetupCustomKeys.Value = true; }
   static truth GetBeNice() { return BeNice.Value; }
   static int GetAltListItemPos() { return AltListItemPos.Value; }
   static truth GetPlaySounds() { return PlaySounds.Value; }
   static truth IsShowTurn() { return ShowTurn.Value; }
   static truth IsAllowMouseOnFelist(){ return AllowMouseOnFelist.Value; }
+#ifdef ANDROID
+  static truth IsMobileControllerOnLeft() { return MobileControllerSide.Value == 1; }
+  static truth IsMobileStatusBarHidden() { return MobileStatusBarHidden.Value; }
+  static truth IsMobileVibrationEnabled() { return MobileVibration.Value; }
+  static int GetMobileVibrationStrength() { return MobileVibrationStrength.Value; }
+#endif
   static truth IsOutlinedGfx() { return OutlinedGfx.Value; }
   static long GetVolume() { return Volume.Value; }
   static long GetSfxVolume() { return SfxVolume.Value; }
@@ -114,12 +127,20 @@ class ivanconfig
   static void HitIndicatorDisplayer(const cycleoption* O, festring& Entry);
   static void WindowWidthDisplayer(const numberoption* O, festring& Entry);
   static void WindowHeightDisplayer(const numberoption* O, festring& Entry);
+#ifdef ADAPTIVE_UI
+  static truth EnhancedWindowWidthChangeInterface(numberoption* O);
+  static truth EnhancedWindowHeightChangeInterface(numberoption* O);
+  static void EnhancedWindowWidthChanger(numberoption* O, long What);
+  static void EnhancedWindowHeightChanger(numberoption* O, long What);
+  static void DesktopUIStyleDisplayer(const cycleoption* O, festring& Entry);
+#endif
   static void StackListPageLengthDisplayer(const numberoption* O, festring& Entry);
   static void DistLimitMagicMushroomsDisplayer(const cycleoption* O, festring& Entry);
   static void FrameSkipDisplayer(const numberoption* O, festring& Entry);
   static void AltListItemWidthDisplayer(const numberoption* O, festring& Entry);
   static void ContrastDisplayer(const numberoption*, festring&);
   static void DirectionKeyMapDisplayer(const cycleoption*, festring&);
+  static void AutoPickUpMatchingDisplayer(const stringoption*, festring&);
   static truth DefaultNameChangeInterface(stringoption*);
   static truth FantasyNameChangeInterface(stringoption* O);
   static truth SelectedBkgColorChangeInterface(stringoption* O);
@@ -155,6 +176,14 @@ class ivanconfig
   static void SfxVolumeChanger(numberoption*, long);
   static void AltSilhouetteDisplayer(const cycleoption* O, festring& Entry);
   static void AllowMouseOnFelistChanger(truthoption*, truth);
+#ifdef ANDROID
+  static void MobileControllerSideDisplayer(const cycleoption*, festring&);
+  static void MobileControllerSideChanger(cycleoption*, long);
+  static void MobileStatusBarHiddenChanger(truthoption*, truth);
+  static void MobileVibrationChanger(truthoption*, truth);
+  static void MobileVibrationStrengthDisplayer(const cycleoption*, festring&);
+  static void MobileVibrationStrengthChanger(cycleoption*, long);
+#endif
   static void UseExtraMenuGraphicsChanger(truthoption*, truth);
   static void WorldSizeConfigDisplayer(const cycleoption* O, festring& Entry);
   static void LandTypeConfigDisplayer(const cycleoption* O, festring& Entry);
@@ -206,6 +235,14 @@ class ivanconfig
 
   static numberoption WindowHeight;
   static int iStartingWindowHeight;
+
+#ifdef ADAPTIVE_UI
+  static cycleoption DesktopUIStyle;
+  static numberoption EnhancedWindowWidth;
+  static int iStartingEnhancedWindowWidth;
+  static numberoption EnhancedWindowHeight;
+  static int iStartingEnhancedWindowHeight;
+#endif
 
   static cycleoption HoldPosMaxDist;
   static numberoption FrameSkip;
@@ -278,6 +315,12 @@ class ivanconfig
   static truthoption ShowTurn;
 
   static truthoption AllowMouseOnFelist;
+#ifdef ANDROID
+  static cycleoption MobileControllerSide;
+  static truthoption MobileStatusBarHidden;
+  static truthoption MobileVibration;
+  static cycleoption MobileVibrationStrength;
+#endif
   static truthoption UseExtraMenuGraphics;
 };
 

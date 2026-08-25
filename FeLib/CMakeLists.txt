@@ -48,6 +48,8 @@ if(MINGW)
   get_filename_component(sdl_lib_dir "${sdl_lib_dir}" DIRECTORY)
   message("sdl_lib_dir ${sdl_lib_dir}")
   get_filename_component(deps_path "${sdl_lib_dir}" DIRECTORY)
+  set(IVAN_DEPENDENCY_ROOT "${deps_path}" CACHE PATH
+      "Root of the MinGW runtime dependency tree used by the desktop executable")
 
   if((NOT BUILD_SHARED_LIBS) AND BUILD_STATIC_LIBS)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")

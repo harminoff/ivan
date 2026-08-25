@@ -1,0 +1,145 @@
+plugins {
+    id "com.android.application"
+}
+
+def releaseKeystoreProperties = new Properties()
+def releaseKeystorePropertiesFile = rootProject.file("signing/keystore.properties")
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.withInputStream {
+        releaseKeystoreProperties.load(it)
+    }
+}
+
+def generatedAssets = layout.buildDirectory.dir("generated/ivanAssets")
+def generatedResources = layout.buildDirectory.dir("generated/ivanResources")
+
+tasks.register("prepareIvanAssets", Sync) {
+    into(generatedAssets)
+    from("../../Graphics") { into("Graphics") }
+    from("../../Script") { into("Script") }
+    from("../../Music") { into("Music") }
+    from("../../Sound") { into("Sound") }
+    from("../../COPYING", "../../LICENSING", "../../MANUAL", "../../README.md",
+         "../../ANDROID_PORT_NOTICE.md", "../../THIRD_PARTY_NOTICES.md")
+    from("../../xbrzscale/License.txt") {
+        into("licenses")
+        rename { "GPL-3.0-or-later.txt" }
+    }
+    from("../licenses") { into("licenses") }
+    from("../vendor/SDL/LICENSE.txt") {
+        into("licenses")
+        rename { "SDL2-zlib.txt" }
+    }
+    from("../vendor/SDL_mixer/LICENSE.txt") {
+        into("licenses")
+        rename { "SDL2_mixer-zlib.txt" }
+    }
+    from("../vendor/pcre/LICENCE") {
+        into("licenses")
+        rename { "PCRE-BSD.txt" }
+    }
+    from("../vendor/libpng/LICENSE") {
+        into("licenses")
+        rename { "libpng.txt" }
+    }
+    from("../vendor/zlib/LICENSE") {
+        into("licenses")
+        rename { "zlib.txt" }
+    }
+    doLast {
+        new File(generatedAssets.get().asFile, "content-version.txt").text = "0.59-de528ac-android-5\n"
+    }
+}
+
+tasks.register("prepareIvanResources", Sync) {
+    into(generatedResources)
+    from("../../Graphics/icons/shadowless.iconset/icon_512x512.png") {
+        into("mipmap-xxxhdpi")
+        rename { "ivan_launcher.png" }
+    }
+}
+
+android {
+    namespace "io.github.harminoff.ivan"
+    compileSdk 35
+    ndkVersion "28.2.13676358"
+
+    defaultConfig {
+        applicationId "io.github.harminoff.ivan"
+        minSdk 26
+        targetSdk 35
+        versionCode 5
+        versionName "0.59-android.5"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared"
+                abiFilters "arm64-v8a", "x86_64"
+                cppFlags "-std=c++11"
+            }
+        }
+    }
+
+    signingConfigs {
+        if (releaseKeystorePropertiesFile.exists()) {
+            release {
+                storeFile rootProject.file(releaseKeystoreProperties["storeFile"])
+                storePassword releaseKeystoreProperties["storePassword"]
+                keyAlias releaseKeystoreProperties["keyAlias"]
+                keyPassword releaseKeystoreProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (releaseKeystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
+            version "3.22.1"
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "../vendor/SDL/android-project/app/src/main/java"
+            assets.srcDir generatedAssets
+            res.srcDir generatedResources
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    lint {
+        abortOnError true
+        checkReleaseBuilds true
+        lintConfig file("lint.xml")
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("prepareIvanAssets", "prepareIvanResources")
+}
+
+dependencies {
+}

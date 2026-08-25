@@ -36,6 +36,33 @@ add_executable(ivan ${IVAN_SOURCES} Resource/Ivan.rc)
 target_include_directories(ivan PUBLIC Include ../Felib/Include ../audio ../fantasyname ../FastNoise ${PCRE_INCLUDE_DIRS} ${SDL2_mixer_INCLUDE_DIR})
 target_link_libraries(ivan FeLib FeAudio xbrzscale fantasyname fastnoise ${PCRE_LIBRARIES} ${SDL2_mixer_LIBRARY})
 
+# A portable executable resolves game assets relative to its working directory.
+# Keep the build-tree executable directly runnable (including by double-clicking
+# it in Explorer) by placing the required data directories beside it.
+if(PORTABLE_BUILD)
+  foreach(IVAN_DATA_DIRECTORY Graphics Script Music Sound)
+    add_custom_command(TARGET ivan POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+              "${CMAKE_SOURCE_DIR}/${IVAN_DATA_DIRECTORY}"
+              "$<TARGET_FILE_DIR:ivan>/${IVAN_DATA_DIRECTORY}"
+      VERBATIM)
+  endforeach()
+endif()
+
+if(MINGW AND IVAN_DEPENDENCY_ROOT)
+  if((NOT BUILD_SHARED_LIBS) AND BUILD_STATIC_LIBS)
+    # Static builds do not need the shared MinGW runtime bundle.
+  else()
+    add_custom_command(TARGET ivan POST_BUILD
+      COMMAND ${CMAKE_COMMAND}
+              "-DIVAN_EXECUTABLE=$<TARGET_FILE:ivan>"
+              "-DIVAN_DESTINATION=$<TARGET_FILE_DIR:ivan>"
+              "-DIVAN_DEPENDENCY_ROOT=${IVAN_DEPENDENCY_ROOT}"
+              -P "${CMAKE_SOURCE_DIR}/cmake/copy_runtime_dependencies.cmake"
+      VERBATIM)
+  endif()
+endif()
+
 if(MSVC AND _VCPKG_INSTALLED_DIR)
   # Gum solution. Manually copy pcre.dll to where ivan.exe will end up.
   install(FILES "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/pcre.dll" DESTINATION "ivan")

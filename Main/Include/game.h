@@ -293,7 +293,7 @@ class game
   static v2 PositionQuestion(cfestring&, v2, positionhandler = 0, positionkeyhandler = 0, truth = true);
   static std::vector<v2> ListFeaturesOnLevel(v2 CursorPos, int Key);
   static void LookHandler(v2);
-  static int AskForKeyPress(cfestring&);
+  static int AskForKeyPress(cfestring&, truth Modal = false);
   static bool IsQuestionMode();
   static truth AnimationController();
   static gamescript* GetGameScript() { return GameScript; }
@@ -392,6 +392,7 @@ class game
   static void RefreshDrawMapOverlay();
   static void DrawMapOverlay(bitmap* =NULL);
   static void DrawMapNotesOverlay(bitmap* =NULL);
+  static v2 MapOverlayCoordinatesToPos(v2);
   static lsquare* GetHighlightedMapNoteLSquare();
   static bool ToggleShowMapNotes();
   static bool CheckAddAutoMapNote(square* =NULL);
@@ -509,6 +510,7 @@ class game
   static int GetSaveFileVersionHardcoded();
   static void ValidateCommandKeys(char Key1,char Key2,char Key3);
   static truth ConfigureCustomKeys();
+  static truth ConfigureCustomCommandKey(int CommandIndex);
   static festring ToCharIfPossible(int i);
   static truth ValidateCustomCmdKey(int iNewKey, int iIgnoreIndex, bool bMoveKeys);
   static festring GetMoveKeyDesc(int i);

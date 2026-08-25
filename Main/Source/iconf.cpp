@@ -24,6 +24,123 @@
 #include "whandler.h"
 #include "bugworkaround.h"
 #include "sfx.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
+
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+namespace
+{
+  struct autopickupchoice
+  {
+    const char* Label;
+    const char* Pattern;
+    bool RejectBrokenOrEmpty;
+    const char* Help;
+  };
+
+  const autopickupchoice AutoPickupChoices[] = {
+    { "BOOKS", "book", false, "Pick up books automatically." },
+    { "CANS", "can", false, "Pick up cans automatically." },
+    { "DAGGERS", "dagger", false, "Pick up daggers automatically." },
+    { "GRENADES", "grenade", false, "Pick up grenades automatically." },
+    { "HORNS", "horn of", false, "Pick up magical horns automatically." },
+    { "KIWIS", "kiwi", false, "Pick up kiwis automatically." },
+    { "KEYS", "key", false, "Pick up keys automatically." },
+    { "RINGS", "ring", false, "Pick up rings automatically." },
+    { "SCROLLS", "scroll", false, "Pick up scrolls automatically." },
+    { "WANDS", "wand", false, "Pick up wands automatically." },
+    { "WHISTLES", "whistle", false, "Pick up whistles automatically." },
+    { "BOTTLES", "bottle", true,
+      "Pick up bottles, except those described as broken or empty." },
+    { "VIALS", "vial", true,
+      "Pick up vials, except those described as broken or empty." },
+    { "SOL STONES", "sol stone", false,
+      "Pick up valuable Sol stones automatically." }
+  };
+
+  const int AutoPickupChoiceCount = sizeof(AutoPickupChoices)
+                                  / sizeof(AutoPickupChoices[0]);
+
+  struct autopickuppreset
+  {
+    const char* Label;
+    unsigned long Choices;
+    bool Enabled;
+    const char* Help;
+  };
+
+  const autopickuppreset AutoPickupPresets[] = {
+    { "IVAN DEFAULT", (1UL << AutoPickupChoiceCount) - 1, false,
+      "Restore IVAN's default choices with automatic pickup turned off." },
+    { "ALL COMMON TYPES", (1UL << AutoPickupChoiceCount) - 1, true,
+      "Turn automatic pickup on for every supported common item type." },
+    { "ESSENTIALS", (1UL << 0) | (1UL << 6) | (1UL << 7)
+                    | (1UL << 8) | (1UL << 9) | (1UL << 13), true,
+      "Select books, keys, rings, scrolls, wands, and Sol stones." },
+    { "SUPPLIES", (1UL << 1) | (1UL << 5)
+                  | (1UL << 11) | (1UL << 12), true,
+      "Select cans, kiwis, usable bottles, and usable vials." },
+    { "NONE", 0, false,
+      "Clear every item choice and turn automatic pickup off." }
+  };
+
+  const int AutoPickupPresetCount = sizeof(AutoPickupPresets)
+                                  / sizeof(AutoPickupPresets[0]);
+
+  bool UseAutoPickupChoiceMenu()
+  {
+#ifdef ANDROID
+    return true;
+#else
+    return graphics::IsEnhancedPresentation();
+#endif
+  }
+
+  bool AutoPickupPatternContains(cfestring& Value, const char* Pattern)
+  {
+    return std::string(Value.CStr()).find(Pattern) != std::string::npos;
+  }
+
+  festring BuildAutoPickupPattern(const bool* Selected, bool Enabled)
+  {
+    std::string Ordinary;
+    std::string Protected;
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+      if(Selected[Index])
+      {
+        std::string& Group = AutoPickupChoices[Index].RejectBrokenOrEmpty
+                           ? Protected : Ordinary;
+        if(!Group.empty())
+          Group += '|';
+        Group += AutoPickupChoices[Index].Pattern;
+      }
+
+    if(Ordinary.empty() && Protected.empty())
+      return CONST_S("!");
+
+    std::string Pattern("(");
+    if(!Ordinary.empty())
+    {
+      Pattern += '(';
+      Pattern += Ordinary;
+      Pattern += ')';
+    }
+    if(!Protected.empty())
+    {
+      if(!Ordinary.empty())
+        Pattern += '|';
+      Pattern += "^(?:(?!(broken|empty)).)*(";
+      Pattern += Protected;
+      Pattern += ')';
+    }
+    Pattern += ')';
+    if(!Enabled)
+      Pattern.insert(Pattern.begin(), '!');
+    return festring(Pattern.c_str());
+  }
+}
+#endif
 
 stringoption ivanconfig::DefaultName(     "DefaultName",
                                           "Player's default name",
@@ -51,10 +168,14 @@ stringoption ivanconfig::SelectedBkgColor("SelectedBkgColor",
                                           &SelectedBkgColorChangeInterface,
                                           &SelectedBkgColorChanger);
 stringoption ivanconfig::AutoPickUpMatching("AutoPickUpMatching",
-                                          "Auto pick up regex",
-                                          "Automatically pick up items according to a regular expression. To disable something, you can invalidate it with '_' without removing it from the expression (eg. '_dagger'). To disable everything at once, begin this config option with '!'. Due to current constraints on length of options, editing is easier to do externally for now.",  //TODO if multiline text editing is implemented, remove the last help statement.
+                                          "Auto pick up items",
+#ifdef ANDROID
+                                          "Choose which common item types should be picked up automatically when you walk over them.",
+#else
+                                          "Automatically pick up items according to a regular expression. To disable something, you can invalidate it with '_' without removing it from the expression (eg. '_dagger'). To disable everything at once, begin this config option with '!'.",
+#endif
                                           "!((book|can|dagger|grenade|horn of|kiwi|key|ring|scroll|wand|whistle)|^(?:(?!(broken|empty)).)*(bottle|vial)|sol stone)",
-                                          &configsystem::NormalStringDisplayer,
+                                          &AutoPickUpMatchingDisplayer,
                                           &AutoPickUpMatchingChangeInterface,
                                           &AutoPickUpMatchingChanger);
 numberoption ivanconfig::AutoSaveInterval("AutoSaveInterval",
@@ -113,6 +234,30 @@ numberoption ivanconfig::WindowHeight(    "WindowHeight",
                                           &WindowHeightDisplayer,
                                           &WindowHeightChangeInterface,
                                           &WindowHeightChanger);
+#ifdef ADAPTIVE_UI
+cycleoption ivanconfig::DesktopUIStyle(
+                                          "DesktopUIStyle",
+                                          "* Desktop UI style",
+                                          "Choose Enhanced for the responsive dashboard and action rail, or Classic for the compatibility presentation. Requires restarting the game to take effect.",
+                                          0, 2,
+                                          &DesktopUIStyleDisplayer);
+numberoption ivanconfig::EnhancedWindowWidth(
+                                          "EnhancedWindowWidth",
+                                          "* Enhanced window width",
+                                          "Choose the Enhanced Desktop window width in pixels. The minimum is 960 pixels and the setting requires restarting the game.",
+                                          1440,
+                                          &WindowWidthDisplayer,
+                                          &EnhancedWindowWidthChangeInterface,
+                                          &EnhancedWindowWidthChanger);
+numberoption ivanconfig::EnhancedWindowHeight(
+                                          "EnhancedWindowHeight",
+                                          "* Enhanced window height",
+                                          "Choose the Enhanced Desktop window height in pixels. The minimum is 540 pixels and the setting requires restarting the game.",
+                                          810,
+                                          &WindowHeightDisplayer,
+                                          &EnhancedWindowHeightChangeInterface,
+                                          &EnhancedWindowHeightChanger);
+#endif
 numberoption ivanconfig::StackListPageLength("StackListPageLength",
                                           "Page length in entries for non-selectable menus",
                                           "Choose how many entries will be displayed per page for non-selectable menus, such as when viewing your inventory. Note that selecting too many entries for the height of your screen may result in the menu being drawn partially off-screen.",
@@ -139,6 +284,36 @@ truthoption ivanconfig::AllowMouseOnFelist("AllowMouseOnFelist",
                                           &configsystem::NormalTruthDisplayer,
                                           &configsystem::NormalTruthChangeInterface,
                                           &AllowMouseOnFelistChanger);
+#ifdef ANDROID
+cycleoption ivanconfig::MobileControllerSide("MobileControllerSide",
+                                          "Mobile controller side",
+                                          "Choose which side of a landscape screen holds the on-screen controller. Portrait controls remain centered.",
+                                          0, 2,
+                                          &MobileControllerSideDisplayer,
+                                          &configsystem::NormalCycleChangeInterface,
+                                          &MobileControllerSideChanger);
+truthoption ivanconfig::MobileStatusBarHidden("MobileStatusBarHidden",
+                                          "Hide Android status bar",
+                                          "Hide the clock and notification bar at the top of the screen. Android navigation controls remain available.",
+                                          false,
+                                          &configsystem::NormalTruthDisplayer,
+                                          &configsystem::NormalTruthChangeInterface,
+                                          &MobileStatusBarHiddenChanger);
+truthoption ivanconfig::MobileVibration("MobileVibration",
+                                          "Vibration feedback",
+                                          "Enable restrained vibration for accepted controls, combat, danger warnings, traps, severe injuries, and death.",
+                                          true,
+                                          &configsystem::NormalTruthDisplayer,
+                                          &configsystem::NormalTruthChangeInterface,
+                                          &MobileVibrationChanger);
+cycleoption ivanconfig::MobileVibrationStrength("MobileVibrationStrength",
+                                          "Vibration strength",
+                                          "Choose the overall strength of Android vibration feedback.",
+                                          1, 3,
+                                          &MobileVibrationStrengthDisplayer,
+                                          &configsystem::NormalCycleChangeInterface,
+                                          &MobileVibrationStrengthChanger);
+#endif
 truthoption ivanconfig::ShowMapAtDetectMaterial("ShowMapAtDetectMaterial",
                                           "Show map while detecting material",
                                           "",
@@ -697,8 +872,135 @@ truth ivanconfig::SelectedBkgColorChangeInterface(stringoption* O)
   return false;
 }
 
+void ivanconfig::AutoPickUpMatchingDisplayer(const stringoption* O,
+                                             festring& Entry)
+{
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  if(UseAutoPickupChoiceMenu())
+  {
+    if(!O || O->Value.IsEmpty() || O->Value[0] == '!')
+    {
+      Entry << "disabled";
+      return;
+    }
+
+    int Selected = 0;
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+      if(AutoPickupPatternContains(O->Value,
+                                   AutoPickupChoices[Index].Pattern))
+        ++Selected;
+    Entry << Selected << (Selected == 1 ? " type" : " types");
+    return;
+  }
+#endif
+  configsystem::NormalStringDisplayer(O, Entry);
+}
+
 truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
 {
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  if(UseAutoPickupChoiceMenu())
+  {
+    if(!O)
+      return false;
+
+    bool Enabled = !O->Value.IsEmpty() && O->Value[0] != '!';
+    bool Selected[AutoPickupChoiceCount];
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+      Selected[Index] = AutoPickupPatternContains(
+        O->Value, AutoPickupChoices[Index].Pattern);
+
+    for(;;)
+    {
+    felist List(CONST_S("AUTO PICK UP ITEMS"));
+    game::SetStandardListAttributes(List);
+    const bool ShowPresets =
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+      true;
+#else
+      false;
+#endif
+    const int PresetEntries = ShowPresets ? AutoPickupPresetCount : 0;
+    List.SetPageLength(AutoPickupChoiceCount + PresetEntries + 3);
+    List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+
+    festring Entry;
+    Entry << (Enabled ? "(X) " : "(-) ") << "AUTO PICK UP ENABLED";
+    List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
+    List.SetLastEntryHelp(CONST_S(
+      "Turns automatic pickup on or off without changing your item choices."));
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    List.SetLastEntryAdaptiveGroup(CONST_S("AUTO PICKUP"));
+
+    for(int Index = 0; Index < AutoPickupPresetCount; ++Index)
+    {
+      Entry.Empty();
+      Entry << "USE " << AutoPickupPresets[Index].Label;
+      List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
+      List.SetLastEntryHelp(AutoPickupPresets[Index].Help);
+      List.SetLastEntryAdaptiveGroup(CONST_S("PRESETS"));
+    }
+#endif
+
+    for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+    {
+      Entry.Empty();
+      Entry << (Selected[Index] ? "(X) " : "(-) ")
+            << AutoPickupChoices[Index].Label;
+      List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
+      List.SetLastEntryHelp(AutoPickupChoices[Index].Help);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+      List.SetLastEntryAdaptiveGroup(CONST_S("ITEM TYPES"));
+#endif
+    }
+
+    List.AddEntry(CONST_S("SAVE CHANGES"), GREEN,
+                  0, NO_IMAGE, true);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    List.SetLastEntryHelp(CONST_S(
+      "Apply these automatic pickup choices and return to Options."));
+    List.SetLastEntryAdaptiveGroup(CONST_S("ACTIONS"));
+#endif
+    List.AddEntry(CONST_S("CANCEL"), RED,
+                  0, NO_IMAGE, true);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    List.SetLastEntryHelp(CONST_S(
+      "Discard changes and return to Options."));
+    List.SetLastEntryAdaptiveGroup(CONST_S("ACTIONS"));
+#endif
+
+    const int Chosen = List.Draw();
+    const int ChoiceBegin = 1 + PresetEntries;
+    const int SaveChoice = ChoiceBegin + AutoPickupChoiceCount;
+    const int CancelChoice = SaveChoice + 1;
+    if(Chosen == ESCAPED || Chosen == NOTHING_SELECTED
+       || Chosen == LIST_WAS_EMPTY
+       || Chosen == CancelChoice)
+    {
+      clearToBackgroundAfterChangeInterface();
+      return false;
+    }
+    if(Chosen == 0)
+      Enabled = !Enabled;
+    else if(ShowPresets && Chosen >= 1 && Chosen < ChoiceBegin)
+    {
+      const autopickuppreset& Preset = AutoPickupPresets[Chosen - 1];
+      Enabled = Preset.Enabled;
+      for(int Index = 0; Index < AutoPickupChoiceCount; ++Index)
+        Selected[Index] = (Preset.Choices & (1UL << Index)) != 0;
+    }
+    else if(Chosen >= ChoiceBegin && Chosen < SaveChoice)
+      Selected[Chosen - ChoiceBegin] = !Selected[Chosen - ChoiceBegin];
+    else if(Chosen == SaveChoice)
+    {
+      festring Pattern = BuildAutoPickupPattern(Selected, Enabled);
+      O->ChangeValue(Pattern);
+      clearToBackgroundAfterChangeInterface();
+      return true;
+    }
+    }
+  }
+#endif
   festring String;
   if(O)String<<O->Value;
 
@@ -772,6 +1074,26 @@ truth ivanconfig::WindowWidthChangeInterface(numberoption* O)
   clearToBackgroundAfterChangeInterface();
   return false;
 }
+
+#ifdef ADAPTIVE_UI
+truth ivanconfig::EnhancedWindowHeightChangeInterface(numberoption* O)
+{
+  O->ChangeValue(iosystem::NumberQuestion(
+    CONST_S("Set Enhanced Desktop window height (minimum 540 pixels):"),
+    GetQuestionPos(), WHITE, !game::IsRunning()));
+  clearToBackgroundAfterChangeInterface();
+  return false;
+}
+
+truth ivanconfig::EnhancedWindowWidthChangeInterface(numberoption* O)
+{
+  O->ChangeValue(iosystem::NumberQuestion(
+    CONST_S("Set Enhanced Desktop window width (minimum 960 pixels):"),
+    GetQuestionPos(), WHITE, !game::IsRunning()));
+  clearToBackgroundAfterChangeInterface();
+  return false;
+}
+#endif
 
 truth ivanconfig::AutoSaveIntervalChangeInterface(numberoption* O)
 {
@@ -853,6 +1175,20 @@ void ivanconfig::WindowHeightChanger(numberoption* O, long What)
   if(What < 480) What = 480;
   O->Value = What;
 }
+
+#ifdef ADAPTIVE_UI
+void ivanconfig::EnhancedWindowHeightChanger(numberoption* O, long What)
+{
+  if(What < 540) What = 540;
+  O->Value = What;
+}
+
+void ivanconfig::EnhancedWindowWidthChanger(numberoption* O, long What)
+{
+  if(What < 960) What = 960;
+  O->Value = What;
+}
+#endif
 
 void ivanconfig::ShowItemsAtPlayerSquareChanger(cycleoption* O, long What)
 {
@@ -1031,6 +1367,14 @@ void ivanconfig::WorldSeedConfigChanger(numberoption* O, long What)
   O->Value = What;
 }
 
+#ifdef ADAPTIVE_UI
+void ivanconfig::DesktopUIStyleDisplayer(const cycleoption* O,
+                                         festring& Entry)
+{
+  Entry << (O->Value == 0 ? "Enhanced" : "Classic");
+}
+#endif
+
 #ifndef __DJGPP__
 
 void ivanconfig::GraphicsScaleDisplayer(const cycleoption* O, festring& Entry)
@@ -1132,6 +1476,49 @@ void ivanconfig::AllowMouseOnFelistChanger(truthoption* O, truth What)
   graphics::SetAllowMouseInFullScreen(What);
 }
 
+#ifdef ANDROID
+void ivanconfig::MobileControllerSideDisplayer(const cycleoption* O,
+                                               festring& Entry)
+{
+  Entry << (O->Value == 1 ? "left" : "right");
+}
+
+void ivanconfig::MobileControllerSideChanger(cycleoption* O, long What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetControllerOnLeft(What == 1);
+}
+
+void ivanconfig::MobileStatusBarHiddenChanger(truthoption* O, truth What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetStatusBarHidden(What);
+}
+
+void ivanconfig::MobileVibrationChanger(truthoption* O, truth What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetHapticsEnabled(What);
+}
+
+void ivanconfig::MobileVibrationStrengthDisplayer(const cycleoption* O,
+                                                  festring& Entry)
+{
+  static const char* Labels[] = { "low", "normal", "strong" };
+  Entry << Labels[Max<long>(0, Min<long>(O->Value, 2))];
+}
+
+void ivanconfig::MobileVibrationStrengthChanger(cycleoption* O, long What)
+{
+  if(O != NULL)
+    O->Value = What;
+  mobileui::SetHapticStrength(What);
+}
+#endif
+
 void ivanconfig::UseExtraMenuGraphicsChanger(truthoption* O, truth What)
 {
   if(O!=NULL)O->Value = What;
@@ -1216,6 +1603,10 @@ void ivanconfig::CalculateContrastLuminance()
 // TODO keep initializing with invalid values (where possible) so if they are used before cfg file loading it will show errors clearly?
 int  ivanconfig::iStartingWindowWidth=-1;
 int  ivanconfig::iStartingWindowHeight=-1;
+#ifdef ADAPTIVE_UI
+int  ivanconfig::iStartingEnhancedWindowWidth=-1;
+int  ivanconfig::iStartingEnhancedWindowHeight=-1;
+#endif
 int  ivanconfig::iStartingDungeonGfxScale=-1;
 int  ivanconfig::iStartingFontGfx=-1;
 void ivanconfig::Initialize()
@@ -1223,6 +1614,12 @@ void ivanconfig::Initialize()
   festring fsCategory;
 
   fsCategory="General Setup";
+#ifdef ANDROID
+  configsystem::AddOption(fsCategory,&MobileControllerSide);
+  configsystem::AddOption(fsCategory,&MobileStatusBarHidden);
+  configsystem::AddOption(fsCategory,&MobileVibration);
+  configsystem::AddOption(fsCategory,&MobileVibrationStrength);
+#endif
   configsystem::AddOption(fsCategory,&DefaultName);
   configsystem::AddOption(fsCategory,&FantasyNamePattern);
   configsystem::AddOption(fsCategory,&DefaultPetName);
@@ -1252,11 +1649,18 @@ void ivanconfig::Initialize()
 
   fsCategory="Game Window";
   configsystem::AddOption(fsCategory,&Contrast);
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&WindowWidth);
   configsystem::AddOption(fsCategory,&WindowHeight);
+#ifdef ADAPTIVE_UI
+  configsystem::AddOption(fsCategory,&DesktopUIStyle);
+  configsystem::AddOption(fsCategory,&EnhancedWindowWidth);
+  configsystem::AddOption(fsCategory,&EnhancedWindowHeight);
+#endif
 #ifndef __DJGPP__
   configsystem::AddOption(fsCategory,&GraphicsScale);
   configsystem::AddOption(fsCategory,&FullScreenMode);
+#endif
 #endif
 
   fsCategory="Graphics";
@@ -1300,13 +1704,17 @@ void ivanconfig::Initialize()
   configsystem::AddOption(fsCategory,&SfxVolume);
 
   fsCategory="Input and Interface";
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&DirectionKeyMap);
   configsystem::AddOption(fsCategory,&SetupCustomKeys);
+#endif
   configsystem::AddOption(fsCategory,&SaveGameSortMode);
   configsystem::AddOption(fsCategory,&ShowTurn);
   configsystem::AddOption(fsCategory,&ShowFullDungeonName);
   configsystem::AddOption(fsCategory,&SelectedBkgColor);
+#ifndef ANDROID
   configsystem::AddOption(fsCategory,&AllowMouseOnFelist);
+#endif
 
   fsCategory="Advanced Options";
   configsystem::AddOption(fsCategory,&AllowImportOldSavegame);
@@ -1335,6 +1743,12 @@ void ivanconfig::Initialize()
 
   iStartingWindowWidth = WindowWidth.Value;
   iStartingWindowHeight = WindowHeight.Value;
+#ifdef ADAPTIVE_UI
+  iStartingEnhancedWindowWidth = EnhancedWindowWidth.Value < 960
+                               ? 960 : EnhancedWindowWidth.Value;
+  iStartingEnhancedWindowHeight = EnhancedWindowHeight.Value < 540
+                                ? 540 : EnhancedWindowHeight.Value;
+#endif
   iStartingDungeonGfxScale = DungeonGfxScale.Value;
   iStartingFontGfx = FontGfx.Value;
 
@@ -1352,6 +1766,12 @@ void ivanconfig::Initialize()
   SelectedBkgColorChanger(NULL, SelectedBkgColor.Value);
   AutoPickUpMatchingChanger(NULL, AutoPickUpMatching.Value);
   AllowMouseOnFelistChanger(NULL, AllowMouseOnFelist.Value);
+#ifdef ANDROID
+  MobileControllerSideChanger(NULL, MobileControllerSide.Value);
+  MobileStatusBarHiddenChanger(NULL, MobileStatusBarHidden.Value);
+  MobileVibrationChanger(NULL, MobileVibration.Value);
+  MobileVibrationStrengthChanger(NULL, MobileVibrationStrength.Value);
+#endif
   UseExtraMenuGraphicsChanger(NULL, UseExtraMenuGraphics.Value);
 
 #ifndef NOSOUND

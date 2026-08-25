@@ -46,6 +46,7 @@ cchar* igraph::GraphicFileName[] =
   "Graphics/Smiley.png"
 };
 tilemap igraph::TileMap;
+
 uchar igraph::RollBuffer[256];
 int** igraph::BodyBitmapValidityMap;
 std::vector<bitmap*> igraph::vMenu;
@@ -68,18 +69,36 @@ void igraph::Init()
   {
     AlreadyInstalled = true;
     graphics::Init();
+    const v2 CanvasSize(ivanconfig::GetStartingWindowWidth(),
+                        ivanconfig::GetStartingWindowHeight());
+#ifdef ADAPTIVE_UI
+    const graphics::presentationmode Presentation =
+      ivanconfig::IsEnhancedDesktopUI()
+        ? graphics::PRESENTATION_ENHANCED
+        : graphics::PRESENTATION_CLASSIC;
+    const v2 OutputSize = Presentation == graphics::PRESENTATION_ENHANCED
+      ? v2(ivanconfig::GetStartingEnhancedWindowWidth(),
+           ivanconfig::GetStartingEnhancedWindowHeight()) : CanvasSize;
+#endif
     graphics::SetMode("IVAN " IVAN_VERSION,
 #ifndef MAC_APP
                       festring(game::GetDataDir() + "Graphics/Icon.bmp").CStr(),
 #else
                       NULL,
 #endif
-                      v2(ivanconfig::GetStartingWindowWidth(), ivanconfig::GetStartingWindowHeight()),
+                      CanvasSize,
+#ifdef ADAPTIVE_UI
+                      OutputSize,
+#endif
 #ifndef __DJGPP__
                       ivanconfig::GetGraphicsScale(),
                       ivanconfig::GetScalingQuality(),
 #endif
-                      ivanconfig::GetFullScreenMode());
+                      ivanconfig::GetFullScreenMode()
+#ifdef ADAPTIVE_UI
+                      , Presentation
+#endif
+                      );
     DOUBLE_BUFFER->ClearToColor(0);
     graphics::BlitDBToScreen();
 #ifndef __DJGPP__

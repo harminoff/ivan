@@ -31,6 +31,9 @@ SYSTEM_SPECIALIZATIONS(trap)
 #include "igraph.h"
 #include "felibdef.h"
 #include "team.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#endif
 
 #include "trap.cpp"
 #include "traps.cpp"

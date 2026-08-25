@@ -811,6 +811,12 @@ void MakePath(cfestring& Path)
 
 festring GetUserDataDir()
 {
+#ifdef ANDROID
+  const char* UserDir = getenv("IVAN_USER_DIR");
+  if(UserDir && *UserDir)
+    return UserDir;
+  return "./";
+#else
 #ifdef PORTABLE_BUILD
   return "./";
 #else
@@ -838,4 +844,5 @@ festring GetUserDataDir()
   return "./";
 #endif
 #endif
+#endif /* ANDROID */
 }

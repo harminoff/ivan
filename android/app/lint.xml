@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+      SDL's optional HID, audio-capture, and haptics adapters guard these APIs
+      at runtime. IVAN does not request or invoke those optional facilities.
+      Keep their suppressions confined to the vendored SDL Java package.
+    -->
+    <issue id="MissingPermission">
+        <ignore regexp=".*[\\/]vendor[\\/]SDL[\\/]android-project[\\/]app[\\/]src[\\/]main[\\/]java[\\/]org[\\/]libsdl[\\/]app[\\/].*" />
+    </issue>
+    <issue id="UnspecifiedRegisterReceiverFlag">
+        <ignore regexp=".*[\\/]vendor[\\/]SDL[\\/]android-project[\\/]app[\\/]src[\\/]main[\\/]java[\\/]org[\\/]libsdl[\\/]app[\\/].*" />
+    </issue>
+</lint>

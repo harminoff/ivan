@@ -10,10 +10,57 @@
  *
  */
 
+#include <cstring>
+#include <vector>
+
 #include "config.h"
 #include "save.h"
 #include "felist.h"
 #include "feio.h"
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#include "graphics.h"
+#endif
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+namespace
+{
+  truth ShowInCurrentPresentation(const configoption* Option)
+  {
+    if(!graphics::IsEnhancedPresentation())
+      return true;
+
+    static cchar* const HiddenInEnhancedDesktop[] =
+    {
+      "WindowWidth",
+      "WindowHeight",
+      "GraphicsScale",
+      "ScalingQuality",
+      "FontGfx",
+      "AltListItemPos",
+      "AltListItemWidth",
+      "StackListPageLength",
+      "UseExtraMenuGraphics",
+      "DescriptiveHP",
+      "SetupCustomKeys",
+      "ShowFullDungeonName",
+      "SelectedBkgColor",
+      "AllowMouseOnFelist"
+    };
+
+    for(size_t Index = 0;
+        Index < sizeof(HiddenInEnhancedDesktop)
+              / sizeof(HiddenInEnhancedDesktop[0]); ++Index)
+      if(!strcmp(Option->Name, HiddenInEnhancedDesktop[Index]))
+        return false;
+    return true;
+  }
+}
+#else
+namespace
+{
+  truth ShowInCurrentPresentation(const configoption*) { return true; }
+}
+#endif
 
 configoption* configsystem::Option[MAX_CONFIG_OPTIONS];
 festring configsystem::ConfigFileName;
@@ -138,10 +185,16 @@ void configsystem::Show(void (*BackGroundDrawer)(),
   int Chosen;
   truth TruthChange = false;
 
+#ifdef ANDROID
+  felist List(CONST_S("OPTIONS"));
+#else
   felist List(CONST_S("Which setting do you wish to configure? (* requires restart)"));
+#endif
 
+#ifndef ANDROID
   List.AddDescription(CONST_S(""));
   List.AddDescription(CONST_S("Setting                                                        Value"));
+#endif
 
   for(;;)
   {
@@ -150,11 +203,21 @@ void configsystem::Show(void (*BackGroundDrawer)(),
 
     List.Empty();
 
-    festring fsLastCategory;
+    std::vector<configoption*> VisibleOptions;
     for(int c = 0; c < Options; ++c)
+      if(ShowInCurrentPresentation(Option[c]))
+        VisibleOptions.push_back(Option[c]);
+
+    festring fsLastCategory;
+    for(size_t c = 0; c < VisibleOptions.size(); ++c)
     {
-      festring Entry = Option[c]->Description;
+      configoption* VisibleOption = VisibleOptions[c];
+      festring Entry = VisibleOption->Description;
       Entry.Capitalize();
+#ifdef ANDROID
+      Entry << ": ";
+      VisibleOption->DisplayValue(Entry);
+#else
       int iLim=60;
       if(Entry.GetSize()>iLim-1){
         Entry.Resize(iLim-4);
@@ -162,17 +225,21 @@ void configsystem::Show(void (*BackGroundDrawer)(),
       }else
         Entry.Resize(iLim-1);
       Entry<<" "; //space between "columns"
-      Option[c]->DisplayValue(Entry);
+      VisibleOption->DisplayValue(Entry);
       Entry.Resize(iLim+30);
+#endif
 
-      if(fsLastCategory!=Option[c]->fsCategory){
-        List.AddEntry(Option[c]->fsCategory, WHITE, 0, NO_IMAGE, false);
-        fsLastCategory=Option[c]->fsCategory;
+      if(fsLastCategory!=VisibleOption->fsCategory){
+        List.AddEntry(VisibleOption->fsCategory, WHITE, 0, NO_IMAGE, false);
+        fsLastCategory=VisibleOption->fsCategory;
       }
 
       List.AddEntry(Entry, LIGHT_GRAY);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+      List.SetLastEntryAdaptiveGroup(VisibleOption->fsCategory);
+#endif
       // TODO: help should show all possible values with details, may require cycling thru them
-      List.SetLastEntryHelp(festring() << Option[c]->Description << "\n\n" << Option[c]->HelpInfo);
+      List.SetLastEntryHelp(festring() << VisibleOption->Description << "\n\n" << VisibleOption->HelpInfo);
     }
 
     if(SlaveScreen && ListAttributeInitializer)
@@ -185,8 +252,8 @@ void configsystem::Show(void (*BackGroundDrawer)(),
     Chosen = List.Draw();
     festring String;
 
-    if(Chosen < Options)
-      TruthChange = Option[Chosen]->ActivateChangeInterface();
+    if(Chosen >= 0 && Chosen < int(VisibleOptions.size()))
+      TruthChange = VisibleOptions[Chosen]->ActivateChangeInterface();
     else
     {
       TruthChange=false;

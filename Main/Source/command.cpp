@@ -44,6 +44,12 @@
 #include "wsquare.h"
 #include "wterras.h"
 #include "specialkeys.h"
+#ifdef ANDROID
+#include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
+#endif
 
 #include "dbgmsgproj.h"
 
@@ -65,7 +71,7 @@ command::command(truth (*LinkedFunction)(character*), cchar* Description, char K
 int command::GetKey() const
 {
   if(ivanconfig::IsSetupCustomKeys()){
-    if(Key4>0)
+    if(Key4 != 0)
       return Key4;
   }
 
@@ -369,7 +375,7 @@ truth commandsystem::Open(character* Char)
           Key = game::AskForKeyPress(CONST_S("What do you wish to open? "
                                              "[press a direction key, space or 'i']"));
 
-        if(Key == 'i')
+        if(Key == 'i' || Key == KEY_CONTROLLER_X)
         {
           item* Item = Char->GetStack()->DrawContents(Char,
                                                       CONST_S("What do you want to open?"),
@@ -406,7 +412,7 @@ truth commandsystem::Open(character* Char)
         Key = game::AskForKeyPress(CONST_S("What do you wish to open? "
                                            "[press a direction key or space]"));
 
-      if(Key == 'i' && OpenableItems)
+      if((Key == 'i' || Key == KEY_CONTROLLER_X) && OpenableItems)
       {
         item* Item = Char->GetStack()->DrawContents(Char,
                                                     CONST_S("What do you want to open?"),
@@ -641,6 +647,10 @@ truth commandsystem::Consume(character* Char, cchar* ConsumeVerb, cchar* Consume
 truth commandsystem::ShowInventory(character* Char)
 {
   itemvector WhichItem;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  adaptiveui::SetInventoryWeights(Char->GetStack()->GetWeight(),
+                                  long(Char->GetCarryingStrength()) * 2500L);
+#endif
   festring Title("Your inventory (total weight: ");
   Title << Char->GetStack()->GetWeight();
   Title << "g)";
@@ -679,7 +689,9 @@ truth commandsystem::ShowInventory(character* Char)
     }
 
     festring Buffer;
+#ifndef ANDROID
     if(Key) Buffer << game::ToCharIfPossible(Key) << ": ";
+#endif
     if(Description[0] == 0)
       Buffer << GetCommand(Index)->GetDescription();
     else
@@ -1116,14 +1128,47 @@ truth commandsystem::Dip(character* Char)
 
 truth commandsystem::ShowKeyLayout(character* Who)
 {
+#ifdef ANDROID
+  festring Help = CONST_S(
+    "[Android Touch Help:]\n"
+    "MOVEMENT\n\n"
+    "Tap a direction to move one tile. Hold a direction to keep moving. "
+    "WAIT passes one turn. Pinch the game canvas to zoom in or all the way "
+    "out. Hold, then drag the canvas to look around; moving recenters it.\n\n"
+    "ACTIONS\n\n"
+    "Use the six category icons around the pad: Directions, Context, Items, "
+    "Character, Move, and System. Only actions usable now are shown. Tap MORE "
+    "when a category has another page.\n\n"
+    "MENUS\n\n"
+    "Tap a visible row to choose it. Use the menu controls for paging, "
+    "selection, and Back. Tap the control header to switch between menu "
+    "navigation and directions when a menu asks for a direction.\n\n"
+    "MESSAGES\n\n"
+    "New messages appear above the controls. Hold the message bar to open "
+    "message history.\n\n"
+    "MAP\n\n"
+    "Open Map from System. Use Cursor to move to a tile, then create, edit, or "
+    "delete its note.\n\n"
+    "DISPLAY\n\n"
+    "Controller side, Android status-bar, and vibration options are in "
+    "Configuration.");
+  game::TextScreen(Help);
+  return false;
+#else
+  uint SelectedControl = 0;
+  for(;;)
+  {
   felist List(CONST_S("Keyboard Layout"));
-
   List.AddDescription(CONST_S(""));
 
   List.AddDescription("IVAN uses most of the keyboard for command key bindings, though some ");
   List.AddDescription("commands are only accessible in wizard mode. Note that the game ");
   List.AddDescription("distinguishes between lowercase and uppercase letters, so if you are ");
   List.AddDescription("experiencing troubles, first check whether you don't have active CapsLock.");
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+    List.AddDescription("Select a command to remap it. Press ESC while choosing a key to cancel.");
+#endif
 
   List.AddDescription(CONST_S(""));
 
@@ -1161,6 +1206,7 @@ truth commandsystem::ShowKeyLayout(character* Who)
   }
 
   std::vector<int> Keys;
+  std::vector<int> CommandIndices;
 
   for(int c = 1; GetCommand(c); ++c)
     if(!GetCommand(c)->IsWizardModeFunction())
@@ -1170,6 +1216,7 @@ truth commandsystem::ShowKeyLayout(character* Who)
       Buffer.Resize(10);
       List.AddEntry(Buffer + GetCommand(c)->GetDescription(), LIGHT_GRAY, 0, NO_IMAGE, true);
       Keys.push_back(GetCommand(c)->GetKey());
+      CommandIndices.push_back(c);
     }
 
   if(game::WizardModeIsActive())
@@ -1186,20 +1233,36 @@ truth commandsystem::ShowKeyLayout(character* Who)
         Buffer.Resize(10);
         List.AddEntry(Buffer + GetCommand(c)->GetDescription(), LIGHT_GRAY, 0, NO_IMAGE, true);
         Keys.push_back(GetCommand(c)->GetKey());
+        CommandIndices.push_back(c);
       }
   }
 
   game::SetStandardListAttributes(List);
   List.SetAlternateKeyList(Keys);
-  if(Who) List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+  if(Who)
+  {
+    List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+    List.SetSelected(SelectedControl);
+  }
   int Result = List.Draw();
   if(Who && Result >= 0 && Result < Keys.size()) {
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    if(graphics::IsEnhancedPresentation())
+    {
+      SelectedControl = Result;
+      if(game::ConfigureCustomCommandKey(CommandIndices[Result]))
+        UpdateMobileActions(Who);
+      continue;
+    }
+#endif
     bool HasActed = false, ValidKeyPressed = false;
     Who->PerformPlayerCommand(Keys[Result], HasActed, ValidKeyPressed);
     return HasActed;
   }
 
   return false;
+  }
+#endif
 }
 
 void commandsystem::PlayerDiedLookMode(bool bSeeWholeMapCheatMode){
@@ -1252,7 +1315,13 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
   while(!(Key == KEY_ESC || Key == ' ' || Key == KEY_CONTROLLER_B))
   {
     if(!bEngraveMapNote)
+#ifdef ANDROID
+      Key = game::KeyQuestion(
+        CONST_S("Do you want to engrave a square or inscribe an item?"),
+        KEY_ESC, 3, '.', 'i', KEY_ESC);
+#else
       Key = game::AskForKeyPress(CONST_S("Do you want to (.) engrave a square, or inscribe an (i)tem? ['.' or 'i', ESC exits]"));
+#endif
 
     int iLSqrLimit=80;
     if(bEngraveMapNote)
@@ -1285,7 +1354,12 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
         }
       }
 
-      if(game::StringQuestion(What, CONST_S("Write your map note (optionally position mouse cursor over it before editing):"), WHITE, 0, iLSqrLimit, true) == NORMAL_EXIT){
+#ifdef ANDROID
+      const festring MapNotePrompt("Write your map note:");
+#else
+      const festring MapNotePrompt("Write your map note (optionally position mouse cursor over it before editing):");
+#endif
+      if(game::StringQuestion(What, MapNotePrompt, WHITE, 0, iLSqrLimit, true) == NORMAL_EXIT){
         if(What.GetSize()>0) {
           game::SetMapNote(lsqrN,What);
         }
@@ -1304,7 +1378,7 @@ truth commandsystem::WhatToEngrave(character* Char,bool bEngraveMapNote,v2 v2Eng
       break;
     }
 
-    if(Key == 'i' || Key == KEY_CONTROLLER_Y)
+    if(Key == 'i' || Key == KEY_CONTROLLER_X || Key == KEY_CONTROLLER_Y)
     {
       if(!Char->GetStack()->GetItems())
       {
@@ -1796,7 +1870,19 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
   bool bChoseLocationMode = pv2ChoseLocation!=NULL;
 
-  festring fsHelp;fsHelp<<
+  festring fsHelp;
+#ifdef ANDROID
+  fsHelp <<
+    "[Map Touch Help:]\n"
+    "NOTES shows or hides map-note labels.\n\n"
+    "CURSOR opens the map cursor. Use the direction pad to move and the "
+    "center button to select a tile.\n\n"
+    "After selecting a tile, choose CREATE if it has no note, or EDIT or "
+    "DELETE if it already has one. BACK returns to the map without changing "
+    "anything.\n\n"
+    "The cursor remembers its last position until you close the map.";
+#else
+  fsHelp <<
     "[Map Help:]\n"
     " F1 - show this message\n"
     " t - toggle map notes\n"
@@ -1807,6 +1893,22 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
     " Map notes containing '!' or '!!' will be highlighted.\n"
     " Position mouse cursor over a map note to edit or delete it.\n"
     " In look mode, clicking on a map note will navigate to that location.\n";
+#endif
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+  {
+    fsHelp.Empty();
+    fsHelp <<
+      "Select a note in the Cartography sidebar or click its numbered "
+      "marker on the map.\n\n"
+      "MOVE CURSOR lets you choose any map tile with the keyboard, numpad, "
+      "controller, or mouse.\n\n"
+      "ADD / EDIT changes the selected note. DELETE NOTE removes it. "
+      "TOGGLE NOTES shows or hides the note list and markers.\n\n"
+      "Every available action shows its current keyboard shortcut. BACK "
+      "returns to the game.";
+  }
+#endif
 
   bitmap BackGround(RES);
   BackGround.ActivateFastFlag();
@@ -1818,7 +1920,17 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
   if( h && (h->GetLeftArm() || h->GetRightArm()) ){
     if(game::ToggleDrawMapOverlay()){
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      struct mobilemapscope
+      {
+        mobilemapscope() { mobileui::SetMapScreen(true); }
+        ~mobilemapscope() { mobileui::SetMapScreen(false); }
+      } MobileMapScope;
+#endif
       lsquare* lsqrH=NULL;
+#ifdef ANDROID
+      v2 MobileMapCursor = Char->GetPos();
+#endif
       while(true){
         v2 noteAddPos = Char->GetPos();
 
@@ -1827,21 +1939,44 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
         if(bChoseLocationMode)
           key='l';
         else
+#ifdef ANDROID
+          key = game::KeyQuestion(CONST_S("Choose a map action."),
+            KEY_ESC, 4, 't', 'l', '?', KEY_ESC);
+#else
           key = game::KeyQuestion(CONST_S("Cartography notes action [press F1 for help]"),
-            KEY_ESC, 6, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL);
+            KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL, KEY_ESC);
+#endif
 
-        if(specialkeys::IsRequestedEvent(specialkeys::FocusedElementHelp)){
+        if(key == KEY_SPECIAL
+           || specialkeys::IsRequestedEvent(
+                specialkeys::FocusedElementHelp)){
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+          if(graphics::IsEnhancedPresentation())
+          {
+            specialkeys::ClearRequest();
+            mobileui::SetScreenText("CARTOGRAPHY HELP", fsHelp.CStr());
+            graphics::BlitDBToScreen();
+            GET_KEY();
+            mobileui::ClearScreenText();
+            continue;
+          }
+#endif
           specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp,fsHelp);
           continue;
         }
 
         switch(key){
+          case '?':
+            game::TextScreen(fsHelp);
+            continue;
           case 'd':
+#ifndef ANDROID
             lsqrH = game::GetHighlightedMapNoteLSquare();
             if(lsqrH!=NULL){
               lsqrH->Engrave(festring());
               game::RefreshDrawMapOverlay();
             }
+#endif
             continue;
           case 'r':
             game::RotateMapNotes();
@@ -1856,8 +1991,10 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
               game::RefreshDrawMapOverlay();
 
               festring fsMsg = pv2ChoseLocation!=NULL ? "Choose a location." :
-                "Where do you wish to add a map note?";
+                "Navigate to a map tile.";
+#ifndef ANDROID
               fsMsg<<" [F1 - help]";
+#endif
 
               v2 start;
               if(pv2ChoseLocation!=NULL){
@@ -1866,7 +2003,15 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                     start=(*pv2ChoseLocation);
               }
               if(start.Is0())
-                start=Char->GetPos();
+#ifdef ANDROID
+                start=MobileMapCursor;
+#else
+                {
+                  lsquare* SelectedNote = game::GetHighlightedMapNoteLSquare();
+                  start = SelectedNote ? SelectedNote->GetPos()
+                                       : Char->GetPos();
+                }
+#endif
 
               if(!game::GetCurrentArea()->IsValidPos(start)){
                 // very rare case when opening the map will crash at game::PositionQuestion(,start,...) ... area::GetSquare(start)
@@ -1876,11 +2021,31 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                 return false;
               }
 
-              noteAddPos = game::PositionQuestion(fsMsg, start, NULL, NULL, true); DBGSV2(noteAddPos);
+              truth ShowLegacyCursorZoom = true;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+              if(graphics::IsEnhancedPresentation())
+                ShowLegacyCursorZoom = false;
+#endif
+              noteAddPos = game::PositionQuestion(
+                fsMsg, start, NULL, NULL, ShowLegacyCursorZoom);
+              DBGSV2(noteAddPos);
               if(noteAddPos==ERROR_V2){
+#ifdef ANDROID
+                BackGround.FastBlit(DOUBLE_BUFFER);
+                continue;
+#else
+#ifdef ADAPTIVE_UI
+                if(graphics::IsEnhancedPresentation()
+                   && !bChoseLocationMode)
+                {
+                  BackGround.FastBlit(DOUBLE_BUFFER);
+                  continue;
+                }
+#endif
                 game::ToggleDrawMapOverlay();
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 return false; //continue;
+#endif
               }
               if(pv2ChoseLocation!=NULL){
                 (*pv2ChoseLocation)=noteAddPos;
@@ -1888,9 +2053,28 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 return (*pv2ChoseLocation) != Char->GetPos();
               }
+#ifdef ANDROID
+              MobileMapCursor=noteAddPos;
+              lsqrH=game::GetCurrentLevel()->GetLSquare(noteAddPos);
+              cchar* Existing=lsqrH ? lsqrH->GetEngraved() : NULL;
+              const bool HasMapNote = Existing && Existing[0]
+                                   && Existing[0] == game::MapNoteToken();
+              const int TileAction = HasMapNote
+                ? game::KeyQuestion(CONST_S("Choose an action for this note."),
+                    KEY_ESC, 3, 'e', 'd', KEY_ESC)
+                : game::KeyQuestion(CONST_S("This tile has no note."),
+                    KEY_ESC, 2, 'a', KEY_ESC);
+              if(TileAction=='a' || TileAction=='e')
+                WhatToEngrave(Char,true,noteAddPos);
+              else if(TileAction=='d' && lsqrH)
+                lsqrH->Engrave(festring());
+              game::RefreshDrawMapOverlay();
+              continue;
+#endif
             }
             /* no break */
           case 'e':
+#ifndef ANDROID
             if(noteAddPos==Char->GetPos()){
               lsqrH = game::GetHighlightedMapNoteLSquare();
               if(lsqrH!=NULL)
@@ -1898,6 +2082,7 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
             }
             WhatToEngrave(Char,true,noteAddPos);
             game::RefreshDrawMapOverlay();
+#endif
             continue;
         }
         break;
@@ -1933,16 +2118,31 @@ std::vector<v2> commandsystem::GetRouteGoOnCopy(){
 
 truth commandsystem::SpawnRoute(character* Char, v2 Pos)
 {
+  if(!Char || game::IsInWilderness())
+  {
+    RouteGoOn.clear();
+    LevelRouteGoOn = 0;
+    v2RouteTarget = v2(0, 0);
+    ADD_MESSAGE("Long-distance routing is not available in the wilderness.");
+    return false;
+  }
+
   std::set<v2> Illegal;
 
   node* Node = Char->GetLevel()->FindRoute(Char->GetPos(), Pos, Illegal, 0, Char);
-  if(Node){
-    RouteGoOn.clear();
-    while(Node->Last)
-    {
-      RouteGoOn.push_back(Node->Pos);
-      Node = Node->Last;
-    }
+  RouteGoOn.clear();
+  if(!Node)
+  {
+    LevelRouteGoOn = 0;
+    v2RouteTarget = v2(0, 0);
+    ADD_MESSAGE("No route found.");
+    return false;
+  }
+
+  while(Node->Last)
+  {
+    RouteGoOn.push_back(Node->Pos);
+    Node = Node->Last;
   }
 
   go* Go = go::Spawn(Char);
@@ -1959,18 +2159,32 @@ truth commandsystem::SpawnRoute(character* Char, v2 Pos)
 
 truth commandsystem::Go(character* Char)
 {
+#ifdef ANDROID
+  struct mobilefastwalkprompt
+  {
+    mobilefastwalkprompt()
+    {
+      mobileui::SetPrompt("Choose a direction to fast-walk.");
+    }
+    ~mobilefastwalkprompt() { mobileui::ClearPrompt(); }
+  } MobileFastWalkPrompt;
+#endif
   int Key;
-  if(LevelRouteGoOn!=Char->GetLevel())
+  if(game::IsInWilderness())
+    v2RouteTarget=v2(0,0);
+  else if(LevelRouteGoOn!=Char->GetLevel())
     v2RouteTarget=v2(0,0);
 
   if(Char->GetPos()==v2RouteTarget) //TODO is near by 1 dist (2 or more may have a wall in-between)
     v2RouteTarget=v2(0,0);
 
   while(true) {
+#ifndef ANDROID
     festring options = "Press a direction key to fast-walk, '.'/'<'/'>' to route, 'x' to autoexplore";
     if(!v2RouteTarget.Is0()) options << ", 'g' to continue";
 
     FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", options.CStr());
+#endif
     Key = GET_KEY();
     igraph::BlitBackGround(v2(16, 6), v2(game::GetMaxScreenXSize() << 4, 23));
 
@@ -2061,6 +2275,24 @@ truth commandsystem::EquipmentScreen(character* Char)
 {
   return Char->EquipmentScreen(Char->GetStack(), 0);
 }
+
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+truth commandsystem::ShowPaperDoll(character*)
+{
+  v2 Silhouette = humanoid::GetSilhouetteWhereDefault();
+  if(Silhouette.Is0())
+    Silhouette = v2(RES.X - SILHOUETTE_SIZE.X - 39, 53);
+
+  // Include the equipment slots surrounding the 48x64 body silhouette.
+  mobileui::SetPaperDollScreen(true, Silhouette.X - 16, Silhouette.Y - 24,
+                               SILHOUETTE_SIZE.X + 48,
+                               SILHOUETTE_SIZE.Y + 48);
+  game::KeyQuestion(CONST_S("Limb colors show condition. Equipped items surround the figure."),
+                    KEY_ESC, 2, KEY_ESC, KEY_CONTROLLER_B);
+  mobileui::SetPaperDollScreen(false);
+  return false;
+}
+#endif
 
 truth commandsystem::ScrollMessagesDown(character*)
 {
@@ -2596,6 +2828,267 @@ truth commandsystem::IssueCommand(character* Char)
 
   return game::CommandQuestion();
 }
+
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+void commandsystem::UpdateMobileActions(character* Char)
+{
+  if(!Char)
+  {
+    mobileui::SetActions(0, 0, 0, 0);
+    return;
+  }
+
+  const int MaximumActions = 48;
+  const char* Labels[MaximumActions];
+  int Keys[MaximumActions];
+  int DisplayKeys[MaximumActions];
+  int Groups[MaximumActions];
+  int Count = 0;
+
+  auto Add = [&](int CommandIndex, const char* Label, int Group,
+                 truth Available)
+  {
+    command* CommandToAdd = GetCommand(CommandIndex);
+    if(!Available || !CommandToAdd || Count >= MaximumActions)
+      return;
+    if(game::IsInWilderness() && !CommandToAdd->IsUsableInWilderness())
+      return;
+    if(CommandToAdd->IsWizardModeFunction() && !game::WizardModeIsActive())
+      return;
+    Labels[Count] = Label;
+    Keys[Count] = KEY_MOBILE_COMMAND_BASE + CommandIndex;
+    DisplayKeys[Count] = CommandToAdd->GetKey();
+    Groups[Count] = Group;
+    ++Count;
+  };
+
+  const truth Wilderness = game::IsInWilderness();
+  lsquare* Square = Wilderness ? 0 : Char->GetLSquareUnder();
+  stack* Inventory = Char->GetStack();
+  humanoid* Human = Char->AsHumanoid();
+  const truth HumanHasUsableArm = !Human
+    || (Human->GetLeftArm() && Human->GetLeftArm()->IsUsable())
+    || (Human->GetRightArm() && Human->GetRightArm()->IsUsable());
+
+  auto InventoryOrGroundHas = [&](sorter Sorter)
+  {
+    return Inventory->SortedItems(Char, Sorter)
+        || (Square && Square->GetStack()->SortedItems(Char, Sorter));
+  };
+
+  truth CanPickUp = false;
+  if(!Wilderness && Char->GetStackUnder()->GetVisibleItems(Char))
+    CanPickUp = true;
+  if(!Wilderness)
+    for(int Index = 0; Index < 4 && !CanPickUp; ++Index)
+    {
+      stack* Nearby = Char->GetLSquareUnder()->GetStackOfAdjacentSquare(Index);
+      CanPickUp = Nearby && Nearby->GetVisibleItems(Char);
+    }
+
+  truth CanOpenSomething = Char->CanOpen()
+                        && Inventory->SortedItems(Char, &item::IsOpenable);
+  truth CanCloseSomething = false;
+  truth CanTalkToSomeone = false;
+  truth DipDestinationNear = false;
+  if(Square)
+    for(int Direction = 0; Direction < Char->GetExtendedNeighbourSquares();
+        ++Direction)
+    {
+      lsquare* Nearby = Char->GetNeighbourLSquare(Direction);
+      if(!Nearby)
+        continue;
+      if(Nearby->GetStack()->SortedItems(Char, &item::IsOpenable))
+        CanOpenSomething = true;
+      if(Nearby->GetOLTerrain())
+      {
+        CanOpenSomething |= Nearby->GetOLTerrain()->CanBeOpened();
+        CanCloseSomething |= Nearby->GetOLTerrain()->IsOpen();
+      }
+      DipDestinationNear |= Nearby->IsDipDestination();
+    }
+  if(Square && Char->CanTalk())
+    for(int Direction = 0; Direction < 8 && !CanTalkToSomeone; ++Direction)
+    {
+      lsquare* Nearby = Char->GetNaturalNeighbourLSquare(Direction);
+      CanTalkToSomeone = Nearby && Nearby->GetCharacter();
+    }
+
+  oterrain* TerrainUnder = Char->GetSquareUnder()
+                         ? Char->GetSquareUnder()->GetOTerrain() : 0;
+  const truth CanOffer = Square && Square->GetOLTerrain()
+                      && Square->GetOLTerrain()->AcceptsOffers()
+                      && Inventory->GetItems()
+                      && HumanHasUsableArm;
+  const truth CanSit = Square
+                    && ((Square->GetOLTerrain()
+                         && Square->GetOLTerrain()->GetSitMessage().GetSize())
+                        || (Square->GetGLTerrain()
+                            && Square->GetGLTerrain()->GetSitMessage().GetSize()));
+
+  Add(5, "PICK UP", mobileui::ACTION_CONTEXT, CanPickUp);
+  Add(18, "OPEN", mobileui::ACTION_CONTEXT, CanOpenSomething);
+  Add(19, "CLOSE", mobileui::ACTION_CONTEXT,
+      Char->CanOpen() && CanCloseSomething);
+  olterrain* LocalTerrainUnder = dynamic_cast<olterrain*>(TerrainUnder);
+  Add(3, "GO DOWN", mobileui::ACTION_CONTEXT,
+      (LocalTerrainUnder && LocalTerrainUnder->IsDownLink())
+      || (Wilderness && dynamic_cast<owterrain*>(TerrainUnder)));
+  Add(4, "GO UP", mobileui::ACTION_CONTEXT,
+      LocalTerrainUnder && LocalTerrainUnder->IsUpLink());
+  Add(24, "TALK", mobileui::ACTION_CONTEXT, CanTalkToSomeone);
+  Add(28, "OFFER", mobileui::ACTION_CONTEXT, CanOffer);
+  Add(30, "SIT", mobileui::ACTION_CONTEXT, CanSit);
+  Add(45, "KICK", mobileui::ACTION_CONTEXT, Char->CanKick());
+
+  const truth HasItems = Inventory->GetItems();
+  const truth CanConsume = Char->UsesNutrition();
+  const truth CanDrink = CanConsume
+    && (InventoryOrGroundHas(&item::IsDrinkable)
+        || (Square && Square->GetOLTerrain()
+            && Square->GetOLTerrain()->HasDrinkEffect()));
+  const truth CanEat = CanConsume
+    && (InventoryOrGroundHas(&item::IsEatable)
+        || (Square && Square->GetOLTerrain()
+            && Square->GetOLTerrain()->HasEatEffect()));
+  const truth HasDipItem = Char->PossessesItem(&item::IsDippable);
+  const truth HasDipDestination = Char->PossessesItem(&item::IsDipDestination)
+                               || DipDestinationNear;
+  const truth CanThrow = Char->CanThrow()
+                      && HumanHasUsableArm && HasItems;
+  const truth CanUseEquipment = Char->CanUseEquipment();
+  truth HasValidSwap = false;
+  for(size_t Index = 0; Index < vSWCfg.size() && !HasValidSwap; ++Index)
+    HasValidSwap = vSWCfg[Index].IsValid();
+
+  const truth CanRead = (Char->CanRead() || game::GetSeeWholeMapCheatMode())
+                     && Inventory->SortedItems(Char, &item::IsReadable)
+                     && (!Square || !Square->IsDark()
+                         || game::GetSeeWholeMapCheatMode());
+  const truth CanCraft = Human && HumanHasUsableArm
+                      && (HasItems
+                          || (Square && Square->GetStack()->GetItems()));
+  item* LastApplied = itLastApplyID ? game::SearchItem(itLastApplyID) : 0;
+
+#ifdef ANDROID
+  Add(9, "INVENTORY", mobileui::ACTION_ITEMS, HasItems);
+  Add(8, "EQUIPMENT", mobileui::ACTION_ITEMS, CanUseEquipment);
+  Add(10, "APPLY", mobileui::ACTION_ITEMS,
+      Char->CanApply() && Char->PossessesItem(&item::IsAppliable));
+  Add(11, "APPLY AGAIN", mobileui::ACTION_ITEMS,
+      LastApplied && LastApplied->FindCarrier() == Char);
+  Add(12, "ZAP", mobileui::ACTION_ITEMS,
+      Char->CanZap() && Char->GetAttribute(INTELLIGENCE) >= 5
+      && Char->PossessesItem(&item::IsZappable));
+  Add(13, "READ", mobileui::ACTION_ITEMS, CanRead);
+  Add(14, "EAT", mobileui::ACTION_ITEMS, CanEat);
+  Add(15, "DRINK", mobileui::ACTION_ITEMS, CanDrink);
+  Add(16, "TASTE", mobileui::ACTION_ITEMS, CanDrink);
+  Add(17, "DIP", mobileui::ACTION_ITEMS,
+      HasDipItem && HasDipDestination);
+  Add(7, "THROW", mobileui::ACTION_ITEMS, CanThrow);
+  Add(6, "DROP", mobileui::ACTION_ITEMS, HasItems);
+  Add(41, "WIELD LEFT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(40, "WIELD RIGHT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(42, "SWAP", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasValidSwap);
+  Add(43, "SWAP SETUP", mobileui::ACTION_ITEMS,
+      Human && CanUseEquipment);
+  Add(23, "INSCRIBE", mobileui::ACTION_ITEMS,
+      Char->CanRead() && HumanHasUsableArm);
+#else
+  // Desktop fills the two-column rail row by row in this order.
+  Add(9, "INVENTORY", mobileui::ACTION_ITEMS, HasItems);
+  Add(8, "EQUIPMENT", mobileui::ACTION_ITEMS, CanUseEquipment);
+  Add(6, "DROP", mobileui::ACTION_ITEMS, HasItems);
+  Add(7, "THROW", mobileui::ACTION_ITEMS, CanThrow);
+  Add(41, "WIELD LEFT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(40, "WIELD RIGHT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(13, "READ", mobileui::ACTION_ITEMS, CanRead);
+  Add(43, "SWAP SETUP", mobileui::ACTION_ITEMS,
+      Human && CanUseEquipment);
+  Add(25, "CRAFT", mobileui::ACTION_ITEMS, CanCraft);
+  Add(23, "INSCRIBE", mobileui::ACTION_ITEMS,
+      Char->CanRead() && HumanHasUsableArm);
+
+  // Less common item commands follow the primary desktop rows.
+  Add(10, "APPLY", mobileui::ACTION_ITEMS,
+      Char->CanApply() && Char->PossessesItem(&item::IsAppliable));
+  Add(11, "APPLY AGAIN", mobileui::ACTION_ITEMS,
+      LastApplied && LastApplied->FindCarrier() == Char);
+  Add(12, "ZAP", mobileui::ACTION_ITEMS,
+      Char->CanZap() && Char->GetAttribute(INTELLIGENCE) >= 5
+      && Char->PossessesItem(&item::IsZappable));
+  Add(14, "EAT", mobileui::ACTION_ITEMS, CanEat);
+  Add(15, "DRINK", mobileui::ACTION_ITEMS, CanDrink);
+  Add(16, "TASTE", mobileui::ACTION_ITEMS, CanDrink);
+  Add(17, "DIP", mobileui::ACTION_ITEMS,
+      HasDipItem && HasDipDestination);
+  Add(42, "SWAP", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasValidSwap);
+#endif
+
+  truth CanPray = false;
+  if(Square && Square->GetDivineMaster() != ATHEIST)
+  {
+    const int Master = Square->GetDivineMaster();
+    if(Master)
+      CanPray = game::GetGod(Master)->IsKnown();
+    else
+      for(int God = 1; God <= GODS && !CanPray; ++God)
+        CanPray = game::GetGod(God)->IsKnown();
+  }
+  const truth HasFollowers = Char->GetTeam()
+                          && Char->GetTeam()->GetMembers() > 1;
+  Add(1, "WAIT", mobileui::ACTION_CHARACTER, true);
+  Add(20, "SEARCH", mobileui::ACTION_CONTEXT, true);
+  Add(31, "REST", mobileui::ACTION_CHARACTER,
+      !Char->StateIsActivated(PANIC));
+  Add(29, "PRAY", mobileui::ACTION_CONTEXT, CanPray);
+#ifdef ANDROID
+  Add(25, "CRAFT", mobileui::ACTION_ITEMS, CanCraft);
+  Add(26, "NAME", mobileui::ACTION_CHARACTER,
+#else
+  Add(26, "PET NAME", mobileui::ACTION_CHARACTER,
+#endif
+      Char->CanTalk() && HasFollowers);
+  Add(27, "ORDER", mobileui::ACTION_CHARACTER,
+      Char->CanTalk() && HasFollowers);
+  Add(46, "VOMIT", mobileui::ACTION_CHARACTER,
+      Char->CanForceVomit());
+
+  Add(2, "FAST WALK", mobileui::ACTION_MOVE, Char->CanMove());
+  Add(44, "RUN", mobileui::ACTION_MOVE, Char->CanMove());
+
+  Add(21, "LOOK", mobileui::ACTION_CONTEXT, true);
+  Add(22, "MAP", mobileui::ACTION_SYSTEM,
+      Human && HumanHasUsableArm);
+  Add(34, "HISTORY", mobileui::ACTION_SYSTEM, true);
+  Add(37, "OPTIONS", mobileui::ACTION_SYSTEM, true);
+  Add(38, "CONTROLS", mobileui::ACTION_SYSTEM, true);
+  Add(39, "SKILLS", mobileui::ACTION_CHARACTER, true);
+#ifdef ANDROID
+  if(Human && Count < MaximumActions)
+  {
+    Labels[Count] = "BODY STATUS";
+    Keys[Count] = KEY_MOBILE_PAPER_DOLL;
+    DisplayKeys[Count] = KEY_MOBILE_PAPER_DOLL;
+    Groups[Count] = mobileui::ACTION_CHARACTER;
+    ++Count;
+  }
+#endif
+  Add(32, "SAVE", mobileui::ACTION_SYSTEM, true);
+
+  mobileui::SetActions(Labels, Keys, Groups, Count);
+#ifdef ADAPTIVE_UI
+  adaptiveui::SetActionShortcuts(DisplayKeys, Count);
+#endif
+}
+#endif
 
 void commandsystem::PlayerDiedWeaponSkills()
 {

@@ -30,6 +30,13 @@
 #include "sfx.h"
 #include "dbgmsgproj.h"
 
+#ifdef ANDROID
+#include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
+#endif
+
 felist msgsystem::MessageHistory(CONST_S("Message history"), WHITE, 128);
 festring msgsystem::LastMessage;
 festring msgsystem::BigMessage;
@@ -141,6 +148,9 @@ void msgsystem::AddMessage(cchar* Format, ...)
   MessageHistory.SetSelected(MessageHistory.GetLastEntryIndex());
   LastMessageLines = Chapter.size();
   MessagesChanged = true;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  mobileui::SetLog(Buffer.CStr());
+#endif
 }
 
 void msgsystem::Draw()
@@ -179,7 +189,14 @@ void msgsystem::DrawMessageHistory()
   game::RegionListItemEnable(false); //this fix the problem that happens on death
   game::RegionSilhouetteEnable(false);
 
+#ifdef ANDROID
+  // Mobile history rows keep the normal font and Story-style line spacing.
+  // Seven entries leave enough vertical room for wrapped messages plus the
+  // visual section break; the remaining history stays available by paging.
+  MessageHistory.SetPageLength(7);
+#else
   MessageHistory.SetPageLength(ivanconfig::GetStackListPageLength());
+#endif
   MessageHistory.Draw();
 }
 
