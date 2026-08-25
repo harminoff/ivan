@@ -18,6 +18,9 @@
 #include "bitmap.h"
 #include "error.h"
 #include "graphics.h"
+#ifdef ADAPTIVE_UI
+#include "adaptiveui.h"
+#endif
 #include "festring.h"
 #include "rawbit.h"
 #include "whandler.h"
@@ -160,6 +163,7 @@ void globalwindowhandler::Init()
 #else
   //FIXSDL2 SDL_EnableKeyRepeat(500, 30);
   SDL_ShowWindow(graphics::GetWindow());
+  graphics::StartControllerDiscovery();
 #endif
 }
 
@@ -384,6 +388,22 @@ int globalwindowhandler::GetKey(truth EmptyBuffer)
   for(;;){
     CheckKeyTimeout();
 
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    static Uint32 LastPromptCaretPhase = Uint32(-1);
+    if(graphics::IsEnhancedPresentation()
+       && adaptiveui::IsTextEntryPromptActive())
+    {
+      const Uint32 PromptCaretPhase = SDL_GetTicks() / 500;
+      if(PromptCaretPhase != LastPromptCaretPhase)
+      {
+        LastPromptCaretPhase = PromptCaretPhase;
+        graphics::BlitDBToScreen();
+      }
+    }
+    else
+      LastPromptCaretPhase = Uint32(-1);
+#endif
+
     if(!KeyBuffer.empty())
     {
       int Key = KeyBuffer[0];
@@ -553,6 +573,14 @@ truth globalwindowhandler::IsLastSDLkeyEventWasKeyUp()
 v2 globalwindowhandler::GetMouseLocation()
 {
   UpdateMouse();
+#ifdef ADAPTIVE_UI
+  if(graphics::IsEnhancedPresentation())
+  {
+    const v2 CanvasPosition = graphics::MapPointerToCanvas(v2MousePos);
+    if(CanvasPosition.X >= 0 && CanvasPosition.Y >= 0)
+      return CanvasPosition;
+  }
+#endif
   return v2MousePos;
 }
 
@@ -560,8 +588,7 @@ bool globalwindowhandler::IsMouseAtRect(v2 v2TopLeft, v2 v2BorderOrBottomRigh, b
 {
   v2 v2MP = v2MousePosOverride;
   if(v2MousePosOverride.Is0()){
-    UpdateMouse();
-    v2MP=v2MousePos;
+    v2MP=GetMouseLocation();
   }
 
   v2 v2BottomRight = v2BorderOrBottomRigh;
@@ -590,6 +617,31 @@ void globalwindowhandler::ProcessKeyDownMessage(SDL_Event* Event)
 {DBG4(Event->key.keysym.sym,Event->text.text[0],Event->key.keysym.mod & KMOD_ALT,Event->key.keysym.mod & KMOD_CTRL);
 
   bLastSDLkeyEventIsKeyUp=false;
+
+#ifdef ADAPTIVE_UI
+  if(graphics::IsEnhancedPresentation()
+     && !(Event->key.keysym.mod & (KMOD_CTRL | KMOD_ALT)))
+  {
+    int ZoomStep = 0;
+    switch(Event->key.keysym.sym)
+    {
+     case SDLK_EQUALS:
+     case SDLK_PLUS:
+     case SDLK_KP_PLUS:
+       ZoomStep = 1;
+       break;
+     case SDLK_MINUS:
+     case SDLK_KP_MINUS:
+       ZoomStep = -1;
+       break;
+    }
+    if(ZoomStep && adaptiveui::AdjustMapZoom(ZoomStep))
+    {
+      graphics::BlitDBToScreen();
+      return;
+    }
+  }
+#endif
 
   /**
    * Events are splitted between SDL_KEYDOWN and SDL_TEXTINPUT.
@@ -630,6 +682,17 @@ void globalwindowhandler::ProcessKeyDownMessage(SDL_Event* Event)
     return;
   }else
   if(Event->key.keysym.mod & KMOD_ALT){
+#ifdef ADAPTIVE_UI
+    if(graphics::IsEnhancedPresentation()
+       && Event->key.keysym.sym >= SDLK_1
+       && Event->key.keysym.sym <= SDLK_5)
+    {
+      if(adaptiveui::SelectActionCategory(
+           int(Event->key.keysym.sym - SDLK_1)))
+        graphics::BlitDBToScreen();
+      return;
+    }
+#endif
     switch(Event->key.keysym.sym)
     {
     case SDLK_RETURN:
@@ -647,6 +710,14 @@ void globalwindowhandler::ProcessKeyDownMessage(SDL_Event* Event)
       break;
     case SDLK_RIGHT:
       AddKeyToBuffer(KEY_PAGE_UP + 0xE000);
+      break;
+    default:
+#ifdef ADAPTIVE_UI
+      if(graphics::IsEnhancedPresentation())
+        AddKeyToBuffer(adaptiveui::TranslateDesktopShortcut(
+          Event->key.keysym.sym,
+          static_cast<SDL_Keymod>(Event->key.keysym.mod)));
+#endif
       break;
     }
     return;
@@ -771,6 +842,48 @@ void globalwindowhandler::BufferMouseEvent(mouseclick mc)
   MouseBuffer.push(mc);
 }
 
+#ifdef ADAPTIVE_UI
+bool HandleAdaptivePointer(int WindowX, int WindowY, bool Pressed,
+                           int WheelY, bool Motion, int Button)
+{
+  if(!graphics::IsEnhancedPresentation())
+    return false;
+
+  const v2 Output = graphics::MapWindowToOutput(v2(WindowX, WindowY));
+  const adaptiveui::PointerResult Result = adaptiveui::HandlePointer(
+    Output.X, Output.Y, Pressed, WheelY, Motion, Button);
+  switch(Result.Type)
+  {
+   case adaptiveui::PointerResult::COMMAND_KEY:
+     // GetKey accepts ASCII directly and unwraps IVAN's extended-key
+     // envelope for everything else.  Pointer-dispatched menu rows use
+     // values above the ASCII range, just like Android and controller input.
+     globalwindowhandler::AddKeyToBuffer(
+       Result.CommandCode >= 0x81 ? 0xE000 + Result.CommandCode
+                                  : Result.CommandCode);
+     return true;
+   case adaptiveui::PointerResult::CANVAS_MOUSE_EVENT:
+   {
+     mouseclick Click;
+     Click.btn = Result.Button;
+     Click.pos = v2(Result.CanvasX, Result.CanvasY);
+     Click.wheelY = Result.WheelY;
+     Click.IsMotion = Result.Motion;
+     Click.IsCanvasCoordinates = true;
+     globalwindowhandler::BufferPresentationMouseEvent(Click);
+     return true;
+   }
+   case adaptiveui::PointerResult::REDRAW:
+     graphics::BlitDBToScreen();
+     return true;
+   case adaptiveui::PointerResult::CONSUMED:
+     return true;
+   default:
+     return false;
+  }
+}
+#endif
+
 void globalwindowhandler::ProcessMessage(SDL_Event* Event)
 {
   Uint32 type;
@@ -838,6 +951,11 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
 
    case SDL_MOUSEBUTTONUP:
      if(Event->button.clicks>0){
+#ifdef ADAPTIVE_UI
+       if(HandleAdaptivePointer(Event->button.x, Event->button.y, true,
+                                0, false, Event->button.button))
+         break;
+#endif
        mouseclick mc;
        mc.btn = Event->button.button;
        mc.pos.X=Event->button.x;
@@ -848,6 +966,19 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
      break;
 
    case SDL_MOUSEWHEEL: {
+#ifdef ADAPTIVE_UI
+     int WheelMouseX = 0;
+     int WheelMouseY = 0;
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+     WheelMouseX = Event->wheel.mouseX;
+     WheelMouseY = Event->wheel.mouseY;
+#else
+     SDL_GetMouseState(&WheelMouseX, &WheelMouseY);
+#endif
+     if(HandleAdaptivePointer(WheelMouseX, WheelMouseY, false,
+                              Event->wheel.y, false, 0))
+       break;
+#endif
      mouseclick mc;
      mc.wheelY = Event->wheel.y;
 #if SDL_VERSION_ATLEAST(2, 26, 0)
@@ -861,6 +992,11 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
    }
 
    case SDL_MOUSEMOTION: {
+#ifdef ADAPTIVE_UI
+     if(HandleAdaptivePointer(Event->motion.x, Event->motion.y, false,
+                              0, true, 0))
+       break;
+#endif
      mouseclick mc;
      mc.IsMotion = true;
      mc.pos.X=Event->motion.x;

@@ -53,7 +53,7 @@ class commandsystem
   static truth ShowKeyLayout(character*);
   static truth NOP(character*);
   static truth SpawnRoute(character* Char, v2 Pos);
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   static void UpdateMobileActions(character*);
   static truth ShowPaperDoll(character*);
 #endif

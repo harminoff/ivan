@@ -35,6 +35,9 @@
 
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 
 struct statedata
@@ -1827,15 +1830,14 @@ void character::Die(ccharacter* Killer, cfestring& Msg, ulong DeathFlags)
     }
   }
 
-  square* SquareUnder[MAX_SQUARES_UNDER];
-  lsquare** LSquareUnder = reinterpret_cast<lsquare**>(SquareUnder);
-  memset(SquareUnder, 0, sizeof(SquareUnder));
+  lsquare* LSquareUnder[MAX_SQUARES_UNDER];
+  memset(LSquareUnder, 0, sizeof(LSquareUnder));
   Disable();
 
   if(IsPlayer() || !game::IsInWilderness())
   {
     for(int c = 0; c < SquaresUnder; ++c)
-      SquareUnder[c] = GetSquareUnder(c);
+      LSquareUnder[c] = static_cast<lsquare*>(GetSquareUnder(c));
 
     Remove();
   }
@@ -3672,23 +3674,26 @@ truth character::AutoPlayAICommand(int& rKey)
 
 void character::PerformPlayerCommand(int Key, bool& HasActed, bool& ValidKeyPressed)
 {
-#ifdef ANDROID
+  int RequestedCommand = 0;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   if(Key == KEY_MOBILE_PAPER_DOLL)
   {
     HasActed = commandsystem::ShowPaperDoll(this);
     ValidKeyPressed = true;
     return;
   }
+#endif
 
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   // Named mobile buttons refer to IVAN's command table instead of fixed
   // characters, so alternate/custom key maps continue to work.
   if(Key > KEY_MOBILE_COMMAND_BASE && Key <= KEY_MOBILE_COMMAND_MAX)
   {
-    const int CommandIndex = Key - KEY_MOBILE_COMMAND_BASE;
-    if(commandsystem::GetCommand(CommandIndex))
-      Key = commandsystem::GetCommand(CommandIndex)->GetKey();
+    RequestedCommand = Key - KEY_MOBILE_COMMAND_BASE;
   }
+#endif
 
+#ifdef ANDROID
   // The mobile X face button is the always-reachable inventory action while
   // gameplay is active. Lists continue to interpret X as page navigation.
   if(Key == KEY_CONTROLLER_X)
@@ -3723,7 +3728,8 @@ void character::PerformPlayerCommand(int Key, bool& HasActed, bool& ValidKeyPres
   if(ValidKeyPressed) return;
 
   for(c = 1; commandsystem::GetCommand(c); ++c)
-    if(Key == commandsystem::GetCommand(c)->GetKey())
+    if((RequestedCommand && c == RequestedCommand)
+       || (!RequestedCommand && Key == commandsystem::GetCommand(c)->GetKey()))
     {
       if(game::IsInWilderness() && !commandsystem::GetCommand(c)->IsUsableInWilderness())
         ADD_MESSAGE("This function cannot be used while in wilderness.");
@@ -3761,7 +3767,9 @@ void character::PerformPlayerCommand(int Key, bool& HasActed, bool& ValidKeyPres
     game::RegionSilhouetteEnable(false);
     auto mc = globalwindowhandler::GetLastMouseEvent();
     if(mc.btn > 0) {
-      v2 MPos = mc.pos / graphics::GetScale();
+      v2 MPos = mc.IsCanvasCoordinates
+              ? mc.pos
+              : graphics::MapPointerToCanvas(mc.pos);
       auto w = humanoid::GetSilhouetteWhere();
       auto h = AsHumanoid();
       if(h) {
@@ -3804,7 +3812,7 @@ void character::GetPlayerCommand()
   {
     graphics::SetAllowStretchedBlit(); //overall great/single location to re-enable stretched blit!
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     commandsystem::UpdateMobileActions(this);
 #endif
     game::DrawEverything();
@@ -6394,6 +6402,13 @@ void character::DrawPanel(truth AnimationDraw) const
 
   ++PanelPosY;
 
+#ifdef ADAPTIVE_UI
+  const char* AdaptiveConditions[32];
+  int AdaptiveConditionCount = 0;
+  if(GetAction() && AdaptiveConditionCount < 32)
+    AdaptiveConditions[AdaptiveConditionCount++] = GetAction()->GetDescription();
+#endif
+
   if(GetAction())
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, "%s",
                  festring(GetAction()->GetDescription()).CapitalizeCopy().CStr());
@@ -6403,34 +6418,62 @@ void character::DrawPanel(truth AnimationDraw) const
        && StateIsActivated(1 << c)
        && (1 << c != HASTE || !StateIsActivated(SLOW))
        && (1 << c != SLOW || !StateIsActivated(HASTE)))
-      FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
-                   (1 << c) & EquipmentState || TemporaryStateCounter[c] >= PERMANENT ? BLUE : WHITE,
-                   "%s", StateData[c].Description);
+       {
+         FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
+                      (1 << c) & EquipmentState || TemporaryStateCounter[c] >= PERMANENT ? BLUE : WHITE,
+                      "%s", StateData[c].Description);
+#ifdef ADAPTIVE_UI
+         if(AdaptiveConditionCount < 32)
+           AdaptiveConditions[AdaptiveConditionCount++] = StateData[c].Description;
+#endif
+       }
 
   static cchar* HungerStateStrings[] = { "Starving!", "Very hungry", "Hungry", "", "Satiated", "Bloated", "Overfed!" };
   static cpackcol16 HungerStateColors[] = { RED, RED, YELLOW, 0, WHITE, WHITE, YELLOW };
   int HungerState = GetHungerState();
   if(HungerState != NOT_HUNGRY)
+  {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  HungerStateColors[HungerState], HungerStateStrings[HungerState]);
+#ifdef ADAPTIVE_UI
+    if(AdaptiveConditionCount < 32)
+      AdaptiveConditions[AdaptiveConditionCount++] = HungerStateStrings[HungerState];
+#endif
+  }
 
   static cchar* BurdenStateStrings[] = { "Overload!", "Stressed", "Burdened" };
   static cpackcol16 BurdenStateColors[] = { RED, RED, YELLOW };
   int BurdenState = GetBurdenState();
   if(BurdenState != UNBURDENED)
+  {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  BurdenStateColors[BurdenState], BurdenStateStrings[BurdenState]);
+#ifdef ADAPTIVE_UI
+    if(AdaptiveConditionCount < 32)
+      AdaptiveConditions[AdaptiveConditionCount++] = BurdenStateStrings[BurdenState];
+#endif
+  }
 
   static cchar* TirednessStateStrings[] = { "Fainting!", "Exhausted" };
   static cpackcol16 TirednessStateColors[] = { RED, YELLOW };
   int TirednessState = GetTirednessState();
   if(TirednessState != UNTIRED)
+  {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  TirednessStateColors[TirednessState], TirednessStateStrings[TirednessState]);
+#ifdef ADAPTIVE_UI
+    if(AdaptiveConditionCount < 32)
+      AdaptiveConditions[AdaptiveConditionCount++] = TirednessStateStrings[TirednessState];
+#endif
+  }
 
   if(game::IsInWilderness() && game::PlayerHasBoat() && IsSwimming())
   {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, "On Ship");
+#ifdef ADAPTIVE_UI
+    if(AdaptiveConditionCount < 32)
+      AdaptiveConditions[AdaptiveConditionCount++] = "ON SHIP";
+#endif
   }
 
   if(game::PlayerIsRunning())
@@ -6440,9 +6483,13 @@ void character::DrawPanel(truth AnimationDraw) const
 
     if(SecondLine[0] != '\0')
       FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, SecondLine);
+#ifdef ADAPTIVE_UI
+    if(AdaptiveConditionCount < 32)
+      AdaptiveConditions[AdaptiveConditionCount++] = "RUNNING";
+#endif
   }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   char MobileLine1[128], MobileLine2[128], MobileLine3[128], MobileLine4[160];
   snprintf(MobileLine1, sizeof(MobileLine1), "HP %d/%d  MANA %d  GOLD %ld",
            GetHP(), GetMaxHP(), GetAttribute(MANA), GetMoney());
@@ -6452,11 +6499,32 @@ void character::DrawPanel(truth AnimationDraw) const
   snprintf(MobileLine3, sizeof(MobileLine3), "END %d  PER %d  INT %d  WIS %d",
            GetAttribute(ENDURANCE), GetAttribute(PERCEPTION),
            GetAttribute(INTELLIGENCE), GetAttribute(WISDOM));
-  snprintf(MobileLine4, sizeof(MobileLine4),
+#ifdef ADAPTIVE_UI
+   snprintf(MobileLine4, sizeof(MobileLine4),
+           "WILL %d  CHA %d  HT %d  WT %ld",
+           GetAttribute(WILL_POWER), GetAttribute(CHARISMA), GetSize(),
+           GetTotalCharacterWeight());
+#else
+   snprintf(MobileLine4, sizeof(MobileLine4),
            "WILL %d  CHA %d  DAY %d  %d:%02d  TURN %ld",
            GetAttribute(WILL_POWER), GetAttribute(CHARISMA), Time.Day,
            Time.Hour, Time.Min, game::GetTurn());
-  mobileui::SetStats(MobileLine1, MobileLine2, MobileLine3, MobileLine4);
+#endif
+   mobileui::SetStats(MobileLine1, MobileLine2, MobileLine3, MobileLine4);
+#ifdef ADAPTIVE_UI
+   adaptiveui::SetConditions(AdaptiveConditions, AdaptiveConditionCount);
+   char AdaptiveLocation[128];
+   if(game::IsInWilderness())
+     snprintf(AdaptiveLocation, sizeof(AdaptiveLocation), "WILDERNESS");
+   else
+     snprintf(AdaptiveLocation, sizeof(AdaptiveLocation), "%s",
+              game::GetCurrentDungeon()->GetShortLevelDescription(
+                game::GetCurrentLevelIndex()).CapitalizeCopy().CStr());
+   char AdaptiveClock[128];
+   snprintf(AdaptiveClock, sizeof(AdaptiveClock), "DAY %d  %d:%02d  TURN %ld",
+            Time.Day, Time.Hour, Time.Min, game::GetTurn());
+   adaptiveui::SetLocationTime(AdaptiveLocation, AdaptiveClock);
+#endif
 #endif
 }
 
@@ -9087,6 +9155,28 @@ truth character::TryToChangeEquipment(stack* MainStack, stack* SecStack, int Cho
   else
   {
     game::DrawEverythingNoBlit();
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    adaptiveui::ItemMetrics EquippedMetrics;
+    festring EquippedLabel("none");
+    if(OldEquipment)
+    {
+      EquippedLabel.Empty();
+      OldEquipment->AddInventoryEntry(this, EquippedLabel, 1, true);
+      EquippedMetrics.ItemId = OldEquipment->GetID();
+      EquippedMetrics.Present = true;
+      EquippedMetrics.Armor = OldEquipment->IsArmor(this);
+      EquippedMetrics.Weapon = OldEquipment->IsWeapon(this);
+      EquippedMetrics.Shield = OldEquipment->IsShield(this);
+      EquippedMetrics.Weight = OldEquipment->GetWeight();
+      EquippedMetrics.ArmorValue = OldEquipment->GetStrengthValue();
+      EquippedMetrics.MinimumDamage = OldEquipment->GetBaseMinDamage();
+      EquippedMetrics.MaximumDamage = OldEquipment->GetBaseMaxDamage();
+      EquippedMetrics.ToHit = OldEquipment->GetBaseToHitValue();
+      EquippedMetrics.Block = OldEquipment->GetBaseBlockValue();
+      EquippedMetrics.Enchantment = OldEquipment->GetEnchantment();
+    }
+    adaptiveui::SetEquipmentComparison(EquippedLabel.CStr(), EquippedMetrics);
+#endif
     itemvector ItemVector;
     int Return = MainStack->DrawContents(ItemVector,
                                          SecStack,
@@ -11611,38 +11701,48 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
 
   int Chosen = 0;
   truth EquipmentChanged = false;
-#ifdef ANDROID
+#if defined(ANDROID)
   felist List(CONST_S("Equipment"));
   // Expose every equipment slot to the mobile overlay at once. The overlay
   // uses a clipped, vertically scrollable viewport rather than list pages.
+  List.SetPageLength(MAX_EQUIPMENT_SLOTS);
+#elif defined(ADAPTIVE_UI)
+  felist List(CONST_S("Equipment"));
+  // Keep every equipment slot in one continuous desktop list. The adaptive
+  // rail owns the five-row viewport and its group navigation.
   List.SetPageLength(MAX_EQUIPMENT_SLOTS);
 #else
   felist List(CONST_S("Equipment menu [ESC exits]"));
 #endif
   festring Entry;
+#if !defined(ADAPTIVE_UI) || defined(ANDROID)
   long TotalEquippedWeight;
+#endif
 
   for(;;)
   {
     List.Empty();
     List.EmptyDescription();
 
+#if !defined(ADAPTIVE_UI) || defined(ANDROID)
     TotalEquippedWeight = 0;
-
     for(int c = 0; c < GetEquipments(); ++c) // if equipment exists, add to TotalEquippedWeight
     {
       item* Equipment = GetEquipment(c);
       TotalEquippedWeight += (Equipment) ? Equipment->GetWeight() : 0;
     }
+#endif
 
     if(IsPlayer())
     {
+#if !defined(ADAPTIVE_UI) || defined(ANDROID)
       festring Total("Total weight: ");
       Total << TotalEquippedWeight;
       Total << "g";
 
       List.AddDescription(CONST_S(""));
       List.AddDescription(Total);
+#endif
     }
 
     if(!IsPlayer())

@@ -71,9 +71,17 @@
 #include "specialkeys.h"
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 
 #include "dbgmsgproj.h"
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+static truth DesktopTruthQuestion(cfestring&, int);
+static int DesktopQuitQuestion(cfestring&);
+#endif
 
 #define SAVE_FILE_VERSION 136 // Increment this if changes make savefiles incompatible
 #define BONE_FILE_VERSION 120 // Increment this if changes make bonefiles incompatible
@@ -1253,6 +1261,11 @@ truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForT
   else if(DefaultAnswer != REQUIRES_ANSWER)
     ABORT("Illegal TruthQuestion DefaultAnswer send!");
 
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+    return DesktopTruthQuestion(String, OtherKeyForTrue);
+#endif
+
   int FromKeyQuestion = KeyQuestion(String, DefaultAnswer, 8, 'y', 'Y', 'n', 'N', OtherKeyForTrue, KEY_CONTROLLER_A, KEY_CONTROLLER_B, KEY_CONTROLLER_Y);
   return FromKeyQuestion == 'y' || FromKeyQuestion == 'Y' || FromKeyQuestion == OtherKeyForTrue || FromKeyQuestion == KEY_CONTROLLER_A;
 }
@@ -1501,8 +1514,27 @@ struct mapnote{
 static std::vector<mapnote> vMapNotes;
 v2 v2MapTopLeft;
 v2 v2MapSize;
+v2 v2MapDungeonMin;
+int iMapTileScreenSize=0;
 col16 colMapNoteBkg;
 int iNoteHighlight=-1;
+v2 game::MapOverlayCoordinatesToPos(v2 ScreenPos)
+{
+  if(!bDrawMapOverlayEnabled || iMapTileScreenSize <= 0)
+    return ERROR_V2;
+
+  const v2 Local = ScreenPos - v2MapTopLeft;
+  if(Local.X < 0 || Local.Y < 0
+     || Local.X >= v2MapSize.X || Local.Y >= v2MapSize.Y)
+    return ERROR_V2;
+
+  const v2 MapPos = v2MapDungeonMin
+    + v2(Local.X / iMapTileScreenSize,
+         Local.Y / iMapTileScreenSize);
+  return CurrentArea && CurrentArea->IsValidPos(MapPos)
+    ? MapPos : ERROR_V2;
+}
+
 lsquare* game::GetHighlightedMapNoteLSquare()
 {DBGLN;
   if(!bDrawMapOverlayEnabled)return NULL;
@@ -1528,7 +1560,7 @@ bool validateV2(v2 v2Chk, bitmap* buffer=NULL, v2 Border=v2()){
 }
 void game::DrawMapNotesOverlay(bitmap* buffer)
 {
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   const int MobileNoteCount = bDrawMapOverlayEnabled && bShowMapNotes
     ? std::min(int(vMapNotes.size()), 12) : 0;
   const char* MobileNoteLabels[12];
@@ -1542,6 +1574,13 @@ void game::DrawMapNotesOverlay(bitmap* buffer)
   }
   mobileui::SetMapNotes(MobileNoteLabels, MobileNoteX, MobileNoteY,
                         MobileNoteCount);
+#endif
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+  {
+    iNoteHighlight = mobileui::GetSelectedMapNote();
+    return;
+  }
 #endif
   if(!bDrawMapOverlayEnabled)return;
 
@@ -1710,6 +1749,13 @@ void game::DrawMapOverlay(bitmap* buffer)
   // of white boxes (and holes where floor tiles are transparent) as it moves.
   // Repaint the complete map on Android so each frame replaces the old cursor.
   bTransparentMap = false;
+#elif defined(ADAPTIVE_UI)
+  // Enhanced Desktop also presents a cropped map texture as an opaque panel.
+  // The legacy transparent look-mode redraw preserves pixels outside its
+  // mask, so cursor movement otherwise leaves white seams and stale holes in
+  // the enlarged desktop map.  Classic keeps the original behavior.
+  if(graphics::IsEnhancedPresentation())
+    bTransparentMap = false;
 #endif
 
   if(bPositionQuestionMode){
@@ -1756,6 +1802,7 @@ void game::DrawMapOverlay(bitmap* buffer)
 
       v2KnownDungeonSize = (v2Max+v2(1,1)) -v2Min;
     }} DBG3(DBGAV2(v2Min),DBGAV2(v2Max),DBGAV2(v2KnownDungeonSize));
+    v2MapDungeonMin = v2Min;
 
 //      v2 v2FullDungeonSize=v2(game::GetCurrentLevel()->GetXSize(),game::GetCurrentLevel()->GetYSize());
     while(iMapTileSizeMax*v2KnownDungeonSize.X > RES.X*0.9)iMapTileSizeMax--;
@@ -2049,6 +2096,7 @@ void game::DrawMapOverlay(bitmap* buffer)
 
     // prepare notes
     int iMult=(iFinalMapScaling>0?iFinalMapScaling:1);
+    iMapTileScreenSize = iMapTileSize * iMult;
     for(int i=0;i<vMapNotes.size();i++){
       vMapNotes[i].scrPos = v2TopLeftFinal+
         (vMapNotes[i].tinyMapPos*iMult) //pos
@@ -2059,7 +2107,7 @@ void game::DrawMapOverlay(bitmap* buffer)
 //      v2MapNotesTopLeft = v2TopLeftFinal+v2(v2MapScrSizeFinal.X,0);
     v2MapTopLeft = v2TopLeftFinal;
     v2MapSize = v2MapScrSizeFinal;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     mobileui::SetMapSourceBounds(v2MapTopLeft.X, v2MapTopLeft.Y,
                                  v2MapSize.X, v2MapSize.Y);
 #endif
@@ -3113,7 +3161,7 @@ void game::DrawEverythingNoBlit(truth AnimationDraw)
 
   UpdateShowItemsAtPos(!bXBRZandFelist); //last thing as this is a temp overlay
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   if(Player->IsEnabled())
   {
     v2 MobileFocus = CalculateScreenCoordinates(Player->GetPos()) + v2(8, 8);
@@ -3854,7 +3902,9 @@ int game::DirectionQuestion(cfestring& Topic, truth RequireAnswer, truth AcceptY
 
     if(Key == KEY_MOUSE_EVENT) {
       auto mc = globalwindowhandler::GetLastMouseEvent();
-      v2 MPos = mc.pos / graphics::GetScale();
+      v2 MPos = mc.IsCanvasCoordinates
+              ? mc.pos
+              : graphics::MapPointerToCanvas(mc.pos);
       auto TPos = game::ScreenCoordinatesToPos(MPos);
       if(mc.btn == 1 && game::PosCurrentlyOnScreen(TPos)) {
         auto v = TPos - PLAYER->GetPos();
@@ -4098,6 +4148,50 @@ truth game::HandleQuitMessage()
 
   if(IsRunning())
   {
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    if(graphics::IsEnhancedPresentation())
+    {
+      if(IsInGetCommand())
+      {
+        festring Prompt = "Do you want to save your game before quitting?";
+        switch(DesktopQuitQuestion(Prompt))
+        {
+         case 0:
+          Save();
+          RemoveSaves(false);
+          break;
+         case 1:
+         {
+          festring Msg = CONST_S("cowardly quit the game");
+          Player->AddScoreEntry(Msg, 0.75);
+          End(Msg, true, false);
+          break;
+         }
+         default:
+          GetCurrentArea()->SendNewDrawRequest();
+          DrawEverything();
+          return false;
+        }
+      }
+      else
+      {
+        festring Prompt = "You can't save at this point. Are you sure you "
+                          "still want to quit?";
+        if(DesktopTruthQuestion(Prompt, 0))
+        {
+          RemoveSaves();
+          RemoveSaves(true, true);
+        }
+        else
+        {
+          GetCurrentArea()->SendNewDrawRequest();
+          DrawEverything();
+          return false;
+        }
+      }
+      return true;
+    }
+#endif
     if(IsInGetCommand())
     {
       switch(Menu(std::vector<bitmap*>(), v2(RES.X >> 1, RES.Y >> 1),
@@ -4339,15 +4433,24 @@ bool game::IsQuestionMode()
   return bQuestionMode || bPositionQuestionMode;
 }
 
-int game::AskForKeyPress(cfestring& Topic)
+int game::AskForKeyPress(cfestring& Topic, truth Modal)
 {
   bQuestionMode=true;
-#ifdef ANDROID
+  truth AdaptiveModal = false;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  AdaptiveModal = Modal && graphics::IsEnhancedPresentation();
+  if(AdaptiveModal)
+    adaptiveui::SetKeyCapturePrompt(Topic.CapitalizeCopy().CStr());
+  else
+    mobileui::SetPrompt(Topic.CapitalizeCopy().CStr());
+#elif defined(ANDROID)
   mobileui::SetPrompt(Topic.CapitalizeCopy().CStr());
 #endif
 
   DrawEverythingNoBlit();
-  FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", Topic.CapitalizeCopy().CStr());
+  if(!AdaptiveModal)
+    FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s",
+                 Topic.CapitalizeCopy().CStr());
   graphics::BlitDBToScreen();
 
   int Key = GET_KEY();
@@ -4358,7 +4461,7 @@ int game::AskForKeyPress(cfestring& Topic)
 
   igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearPrompt();
 #endif
   bQuestionMode=false;
@@ -4397,15 +4500,15 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
   CursorData = RED_CURSOR;
   auto OrigCursorPos = CursorPos;
 
-  if(Handler)
-    Handler(CursorPos);
-
   bool bMapNotesMode = bDrawMapOverlayEnabled && bShowMapNotes;
 
   bPositionQuestionMode=true;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetPrompt(Topic.CStr());
+  mobileui::SetPositionPrompt(true);
 #endif
+  if(Handler)
+    Handler(CursorPos);
   v2 v2PreviousClick=v2(0,0);
   for(;;)
   {
@@ -4422,7 +4525,8 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
     else
       GetCurrentArea()->GetSquare(CursorPos)->SendStrongNewDrawRequest();
 
-    if(specialkeys::IsRequestedEvent(specialkeys::FocusedElementHelp)){
+    if(Key == KEY_SPECIAL
+       || specialkeys::IsRequestedEvent(specialkeys::FocusedElementHelp)){
       bitmap BackGround(RES);
       BackGround.ActivateFastFlag();
       DOUBLE_BUFFER->FastBlit(&BackGround);
@@ -4439,6 +4543,25 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
         "> find downstairs\n"
         "mouse wheel scrolls when the mouse is on the map edge";
 #endif
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+      if(graphics::IsEnhancedPresentation())
+      {
+        msg =
+          "Move the cursor with the keyboard, numpad, controller, or by "
+          "pointing at the map.\n\n"
+          "SELECT TILE or Enter accepts the current tile. BACK or Escape "
+          "returns to Cartography without selecting.\n\n"
+          "The < and > keys cycle through known upstairs and downstairs.";
+        specialkeys::ClearRequest();
+        mobileui::SetScreenText("MAP CURSOR HELP", msg.CStr());
+        graphics::BlitDBToScreen();
+        GET_KEY();
+        mobileui::ClearScreenText();
+        BackGround.FastBlit(DOUBLE_BUFFER);
+        Key = 0;
+        continue;
+      }
+#endif
       specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp, msg);
       BackGround.FastBlit(DOUBLE_BUFFER);
       continue;
@@ -4446,9 +4569,21 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
 
     if(Key == KEY_MOUSE_EVENT) {
       auto mc = globalwindowhandler::GetLastMouseEvent();
-      v2 MPos = mc.pos / graphics::GetScale();
-      auto TPos = game::ScreenCoordinatesToPos(MPos);
-      if(game::PosCurrentlyOnScreen(TPos))
+      v2 MPos = mc.IsCanvasCoordinates
+              ? mc.pos
+              : graphics::MapPointerToCanvas(mc.pos);
+      bool MapPointer = false;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+      MapPointer = mc.IsCanvasCoordinates && bDrawMapOverlayEnabled
+                && graphics::IsEnhancedPresentation();
+#endif
+      const v2 TPos = MapPointer
+        ? game::MapOverlayCoordinatesToPos(MPos)
+        : game::ScreenCoordinatesToPos(MPos);
+      const bool ValidPointerPos = MapPointer
+        ? TPos != ERROR_V2 && GetCurrentArea()->IsValidPos(TPos)
+        : game::PosCurrentlyOnScreen(TPos);
+      if(ValidPointerPos)
       {
         if(mc.IsMotion && TPos.X >= 0 && TPos.Y >= 0 && TPos.X < GetCurrentArea()->GetXSize() && TPos.Y < GetCurrentArea()->GetYSize())
         {
@@ -4563,7 +4698,7 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
     Key = GET_KEY();
   }
   bPositionQuestionMode=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearPrompt();
 #endif
 
@@ -4571,7 +4706,8 @@ v2 game::PositionQuestion(cfestring& Topic, v2 CursorPos, void (*Handler)(v2),
   igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
 
   // for zoom
-  igraph::BlitBackGround(ZoomPos, TILE_V2*iZoomFactor);
+  if(Zoom)
+    igraph::BlitBackGround(ZoomPos, TILE_V2*iZoomFactor);
   SetDoZoom(false);
 
   SetCursorPos(v2(-1, -1));
@@ -4653,6 +4789,12 @@ void game::LookHandler(v2 CursorPos)
     Msg << " You see here a frog eating a magnolia."; //TODO this should trigger some special event and also play a sfx :)
 
   ADD_MESSAGE("%s", Msg.CStr());
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  // PositionQuestion's prompt owns the mobile message panel, so mirror the
+  // changing Look description there instead of leaving it hidden behind the
+  // ordinary gameplay banner.
+  mobileui::SetPromptDetail(Msg.CStr());
+#endif
 
   if(GetSeeWholeMapCheatMode())
     Square->SetMemorizedDescription(OldMemory);
@@ -4730,6 +4872,9 @@ int game::KeyQuestion(cfestring& Message, int DefaultAnswer, int KeyNumber, ...)
   }
   mobileui::SetPrompt(Message.CStr());
   mobileui::SetQuestionChoices(MobileKeys, MobileKeyCount);
+#elif defined(ADAPTIVE_UI)
+  mobileui::SetPrompt(Message.CStr());
+  mobileui::SetQuestionChoices(Key, std::min(KeyNumber, 9));
 #endif
   DrawEverythingNoBlit();
   FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", Message.CStr());
@@ -4751,7 +4896,7 @@ int game::KeyQuestion(cfestring& Message, int DefaultAnswer, int KeyNumber, ...)
       Return = DefaultAnswer;
   }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetQuestionChoices(0, 0);
   mobileui::ClearPrompt();
 #endif
@@ -6032,10 +6177,10 @@ bonesghost* game::CreateGhost()
 int HexToInt(festring fs)
 {
   std::string str = fs.CStr();
-  std::string strHex = str.substr(str.size() -1 -4); // -1 is "\n"
-  int iVal=0;
-  sscanf(strHex.c_str(),"%x",&iVal);
-  return iVal;
+  const size_t Prefix = str.rfind("0x");
+  if(Prefix == std::string::npos)
+    return 0;
+  return static_cast<int>(strtoul(str.c_str() + Prefix + 2, 0, 16));
 }
 
 void game::LoadCustomCommandKeys()
@@ -6146,6 +6291,8 @@ festring IntToHexStr(int i)
 
 festring game::ToCharIfPossible(int i)
 {
+  if(i == -1)
+    return "Unbound";
   switch(i){ // these are above 0xFF 
     //TODO complete this list, if has no #define, use the hexa directly.
     case KEY_UP: 
@@ -6179,6 +6326,197 @@ festring game::ToCharIfPossible(int i)
 void WriteCustomKeyBindingsCfgFile(FILE *fl,festring fsDesc,int iKey){
   fprintf(fl, "\"%s\"=0x%04X\n", fsDesc.CStr(), iKey);
   fflush(fl);
+}
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+static truth DesktopTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
+{
+  bQuestionMode = true;
+  adaptiveui::SetConfirmationPrompt(Prompt.CStr());
+  game::DrawEverythingNoBlit();
+  graphics::BlitDBToScreen();
+
+  truth Accepted = false;
+  for(;;)
+  {
+    const int Key = GET_KEY();
+    if(Key == 'y' || Key == 'Y' || Key == KEY_CONTROLLER_A
+       || Key == OtherKeyForTrue)
+    {
+      Accepted = true;
+      break;
+    }
+    if(Key == 'n' || Key == 'N' || Key == KEY_ESC
+       || Key == KEY_CONTROLLER_B)
+      break;
+  }
+
+  adaptiveui::ClearPrompt();
+  bQuestionMode = false;
+  return Accepted;
+}
+
+static int DesktopQuitQuestion(cfestring& Prompt)
+{
+  bQuestionMode = true;
+  adaptiveui::SetQuitPrompt(Prompt.CStr());
+  game::DrawEverythingNoBlit();
+  graphics::BlitDBToScreen();
+
+  int Choice = 2;
+  for(;;)
+  {
+    const int Key = GET_KEY();
+    if(Key == 'y' || Key == 'Y' || Key == KEY_CONTROLLER_A)
+    {
+      Choice = 0;
+      break;
+    }
+    if(Key == 'n' || Key == 'N' || Key == KEY_CONTROLLER_Y)
+    {
+      Choice = 1;
+      break;
+    }
+    if(Key == KEY_ESC || Key == KEY_CONTROLLER_B)
+      break;
+  }
+
+  adaptiveui::ClearPrompt();
+  bQuestionMode = false;
+  return Choice;
+}
+
+static truth ConfirmDesktopKeyTransfer(cfestring Prompt)
+{
+  bQuestionMode = true;
+  adaptiveui::SetKeyTransferPrompt(Prompt.CStr());
+  game::DrawEverythingNoBlit();
+  graphics::BlitDBToScreen();
+
+  truth Accepted = false;
+  for(;;)
+  {
+    const int Key = GET_KEY();
+    if(Key == KEY_ENTER || Key == KEY_CONTROLLER_A
+       || Key == 'y' || Key == 'Y')
+    {
+      Accepted = true;
+      break;
+    }
+    if(Key == KEY_ESC || Key == KEY_CONTROLLER_B
+       || Key == 'n' || Key == 'N')
+      break;
+  }
+
+  adaptiveui::ClearPrompt();
+  bQuestionMode = false;
+  return Accepted;
+}
+#endif
+
+truth game::ConfigureCustomCommandKey(int CommandIndex)
+{
+  command* SelectedCommand = commandsystem::GetCommand(CommandIndex);
+  if(!SelectedCommand)
+    return false;
+
+  int NewKey = 0;
+  for(;;)
+  {
+    festring Prompt = "Press a new key for \"";
+    Prompt << SelectedCommand->GetDescription() << "\" (currently '"
+           << ToCharIfPossible(SelectedCommand->GetKey())
+           << "').";
+    NewKey = AskForKeyPress(Prompt, true);
+    if(NewKey == KEY_ESC)
+      return false;
+
+    if(NewKey >= 0x20)
+      break;
+  }
+
+  int ConflictCommandIndex = 0;
+  int ConflictMoveIndex = -1;
+  for(int Index = 1; command* Existing = commandsystem::GetCommand(Index);
+      ++Index)
+    if(Index != CommandIndex && Existing->GetKey() == NewKey)
+    {
+      ConflictCommandIndex = Index;
+      break;
+    }
+  if(!ConflictCommandIndex)
+    for(int Index = 0; Index < 8; ++Index)
+      if(GetMoveCommandKey(Index) == NewKey)
+      {
+        ConflictMoveIndex = Index;
+        break;
+      }
+
+  if(ConflictCommandIndex || ConflictMoveIndex >= 0)
+  {
+    const festring ConflictDescription = ConflictCommandIndex
+      ? commandsystem::GetCommand(ConflictCommandIndex)->GetDescription()
+      : GetMoveKeyDesc(ConflictMoveIndex);
+    festring ConflictPrompt = "The key '";
+    ConflictPrompt << ToCharIfPossible(NewKey) << "' is used by \""
+                   << ConflictDescription << "\". Take it for \""
+                   << SelectedCommand->GetDescription()
+                   << "\" and leave the old control unbound?";
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    if(!graphics::IsEnhancedPresentation()
+       || !ConfirmDesktopKeyTransfer(ConflictPrompt))
+      return false;
+#else
+    return false;
+#endif
+  }
+
+  festring FileName = GetUserDataDir() + CUSTOM_KEYS_FILENAME;
+  festring BackupName = FileName + ".bkp";
+  std::ifstream Source(FileName.CStr(), std::ios::binary);
+  std::ofstream Backup(BackupName.CStr(), std::ios::binary);
+  Backup << Source.rdbuf();
+
+  FILE* File = fopen(FileName.CStr(), "wt");
+  if(!File)
+  {
+    ADD_MESSAGE("SYSTEM: could not save custom key bindings.");
+    return false;
+  }
+
+  if(!ivanconfig::IsSetupCustomKeys())
+  {
+    int ExistingMoveKeys[8];
+    for(int Index = 0; Index < 8; ++Index)
+      ExistingMoveKeys[Index] = GetMoveCommandKey(Index);
+    for(int Index = 1; command* Existing = commandsystem::GetCommand(Index);
+        ++Index)
+      Existing->SetCustomKey(Existing->GetKey());
+    for(int Index = 0; Index < 8; ++Index)
+      MoveCustomCommandKey[Index] = ExistingMoveKeys[Index];
+    ivanconfig::EnableCustomKeysForDirectRemap();
+  }
+
+  if(ConflictCommandIndex)
+    commandsystem::GetCommand(ConflictCommandIndex)->SetCustomKey(-1);
+  else if(ConflictMoveIndex >= 0)
+    MoveCustomCommandKey[ConflictMoveIndex] = -1;
+  SelectedCommand->SetCustomKey(NewKey);
+
+  for(int Index = 1; command* Existing = commandsystem::GetCommand(Index);
+      ++Index)
+    WriteCustomKeyBindingsCfgFile(File, Existing->GetDescription(),
+                                  Existing->GetKey());
+  for(int Index = 0; Index < 8; ++Index)
+    WriteCustomKeyBindingsCfgFile(File, GetMoveKeyDesc(Index),
+                                  MoveCustomCommandKey[Index]);
+  fclose(File);
+  ivanconfig::Save();
+
+  ADD_MESSAGE("SYSTEM: %s is now bound to '%s'.",
+              SelectedCommand->GetDescription(),
+              ToCharIfPossible(NewKey).CStr());
+  return true;
 }
 
 /**

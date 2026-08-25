@@ -46,6 +46,9 @@
 #include "specialkeys.h"
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 
 #include "dbgmsgproj.h"
@@ -68,7 +71,7 @@ command::command(truth (*LinkedFunction)(character*), cchar* Description, char K
 int command::GetKey() const
 {
   if(ivanconfig::IsSetupCustomKeys()){
-    if(Key4>0)
+    if(Key4 != 0)
       return Key4;
   }
 
@@ -644,6 +647,10 @@ truth commandsystem::Consume(character* Char, cchar* ConsumeVerb, cchar* Consume
 truth commandsystem::ShowInventory(character* Char)
 {
   itemvector WhichItem;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  adaptiveui::SetInventoryWeights(Char->GetStack()->GetWeight(),
+                                  long(Char->GetCarryingStrength()) * 2500L);
+#endif
   festring Title("Your inventory (total weight: ");
   Title << Char->GetStack()->GetWeight();
   Title << "g)";
@@ -1148,6 +1155,9 @@ truth commandsystem::ShowKeyLayout(character* Who)
   game::TextScreen(Help);
   return false;
 #else
+  uint SelectedControl = 0;
+  for(;;)
+  {
   felist List(CONST_S("Keyboard Layout"));
   List.AddDescription(CONST_S(""));
 
@@ -1155,6 +1165,10 @@ truth commandsystem::ShowKeyLayout(character* Who)
   List.AddDescription("commands are only accessible in wizard mode. Note that the game ");
   List.AddDescription("distinguishes between lowercase and uppercase letters, so if you are ");
   List.AddDescription("experiencing troubles, first check whether you don't have active CapsLock.");
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+    List.AddDescription("Select a command to remap it. Press ESC while choosing a key to cancel.");
+#endif
 
   List.AddDescription(CONST_S(""));
 
@@ -1192,6 +1206,7 @@ truth commandsystem::ShowKeyLayout(character* Who)
   }
 
   std::vector<int> Keys;
+  std::vector<int> CommandIndices;
 
   for(int c = 1; GetCommand(c); ++c)
     if(!GetCommand(c)->IsWizardModeFunction())
@@ -1201,6 +1216,7 @@ truth commandsystem::ShowKeyLayout(character* Who)
       Buffer.Resize(10);
       List.AddEntry(Buffer + GetCommand(c)->GetDescription(), LIGHT_GRAY, 0, NO_IMAGE, true);
       Keys.push_back(GetCommand(c)->GetKey());
+      CommandIndices.push_back(c);
     }
 
   if(game::WizardModeIsActive())
@@ -1217,20 +1233,35 @@ truth commandsystem::ShowKeyLayout(character* Who)
         Buffer.Resize(10);
         List.AddEntry(Buffer + GetCommand(c)->GetDescription(), LIGHT_GRAY, 0, NO_IMAGE, true);
         Keys.push_back(GetCommand(c)->GetKey());
+        CommandIndices.push_back(c);
       }
   }
 
   game::SetStandardListAttributes(List);
   List.SetAlternateKeyList(Keys);
-  if(Who) List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+  if(Who)
+  {
+    List.AddFlags(SELECTABLE | DONT_SHOW_KEYS);
+    List.SetSelected(SelectedControl);
+  }
   int Result = List.Draw();
   if(Who && Result >= 0 && Result < Keys.size()) {
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    if(graphics::IsEnhancedPresentation())
+    {
+      SelectedControl = Result;
+      if(game::ConfigureCustomCommandKey(CommandIndices[Result]))
+        UpdateMobileActions(Who);
+      continue;
+    }
+#endif
     bool HasActed = false, ValidKeyPressed = false;
     Who->PerformPlayerCommand(Keys[Result], HasActed, ValidKeyPressed);
     return HasActed;
   }
 
   return false;
+  }
 #endif
 }
 
@@ -1863,6 +1894,21 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
     " Position mouse cursor over a map note to edit or delete it.\n"
     " In look mode, clicking on a map note will navigate to that location.\n";
 #endif
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(graphics::IsEnhancedPresentation())
+  {
+    fsHelp.Empty();
+    fsHelp <<
+      "Select a note in the Cartography sidebar or click its numbered "
+      "marker on the map.\n\n"
+      "MOVE CURSOR lets you choose any map tile with the keyboard, numpad, "
+      "controller, or mouse.\n\n"
+      "ADD / EDIT changes the selected note. DELETE NOTE removes it. "
+      "TOGGLE NOTES shows or hides the note list and markers.\n\n"
+      "Every available action shows its current keyboard shortcut. BACK "
+      "returns to the game.";
+  }
+#endif
 
   bitmap BackGround(RES);
   BackGround.ActivateFastFlag();
@@ -1874,7 +1920,7 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 
   if( h && (h->GetLeftArm() || h->GetRightArm()) ){
     if(game::ToggleDrawMapOverlay()){
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       struct mobilemapscope
       {
         mobilemapscope() { mobileui::SetMapScreen(true); }
@@ -1901,7 +1947,20 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
             KEY_ESC, 7, 't', 'l', 'r', 'd', 'e', KEY_SPECIAL, KEY_ESC);
 #endif
 
-        if(specialkeys::IsRequestedEvent(specialkeys::FocusedElementHelp)){
+        if(key == KEY_SPECIAL
+           || specialkeys::IsRequestedEvent(
+                specialkeys::FocusedElementHelp)){
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+          if(graphics::IsEnhancedPresentation())
+          {
+            specialkeys::ClearRequest();
+            mobileui::SetScreenText("CARTOGRAPHY HELP", fsHelp.CStr());
+            graphics::BlitDBToScreen();
+            GET_KEY();
+            mobileui::ClearScreenText();
+            continue;
+          }
+#endif
           specialkeys::ConsumeEvent(specialkeys::FocusedElementHelp,fsHelp);
           continue;
         }
@@ -1947,7 +2006,11 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
 #ifdef ANDROID
                 start=MobileMapCursor;
 #else
-                start=Char->GetPos();
+                {
+                  lsquare* SelectedNote = game::GetHighlightedMapNoteLSquare();
+                  start = SelectedNote ? SelectedNote->GetPos()
+                                       : Char->GetPos();
+                }
 #endif
 
               if(!game::GetCurrentArea()->IsValidPos(start)){
@@ -1958,12 +2021,27 @@ truth commandsystem::ShowMapWork(character* Char,v2* pv2ChoseLocation)
                 return false;
               }
 
-              noteAddPos = game::PositionQuestion(fsMsg, start, NULL, NULL, true); DBGSV2(noteAddPos);
+              truth ShowLegacyCursorZoom = true;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+              if(graphics::IsEnhancedPresentation())
+                ShowLegacyCursorZoom = false;
+#endif
+              noteAddPos = game::PositionQuestion(
+                fsMsg, start, NULL, NULL, ShowLegacyCursorZoom);
+              DBGSV2(noteAddPos);
               if(noteAddPos==ERROR_V2){
 #ifdef ANDROID
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 continue;
 #else
+#ifdef ADAPTIVE_UI
+                if(graphics::IsEnhancedPresentation()
+                   && !bChoseLocationMode)
+                {
+                  BackGround.FastBlit(DOUBLE_BUFFER);
+                  continue;
+                }
+#endif
                 game::ToggleDrawMapOverlay();
                 BackGround.FastBlit(DOUBLE_BUFFER);
                 return false; //continue;
@@ -2040,16 +2118,31 @@ std::vector<v2> commandsystem::GetRouteGoOnCopy(){
 
 truth commandsystem::SpawnRoute(character* Char, v2 Pos)
 {
+  if(!Char || game::IsInWilderness())
+  {
+    RouteGoOn.clear();
+    LevelRouteGoOn = 0;
+    v2RouteTarget = v2(0, 0);
+    ADD_MESSAGE("Long-distance routing is not available in the wilderness.");
+    return false;
+  }
+
   std::set<v2> Illegal;
 
   node* Node = Char->GetLevel()->FindRoute(Char->GetPos(), Pos, Illegal, 0, Char);
-  if(Node){
-    RouteGoOn.clear();
-    while(Node->Last)
-    {
-      RouteGoOn.push_back(Node->Pos);
-      Node = Node->Last;
-    }
+  RouteGoOn.clear();
+  if(!Node)
+  {
+    LevelRouteGoOn = 0;
+    v2RouteTarget = v2(0, 0);
+    ADD_MESSAGE("No route found.");
+    return false;
+  }
+
+  while(Node->Last)
+  {
+    RouteGoOn.push_back(Node->Pos);
+    Node = Node->Last;
   }
 
   go* Go = go::Spawn(Char);
@@ -2077,7 +2170,9 @@ truth commandsystem::Go(character* Char)
   } MobileFastWalkPrompt;
 #endif
   int Key;
-  if(LevelRouteGoOn!=Char->GetLevel())
+  if(game::IsInWilderness())
+    v2RouteTarget=v2(0,0);
+  else if(LevelRouteGoOn!=Char->GetLevel())
     v2RouteTarget=v2(0,0);
 
   if(Char->GetPos()==v2RouteTarget) //TODO is near by 1 dist (2 or more may have a wall in-between)
@@ -2181,7 +2276,7 @@ truth commandsystem::EquipmentScreen(character* Char)
   return Char->EquipmentScreen(Char->GetStack(), 0);
 }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
 truth commandsystem::ShowPaperDoll(character*)
 {
   v2 Silhouette = humanoid::GetSilhouetteWhereDefault();
@@ -2734,7 +2829,7 @@ truth commandsystem::IssueCommand(character* Char)
   return game::CommandQuestion();
 }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
 void commandsystem::UpdateMobileActions(character* Char)
 {
   if(!Char)
@@ -2746,6 +2841,7 @@ void commandsystem::UpdateMobileActions(character* Char)
   const int MaximumActions = 48;
   const char* Labels[MaximumActions];
   int Keys[MaximumActions];
+  int DisplayKeys[MaximumActions];
   int Groups[MaximumActions];
   int Count = 0;
 
@@ -2761,6 +2857,7 @@ void commandsystem::UpdateMobileActions(character* Char)
       return;
     Labels[Count] = Label;
     Keys[Count] = KEY_MOBILE_COMMAND_BASE + CommandIndex;
+    DisplayKeys[Count] = CommandToAdd->GetKey();
     Groups[Count] = Group;
     ++Count;
   };
@@ -2864,20 +2961,26 @@ void commandsystem::UpdateMobileActions(character* Char)
   for(size_t Index = 0; Index < vSWCfg.size() && !HasValidSwap; ++Index)
     HasValidSwap = vSWCfg[Index].IsValid();
 
+  const truth CanRead = (Char->CanRead() || game::GetSeeWholeMapCheatMode())
+                     && Inventory->SortedItems(Char, &item::IsReadable)
+                     && (!Square || !Square->IsDark()
+                         || game::GetSeeWholeMapCheatMode());
+  const truth CanCraft = Human && HumanHasUsableArm
+                      && (HasItems
+                          || (Square && Square->GetStack()->GetItems()));
+  item* LastApplied = itLastApplyID ? game::SearchItem(itLastApplyID) : 0;
+
+#ifdef ANDROID
   Add(9, "INVENTORY", mobileui::ACTION_ITEMS, HasItems);
   Add(8, "EQUIPMENT", mobileui::ACTION_ITEMS, CanUseEquipment);
   Add(10, "APPLY", mobileui::ACTION_ITEMS,
       Char->CanApply() && Char->PossessesItem(&item::IsAppliable));
-  item* LastApplied = itLastApplyID ? game::SearchItem(itLastApplyID) : 0;
   Add(11, "APPLY AGAIN", mobileui::ACTION_ITEMS,
       LastApplied && LastApplied->FindCarrier() == Char);
   Add(12, "ZAP", mobileui::ACTION_ITEMS,
       Char->CanZap() && Char->GetAttribute(INTELLIGENCE) >= 5
       && Char->PossessesItem(&item::IsZappable));
-  Add(13, "READ", mobileui::ACTION_ITEMS,
-      (Char->CanRead() || game::GetSeeWholeMapCheatMode())
-      && Inventory->SortedItems(Char, &item::IsReadable)
-      && (!Square || !Square->IsDark() || game::GetSeeWholeMapCheatMode()));
+  Add(13, "READ", mobileui::ACTION_ITEMS, CanRead);
   Add(14, "EAT", mobileui::ACTION_ITEMS, CanEat);
   Add(15, "DRINK", mobileui::ACTION_ITEMS, CanDrink);
   Add(16, "TASTE", mobileui::ACTION_ITEMS, CanDrink);
@@ -2895,6 +2998,39 @@ void commandsystem::UpdateMobileActions(character* Char)
       Human && CanUseEquipment);
   Add(23, "INSCRIBE", mobileui::ACTION_ITEMS,
       Char->CanRead() && HumanHasUsableArm);
+#else
+  // Desktop fills the two-column rail row by row in this order.
+  Add(9, "INVENTORY", mobileui::ACTION_ITEMS, HasItems);
+  Add(8, "EQUIPMENT", mobileui::ACTION_ITEMS, CanUseEquipment);
+  Add(6, "DROP", mobileui::ACTION_ITEMS, HasItems);
+  Add(7, "THROW", mobileui::ACTION_ITEMS, CanThrow);
+  Add(41, "WIELD LEFT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(40, "WIELD RIGHT", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasItems);
+  Add(13, "READ", mobileui::ACTION_ITEMS, CanRead);
+  Add(43, "SWAP SETUP", mobileui::ACTION_ITEMS,
+      Human && CanUseEquipment);
+  Add(25, "CRAFT", mobileui::ACTION_ITEMS, CanCraft);
+  Add(23, "INSCRIBE", mobileui::ACTION_ITEMS,
+      Char->CanRead() && HumanHasUsableArm);
+
+  // Less common item commands follow the primary desktop rows.
+  Add(10, "APPLY", mobileui::ACTION_ITEMS,
+      Char->CanApply() && Char->PossessesItem(&item::IsAppliable));
+  Add(11, "APPLY AGAIN", mobileui::ACTION_ITEMS,
+      LastApplied && LastApplied->FindCarrier() == Char);
+  Add(12, "ZAP", mobileui::ACTION_ITEMS,
+      Char->CanZap() && Char->GetAttribute(INTELLIGENCE) >= 5
+      && Char->PossessesItem(&item::IsZappable));
+  Add(14, "EAT", mobileui::ACTION_ITEMS, CanEat);
+  Add(15, "DRINK", mobileui::ACTION_ITEMS, CanDrink);
+  Add(16, "TASTE", mobileui::ACTION_ITEMS, CanDrink);
+  Add(17, "DIP", mobileui::ACTION_ITEMS,
+      HasDipItem && HasDipDestination);
+  Add(42, "SWAP", mobileui::ACTION_ITEMS,
+      CanUseEquipment && HasValidSwap);
+#endif
 
   truth CanPray = false;
   if(Square && Square->GetDivineMaster() != ATHEIST)
@@ -2913,10 +3049,12 @@ void commandsystem::UpdateMobileActions(character* Char)
   Add(31, "REST", mobileui::ACTION_CHARACTER,
       !Char->StateIsActivated(PANIC));
   Add(29, "PRAY", mobileui::ACTION_CONTEXT, CanPray);
-  Add(25, "CRAFT", mobileui::ACTION_ITEMS,
-      Human && HumanHasUsableArm
-      && (HasItems || (Square && Square->GetStack()->GetItems())));
+#ifdef ANDROID
+  Add(25, "CRAFT", mobileui::ACTION_ITEMS, CanCraft);
   Add(26, "NAME", mobileui::ACTION_CHARACTER,
+#else
+  Add(26, "PET NAME", mobileui::ACTION_CHARACTER,
+#endif
       Char->CanTalk() && HasFollowers);
   Add(27, "ORDER", mobileui::ACTION_CHARACTER,
       Char->CanTalk() && HasFollowers);
@@ -2926,23 +3064,29 @@ void commandsystem::UpdateMobileActions(character* Char)
   Add(2, "FAST WALK", mobileui::ACTION_MOVE, Char->CanMove());
   Add(44, "RUN", mobileui::ACTION_MOVE, Char->CanMove());
 
-  Add(21, "LOOK", mobileui::ACTION_SYSTEM, true);
+  Add(21, "LOOK", mobileui::ACTION_CONTEXT, true);
   Add(22, "MAP", mobileui::ACTION_SYSTEM,
       Human && HumanHasUsableArm);
   Add(34, "HISTORY", mobileui::ACTION_SYSTEM, true);
   Add(37, "OPTIONS", mobileui::ACTION_SYSTEM, true);
-  Add(38, "HELP", mobileui::ACTION_SYSTEM, true);
+  Add(38, "CONTROLS", mobileui::ACTION_SYSTEM, true);
   Add(39, "SKILLS", mobileui::ACTION_CHARACTER, true);
+#ifdef ANDROID
   if(Human && Count < MaximumActions)
   {
     Labels[Count] = "BODY STATUS";
     Keys[Count] = KEY_MOBILE_PAPER_DOLL;
+    DisplayKeys[Count] = KEY_MOBILE_PAPER_DOLL;
     Groups[Count] = mobileui::ACTION_CHARACTER;
     ++Count;
   }
+#endif
   Add(32, "SAVE", mobileui::ACTION_SYSTEM, true);
 
   mobileui::SetActions(Labels, Keys, Groups, Count);
+#ifdef ADAPTIVE_UI
+  adaptiveui::SetActionShortcuts(DisplayKeys, Count);
+#endif
 }
 #endif
 

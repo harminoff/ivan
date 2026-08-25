@@ -32,6 +32,9 @@
 
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 
 felist msgsystem::MessageHistory(CONST_S("Message history"), WHITE, 128);
@@ -145,7 +148,7 @@ void msgsystem::AddMessage(cchar* Format, ...)
   MessageHistory.SetSelected(MessageHistory.GetLastEntryIndex());
   LastMessageLines = Chapter.size();
   MessagesChanged = true;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetLog(Buffer.CStr());
 #endif
 }

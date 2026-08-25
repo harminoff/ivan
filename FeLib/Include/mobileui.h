@@ -53,6 +53,8 @@ namespace mobileui
   void SetLog(const char* Message);
   void SetPrompt(const char* Prompt, const char* Input = 0,
                  bool Numeric = false);
+  void SetPromptDetail(const char* Detail);
+  void SetPositionPrompt(bool Active);
   void ClearPrompt();
   void SetPaperDollScreen(bool Active, int X = 0, int Y = 0,
                           int Width = 0, int Height = 0);

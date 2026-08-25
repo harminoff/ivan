@@ -31,6 +31,9 @@
 #ifdef ANDROID
 #include "mobileui.h"
 #endif
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+#endif
 #include "error.h"
 #include "rawbit.h"
 #include "felist.h"
@@ -107,7 +110,22 @@ bitmap* graphics::StretchedBuffer=NULL; //this is actually a 3rd buffer...
 v2 graphics::Res;
 int graphics::Scale;
 int graphics::ColorDepth;
+v2 graphics::OutputRes;
+graphics::presentationmode graphics::Presentation = graphics::PRESENTATION_CLASSIC;
 rawbitmap* graphics::DefaultFont = 0;
+
+#if defined(USE_SDL) && SDL_MAJOR_VERSION == 2 \
+    && defined(WIN32) && !defined(ANDROID)
+namespace
+{
+  SDL_Thread* ControllerInitThread = 0;
+
+  int InitControllerSubsystem(void*)
+  {
+    return SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+  }
+}
+#endif
 
 void graphics::Init()
 {
@@ -122,7 +140,9 @@ void graphics::Init()
       ABORT("Can't initialize SDL.");
 #if SDL_MAJOR_VERSION == 2
   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+#if !defined(WIN32) || defined(ANDROID)
   SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+#endif
 #endif
 #endif
 
@@ -136,6 +156,15 @@ void graphics::Init()
 
 void graphics::DeInit()
 {
+#if defined(USE_SDL) && SDL_MAJOR_VERSION == 2 \
+    && defined(WIN32) && !defined(ANDROID)
+  if(ControllerInitThread)
+  {
+    SDL_WaitThread(ControllerInitThread, 0);
+    ControllerInitThread = 0;
+  }
+#endif
+
   delete DefaultFont;
   DefaultFont = 0;
 
@@ -170,6 +199,7 @@ void graphics::DeInit()
 #ifdef USE_SDL
 
 bool bAllowMouseInFullScreen=false;
+v2 LastEnhancedWindowedSize(1440, 810);
 void graphics::SetAllowMouseInFullScreen(bool b)
 {
   bAllowMouseInFullScreen=b;
@@ -179,6 +209,31 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
                        v2 NewRes, int NewScale, int ScalingQuality,
                        truth FullScreen)
 {
+  SetMode(Title, IconName, NewRes, NewRes, NewScale, ScalingQuality,
+          FullScreen, PRESENTATION_CLASSIC);
+}
+
+#ifdef USE_SDL
+void graphics::StartControllerDiscovery()
+{
+#if SDL_MAJOR_VERSION == 2 && defined(WIN32) && !defined(ANDROID)
+  if(!ControllerInitThread
+     && !(SDL_WasInit(SDL_INIT_GAMECONTROLLER) & SDL_INIT_GAMECONTROLLER))
+    ControllerInitThread = SDL_CreateThread(InitControllerSubsystem,
+                                            "controller-discovery", 0);
+#endif
+}
+#endif
+
+void graphics::SetMode(cchar* Title, cchar* IconName,
+                       v2 CanvasRes, v2 OutputSize,
+                       int NewScale, int ScalingQuality,
+                       truth FullScreen, presentationmode Mode)
+{
+  Presentation = Mode;
+  Res = CanvasRes;
+  OutputRes = OutputSize;
+
 #if SDL_MAJOR_VERSION == 1
   if(IconName)
   {
@@ -212,17 +267,22 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
   Flags |= SDL_WINDOW_ALLOW_HIGHDPI|SDL_WINDOW_HIDDEN;
 #ifdef ANDROID
   Flags |= SDL_WINDOW_RESIZABLE;
+#elif defined(ADAPTIVE_UI)
+  if(Mode == PRESENTATION_ENHANCED)
+    Flags |= SDL_WINDOW_RESIZABLE;
 #endif
 
-  int WindowWidth = NewRes.X;
-  int WindowHeight = NewRes.Y;
+  int WindowWidth = Mode == PRESENTATION_ENHANCED
+                  ? OutputSize.X : CanvasRes.X;
+  int WindowHeight = Mode == PRESENTATION_ENHANCED
+                   ? OutputSize.Y : CanvasRes.Y;
 #ifdef ANDROID
   const char* AndroidWidth = getenv("IVAN_SCREEN_WIDTH");
   const char* AndroidHeight = getenv("IVAN_SCREEN_HEIGHT");
   if(AndroidWidth && AndroidHeight)
   {
-    WindowWidth = std::max(NewRes.X, atoi(AndroidWidth));
-    WindowHeight = std::max(NewRes.Y, atoi(AndroidHeight));
+    WindowWidth = std::max(CanvasRes.X, atoi(AndroidWidth));
+    WindowHeight = std::max(CanvasRes.Y, atoi(AndroidHeight));
   }
 #endif
   Window = SDL_CreateWindow(Title,
@@ -232,6 +292,19 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
 
   if(!Window)
     ABORT("Couldn't set video mode.");
+
+#ifdef ADAPTIVE_UI
+  if(Mode == PRESENTATION_ENHANCED)
+  {
+    LastEnhancedWindowedSize = OutputSize;
+    SDL_SetWindowMinimumSize(Window, 960, 540);
+  }
+#endif
+
+#ifdef ADAPTIVE_UI
+  if(Mode == PRESENTATION_ENHANCED && !FullScreen)
+    LastEnhancedWindowedSize = v2(WindowWidth, WindowHeight);
+#endif
 
   if(IconName)
   {
@@ -246,15 +319,18 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
   if(!Renderer)
     ABORT("Couldn't set renderer mode.");
 
-#ifndef ANDROID
-  SDL_RenderSetLogicalSize(Renderer, NewRes.X, NewRes.Y);
+#if !defined(ANDROID) && !defined(ADAPTIVE_UI)
+  SDL_RenderSetLogicalSize(Renderer, CanvasRes.X, CanvasRes.Y);
+#elif defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(Mode == PRESENTATION_CLASSIC)
+    SDL_RenderSetLogicalSize(Renderer, CanvasRes.X, CanvasRes.Y);
 #else
   // Mobile owns its output-space viewport so it can reserve different control
   // regions in portrait and landscape without resizing IVAN's internal canvas.
   SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
 
-  switch(ScalingQuality){
+  switch(Mode == PRESENTATION_ENHANCED ? 0 : ScalingQuality){
   case 1: SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear"); break;
   default: SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
   }
@@ -262,13 +338,17 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
   Texture = SDL_CreateTexture(Renderer,
                               SDL_PIXELFORMAT_RGB565,
                               SDL_TEXTUREACCESS_STREAMING,
-                              NewRes.X, NewRes.Y);
+                              CanvasRes.X, CanvasRes.Y);
 #endif
 
   globalwindowhandler::Init();
-  DoubleBuffer = new bitmap(NewRes);
-  StretchedBuffer = new bitmap(NewRes); DBG2("StretchedBuffer",StretchedBuffer);
-  Res = NewRes;
+#ifdef ANDROID
+  adaptiveui::SetPlatformMode(adaptiveui::Android);
+#elif defined(ADAPTIVE_UI)
+  adaptiveui::SetPlatformMode(adaptiveui::Desktop);
+#endif
+  DoubleBuffer = new bitmap(CanvasRes);
+  StretchedBuffer = new bitmap(CanvasRes); DBG2("StretchedBuffer",StretchedBuffer);
   SetScale(NewScale);
   ColorDepth = 16;
 
@@ -745,6 +825,18 @@ void graphics::BlitDBToScreen()
     mobileui::DrawBackground(Renderer);
     mobileui::DrawGame(Renderer, Texture);
     mobileui::Draw(Renderer);
+#elif defined(ADAPTIVE_UI)
+    if(Presentation == PRESENTATION_ENHANCED)
+    {
+      const bool Fullscreen = (SDL_GetWindowFlags(Window)
+                               & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+      adaptiveui::UpdateLayout(Renderer, Res.X, Res.Y, Fullscreen);
+      adaptiveui::DrawBackground(Renderer);
+      adaptiveui::DrawGame(Renderer, Texture);
+      adaptiveui::Draw(Renderer);
+    }
+    else
+      SDL_RenderCopy(Renderer, Texture, NULL, NULL);
 #else
     SDL_RenderCopy(Renderer, Texture, NULL, NULL);
 #endif
@@ -772,6 +864,10 @@ void graphics::SetScale(int NewScale)
 #if SDL_MAJOR_VERSION == 1
 #warning Graphics scaling not implemented for SDL v1
 #else
+#ifdef ADAPTIVE_UI
+  if(Presentation == PRESENTATION_ENHANCED)
+    return;
+#endif
 #ifndef ANDROID
   // Scale the window, maintaining its center position.
   v2 WindowPos, OldSize, NewSize = Res * NewScale;
@@ -783,6 +879,63 @@ void graphics::SetScale(int NewScale)
   SDL_RenderSetScale(Renderer, NewScale, NewScale);
 #endif
 #endif
+}
+
+v2 graphics::GetOutputSize()
+{
+#if SDL_MAJOR_VERSION == 2
+  int Width = 0;
+  int Height = 0;
+  if(Renderer)
+    SDL_GetRendererOutputSize(Renderer, &Width, &Height);
+  if(Width <= 0 || Height <= 0)
+    return Res;
+  return v2(Width, Height);
+#else
+  return Res;
+#endif
+}
+
+v2 graphics::MapWindowToOutput(v2 WindowPoint)
+{
+#if SDL_MAJOR_VERSION == 2
+  int WindowWidth = 0;
+  int WindowHeight = 0;
+  SDL_GetWindowSize(Window, &WindowWidth, &WindowHeight);
+  const v2 Output = GetOutputSize();
+  if(WindowWidth <= 0 || WindowHeight <= 0)
+    return WindowPoint;
+  return v2(WindowPoint.X * Output.X / WindowWidth,
+            WindowPoint.Y * Output.Y / WindowHeight);
+#else
+  return WindowPoint;
+#endif
+}
+
+v2 graphics::MapOutputToCanvas(v2 OutputPoint)
+{
+#ifdef ADAPTIVE_UI
+  if(Presentation == PRESENTATION_ENHANCED)
+  {
+    int CanvasX = 0;
+    int CanvasY = 0;
+    if(adaptiveui::MapOutputToCanvas(adaptiveui::GetLayout(),
+                                     OutputPoint.X, OutputPoint.Y,
+                                     Res.X, Res.Y, CanvasX, CanvasY))
+      return v2(CanvasX, CanvasY);
+    return v2(-1, -1);
+  }
+#endif
+  const v2 Output = GetOutputSize();
+  if(Output.X <= 0 || Output.Y <= 0)
+    return OutputPoint;
+  return v2(OutputPoint.X * Res.X / Output.X,
+            OutputPoint.Y * Res.Y / Output.Y);
+}
+
+v2 graphics::MapPointerToCanvas(v2 WindowPoint)
+{
+  return MapOutputToCanvas(MapWindowToOutput(WindowPoint));
 }
 
 void graphics::SwitchMode()
@@ -809,6 +962,32 @@ void graphics::SwitchMode()
   BlitDBToScreen();
 #else
   ulong Flags = SDL_GetWindowFlags(Window);
+#ifdef ADAPTIVE_UI
+  if(Presentation == PRESENTATION_ENHANCED)
+  {
+    if(Flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
+    {
+      SDL_ShowCursor(SDL_ENABLE);
+      SDL_SetWindowFullscreen(Window, 0);
+      if(LastEnhancedWindowedSize.X >= 960
+         && LastEnhancedWindowedSize.Y >= 540)
+        SDL_SetWindowSize(Window, LastEnhancedWindowedSize.X,
+                          LastEnhancedWindowedSize.Y);
+    }
+    else
+    {
+      SDL_GetWindowSize(Window, &LastEnhancedWindowedSize.X,
+                        &LastEnhancedWindowedSize.Y);
+      if(!bAllowMouseInFullScreen)
+        SDL_ShowCursor(SDL_DISABLE);
+      SDL_SetWindowFullscreen(Window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    }
+    BlitDBToScreen();
+    if(SwitchModeHandler)
+      SwitchModeHandler();
+    return;
+  }
+#endif
   if(Flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
   {
     SDL_ShowCursor(SDL_ENABLE);

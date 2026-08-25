@@ -1,6 +1,7 @@
 #include "mobileui.h"
 
 #ifdef ANDROID
+#include "adaptiveui.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -113,9 +114,11 @@ namespace
     std::string LogMessage;
     bool PromptActive = false;
     bool PromptGameplay = false;
+    bool PositionPrompt = false;
     bool PromptShowsInput = false;
     bool PromptNumeric = false;
     std::string PromptText;
+    std::string PromptDetail;
     std::string PromptInput;
     bool ScreenTextActive = false;
     std::string ScreenText;
@@ -641,6 +644,21 @@ namespace
       {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
       {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31}
     };
+    static const unsigned char Lowercase[26][7] = {
+      {0,0,14,1,15,17,15}, {16,16,30,17,17,17,30},
+      {0,0,14,16,16,17,14}, {1,1,15,17,17,17,15},
+      {0,0,14,17,31,16,14}, {6,9,8,28,8,8,8},
+      {0,0,15,17,15,1,14}, {16,16,30,17,17,17,17},
+      {4,0,12,4,4,4,14}, {2,0,6,2,2,18,12},
+      {16,16,18,20,24,20,18}, {12,4,4,4,4,4,14},
+      {0,0,26,21,21,17,17}, {0,0,30,17,17,17,17},
+      {0,0,14,17,17,17,14}, {0,0,30,17,30,16,16},
+      {0,0,15,17,15,1,1}, {0,0,22,25,16,16,16},
+      {0,0,15,16,14,1,30}, {8,8,28,8,8,9,6},
+      {0,0,17,17,17,19,13}, {0,0,17,17,17,10,4},
+      {0,0,17,17,21,21,10}, {0,0,17,10,4,10,17},
+      {0,0,17,17,15,1,14}, {0,0,31,2,4,8,31}
+    };
     static const unsigned char Digits[10][7] = {
       {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14},
       {14,17,1,2,4,8,31}, {30,1,1,14,1,1,30},
@@ -660,12 +678,29 @@ namespace
     static const unsigned char Question[7] = {14,17,1,2,4,0,4};
     static const unsigned char Apostrophe[7] = {4,4,8,0,0,0,0};
     static const unsigned char Quote[7] = {10,10,20,0,0,0,0};
+    static const unsigned char Hash[7] = {10,31,10,10,31,10,0};
+    static const unsigned char Dollar[7] = {4,15,20,14,5,30,4};
+    static const unsigned char Ampersand[7] = {12,18,20,8,21,18,13};
+    static const unsigned char Asterisk[7] = {0,21,14,31,14,21,0};
     static const unsigned char LeftParen[7] = {2,4,8,8,8,4,2};
     static const unsigned char RightParen[7] = {8,4,2,2,2,4,8};
     static const unsigned char Percent[7] = {17,2,4,8,16,17,0};
+    static const unsigned char Equals[7] = {0,31,0,31,0,0,0};
+    static const unsigned char Less[7] = {1,2,4,8,4,2,1};
+    static const unsigned char Greater[7] = {16,8,4,2,4,8,16};
+    static const unsigned char LeftBracket[7] = {14,8,8,8,8,8,14};
+    static const unsigned char Backslash[7] = {16,8,8,4,2,2,1};
+    static const unsigned char RightBracket[7] = {14,2,2,2,2,2,14};
+    static const unsigned char Caret[7] = {4,10,17,0,0,0,0};
+    static const unsigned char Grave[7] = {8,4,0,0,0,0,0};
+    static const unsigned char LeftBrace[7] = {2,4,4,8,4,4,2};
+    static const unsigned char Pipe[7] = {4,4,4,4,4,4,4};
+    static const unsigned char RightBrace[7] = {8,4,4,2,4,4,8};
+    static const unsigned char Tilde[7] = {0,0,13,18,0,0,0};
+    static const unsigned char At[7] = {14,17,23,21,23,16,14};
     static const unsigned char Blank[7] = {0,0,0,0,0,0,0};
     if(Character >= 'a' && Character <= 'z')
-      Character = char(Character - 'a' + 'A');
+      return Lowercase[Character - 'a'];
     if(Character >= 'A' && Character <= 'Z')
       return Letters[Character - 'A'];
     if(Character >= '0' && Character <= '9')
@@ -684,9 +719,26 @@ namespace
      case '?': return Question;
      case '\'': return Apostrophe;
      case '"': return Quote;
+     case '#': return Hash;
+     case '$': return Dollar;
+     case '&': return Ampersand;
+     case '*': return Asterisk;
      case '(': return LeftParen;
      case ')': return RightParen;
      case '%': return Percent;
+     case '=': return Equals;
+     case '<': return Less;
+     case '>': return Greater;
+     case '[': return LeftBracket;
+     case '\\': return Backslash;
+     case ']': return RightBracket;
+     case '^': return Caret;
+     case '`': return Grave;
+     case '{': return LeftBrace;
+     case '|': return Pipe;
+     case '}': return RightBrace;
+     case '~': return Tilde;
+     case '@': return At;
     }
     return Blank;
   }
@@ -1115,7 +1167,12 @@ namespace
     std::string VisibleLog = State.LogMessage;
     if(State.PromptActive)
     {
-      VisibleLog = State.PromptText;
+      // A detail string is the complete touch-facing prompt. Look mode uses
+      // it for the current tile description; appending the desktop keyboard
+      // hint (for example, "examine a (c)haracter") wastes a row and exposes
+      // controls that are not present on the direction pad.
+      VisibleLog = State.PromptDetail.empty()
+        ? State.PromptText : State.PromptDetail;
       if(State.PromptShowsInput)
       {
         VisibleLog += "\n> ";
@@ -1599,7 +1656,7 @@ namespace
     else if(Key == KEY_BACK_SPACE)
       snprintf(Buffer, BufferSize, "DELETE");
     else if(Key >= 'a' && Key <= 'z')
-      snprintf(Buffer, BufferSize, "LOW %c", char(Key - 'a' + 'A'));
+      snprintf(Buffer, BufferSize, "LOW %c", char(Key));
     else if(Key >= 'A' && Key <= 'Z')
       snprintf(Buffer, BufferSize, "CAP %c", char(Key));
     else if(Key >= 0x20 && Key < 0x7F)
@@ -1818,7 +1875,7 @@ namespace
     Frame(Renderer, State.Controls);
     Frame(Renderer, State.Toggle);
     const bool ShowChoices = State.QuestionChoiceCount > 0;
-    const bool ShowActions = State.Gameplay
+    const bool ShowActions = State.Gameplay && !State.PromptActive
                           && State.ControlMode == CONTROL_ACTIONS;
     int CurrentGroup = -1;
     if(ShowActions)
@@ -1832,7 +1889,8 @@ namespace
       PromptValueLabel = "VALUE: ";
       PromptValueLabel += State.PromptInput.empty() ? "_" : State.PromptInput;
     }
-    const bool MapCursor = State.MapScreen && State.PromptActive
+    const bool MapCursor = (State.MapScreen || State.PositionPrompt)
+                        && State.PromptActive
                         && State.PromptGameplay && !State.PromptShowsInput
                         && !ShowChoices;
     const char* ToggleLabel = State.PromptNumeric ? PromptValueLabel.c_str()
@@ -2071,6 +2129,7 @@ namespace mobileui
 
   void SetMapFocus(int X, int Y, int PlayerX, int PlayerY)
   {
+    adaptiveui::SetMapFocus(X, Y, PlayerX, PlayerY);
     const bool PlayerMoved = State.HasPlayerMapPosition
       && (State.PlayerMapX != PlayerX || State.PlayerMapY != PlayerY);
     State.MapFocusX = X;
@@ -2090,6 +2149,7 @@ namespace mobileui
   void SetStats(const char* Line1, const char* Line2,
                 const char* Line3, const char* Line4)
   {
+    adaptiveui::SetStats(Line1, Line2, Line3, Line4);
     const char* Lines[4] = { Line1, Line2, Line3, Line4 };
     bool Changed = false;
     for(int Index = 0; Index < 4; ++Index)
@@ -2107,6 +2167,7 @@ namespace mobileui
 
   void SetLog(const char* Message)
   {
+    adaptiveui::SetLog(Message);
     const std::string Value = Message ? Message : "";
     State.LogMessage = Value;
     State.LogVisible = !Value.empty();
@@ -2130,6 +2191,7 @@ namespace mobileui
 
   void SetPrompt(const char* Prompt, const char* Input, bool Numeric)
   {
+    adaptiveui::SetPrompt(Prompt, Input, Numeric);
     const std::string NewPrompt = FormatPromptText(Prompt ? Prompt : "");
     const std::string NewInput = Input ? Input : "";
     const bool ShowsInput = Input != 0;
@@ -2139,7 +2201,10 @@ namespace mobileui
       || State.PromptShowsInput != ShowsInput
       || State.PromptNumeric != Numeric;
     if(!State.PromptActive)
+    {
       State.PromptGameplay = State.Gameplay || State.MapScreen;
+      State.PromptDetail.clear();
+    }
     State.PromptActive = true;
     State.PromptShowsInput = ShowsInput;
     State.PromptNumeric = Numeric;
@@ -2156,15 +2221,42 @@ namespace mobileui
     }
   }
 
+  void SetPromptDetail(const char* Detail)
+  {
+    adaptiveui::SetPromptDetail(Detail);
+    const std::string Value = Detail ? Detail : "";
+    if(State.PromptDetail == Value)
+      return;
+    State.PromptDetail = Value;
+    ConsoleDirty = true;
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type = SDL_USEREVENT;
+    Event.user.code = REDRAW_EVENT_CODE;
+    SDL_PushEvent(&Event);
+  }
+
+  void SetPositionPrompt(bool Active)
+  {
+    adaptiveui::SetPositionPrompt(Active);
+    if(State.PositionPrompt == Active)
+      return;
+    State.PositionPrompt = Active;
+    ConsoleDirty = true;
+  }
+
   void ClearPrompt()
   {
+    adaptiveui::ClearPrompt();
     if(!State.PromptActive)
       return;
     State.PromptActive = false;
     State.PromptGameplay = false;
+    State.PositionPrompt = false;
     State.PromptShowsInput = false;
     State.PromptNumeric = false;
     State.PromptText.clear();
+    State.PromptDetail.clear();
     State.PromptInput.clear();
     ConsoleDirty = true;
     SDL_Event Event;
@@ -2176,6 +2268,7 @@ namespace mobileui
 
   void SetPaperDollScreen(bool Active, int X, int Y, int Width, int Height)
   {
+    adaptiveui::SetPaperDollScreen(Active, X, Y, Width, Height);
     State.PaperDollScreen = Active;
     State.PaperDollSource = Active
       ? SDL_Rect{ X, Y, Width, Height } : SDL_Rect{ 0, 0, 0, 0 };
@@ -2189,6 +2282,7 @@ namespace mobileui
 
   void SetMapScreen(bool Active)
   {
+    adaptiveui::SetMapScreen(Active);
     if(State.MapScreen == Active)
       return;
     State.MapScreen = Active;
@@ -2210,6 +2304,7 @@ namespace mobileui
 
   void SetMapSourceBounds(int X, int Y, int Width, int Height)
   {
+    adaptiveui::SetMapSourceBounds(X, Y, Width, Height);
     SDL_Rect Bounds = { X, Y, std::max(0, Width), std::max(0, Height) };
     if(State.MapOverlaySource.x == Bounds.x
        && State.MapOverlaySource.y == Bounds.y
@@ -2223,6 +2318,7 @@ namespace mobileui
   void SetMapNotes(const char* const* Notes, const int* X, const int* Y,
                    int Count)
   {
+    adaptiveui::SetMapNotes(Notes, X, Y, Count);
     Count = Clamp(Count, 0, layoutstate::MAX_MAP_NOTES);
     bool Changed = State.MapNoteCount != Count;
     for(int Index = 0; Index < Count; ++Index)
@@ -2247,6 +2343,7 @@ namespace mobileui
 
   void SetScreenText(const char* Value)
   {
+    adaptiveui::SetScreenText(Value);
     std::string Raw = Value ? Value : "";
     static const char TouchHelpHeading[] = "[Android Touch Help:]";
     static const char MapHelpHeading[] = "[Map Touch Help:]";
@@ -2274,6 +2371,7 @@ namespace mobileui
 
   void ClearScreenText()
   {
+    adaptiveui::ClearScreenText();
     if(!State.ScreenTextActive)
       return;
     State.ScreenTextActive = false;
@@ -2285,6 +2383,7 @@ namespace mobileui
   void SetActions(const char* const* Labels, const int* Keys,
                   const int* Groups, int Count)
   {
+    adaptiveui::SetActions(Labels, Keys, Groups, Count);
     Count = Clamp(Count, 0, MAX_MOBILE_ACTIONS);
     bool Changed = State.ActionCount != Count;
     for(int Index = 0; Index < Count; ++Index)
@@ -2312,6 +2411,7 @@ namespace mobileui
 
   void SetQuestionChoices(const int* Keys, int Count)
   {
+    adaptiveui::SetQuestionChoices(Keys, Count);
     Count = Clamp(Count, 0, MAX_QUESTION_CHOICES);
     bool Changed = State.QuestionChoiceCount != Count;
     for(int Index = 0; Index < Count; ++Index)
@@ -2336,6 +2436,7 @@ namespace mobileui
                const char* const* Options, int Count, int Selected,
                int Page, int Pages)
   {
+    adaptiveui::SetMenu(Title, Subtitle, Options, Count, Selected, Page, Pages);
     const std::string NewTitle = Title ? Title : "MENU";
     const bool NewMenu = !State.MenuActive || State.MenuTitle != NewTitle;
     State.MenuActive = true;
@@ -2355,6 +2456,7 @@ namespace mobileui
 
   int PageMenu(int Selected, int Direction, int Count)
   {
+    adaptiveui::PageMenu(Selected, Direction, Count);
     if(State.MenuTitle != "Equipment" || !Direction || Count <= 0
        || State.MenuMaxScrollY <= 0)
       return Selected;
@@ -2372,6 +2474,7 @@ namespace mobileui
 
   void ClearMenu()
   {
+    adaptiveui::ClearMenu();
     State.MenuActive = false;
     State.MenuOptionCount = 0;
     State.MenuSelected = -1;
@@ -3142,7 +3245,8 @@ namespace mobileui
       return Result;
     }
 
-    const bool MapCursor = State.MapScreen && State.PromptActive
+    const bool MapCursor = (State.MapScreen || State.PositionPrompt)
+                        && State.PromptActive
                         && State.PromptGameplay && !State.PromptShowsInput
                         && !State.QuestionChoiceCount;
     if(MapCursor && Contains(State.Toggle, X, Y))
@@ -3225,7 +3329,8 @@ namespace mobileui
       return Result;
     }
 
-    const bool ShowActions = State.ControlMode == CONTROL_ACTIONS;
+    const bool ShowActions = State.ControlMode == CONTROL_ACTIONS
+                          && !State.PromptActive;
     if(ControlIndex >= 0 && !ShowActions)
     {
       if(MapCursor && ControlIndex == 4)

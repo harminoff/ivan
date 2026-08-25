@@ -55,6 +55,9 @@
 #include "graphics.h"
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 #include "rawbit.h"
 #include "save.h"
@@ -80,7 +83,7 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
                           bitmapeditor BitmapEditor)
 {
   bInUse=true;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   // Ordinary Android text screens are fully rendered by the responsive
   // mobile overlay.  Drawing the desktop framebuffer underneath first can
   // consume the action-pad release that opened the screen and leave its
@@ -88,6 +91,13 @@ void iosystem::TextScreen(cfestring& Text, v2 Disp,
   if(GKey && !BitmapEditor)
   {
     mobileui::SetScreenText(Text.CStr());
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    // Present the newly activated desktop story overlay before waiting for
+    // input. Otherwise the previous prompt remains visible and its next click
+    // advances an unseen first page.
+    if(graphics::IsEnhancedPresentation())
+      graphics::BlitDBToScreen();
+#endif
     GET_KEY();
     mobileui::ClearScreenText();
     bInUse=false;
@@ -202,7 +212,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
 
   festring sCopyOfMS;
   festring VeryUnGuruPrintf;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   std::vector<festring> MobileMenuStrings;
   std::vector<const char*> MobileMenuOptions;
   sCopyOfMS = sMS;
@@ -220,7 +230,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
 
   while(!bReady)
   {
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     mobileui::SetMenu("IVAN", "MAIN MENU",
                       MobileMenuOptions.empty() ? 0 : &MobileMenuOptions[0],
                       int(MobileMenuOptions.size()), iSelected, 1, 1);
@@ -228,7 +238,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
     cbitmap* BackGround = NULL;
     if(ExtraMenuGraphics)
       BackGround = vBackGround.size()>iSelected?vBackGround[iSelected]:NULL;
-    else
+    else if(!vBackGround.empty())
       BackGround = vBackGround[0];
 
     if(BackGround){
@@ -379,7 +389,9 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
         mouseclick mc = globalwindowhandler::GetLastMouseEvent();
         if(mc.IsMotion)
         {
-          v2 MPos = mc.pos / graphics::GetScale();
+          v2 MPos = mc.IsCanvasCoordinates
+                  ? mc.pos
+                  : graphics::MapPointerToCanvas(mc.pos);
           int yzero = Pos.Y - CountChars('\r', sMS) * 25;
           if(MPos.Y > yzero && MPos.Y < yzero + 50 * CountChars('\r', sMS))
             iSelected = (MPos.Y - yzero) / 50;
@@ -392,7 +404,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
      }
 
      default:
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       if(k >= KEY_MOBILE_MENU_SELECT_BASE
          && k <= KEY_MOBILE_MENU_SELECT_MAX)
       {
@@ -408,7 +420,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
 #endif
       if(k > 0x30 && k < 0x31 + CountChars('\r', sMS)){
         bMenuIsActive=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
         mobileui::ClearMenu();
 #endif
         return k - 0x31;
@@ -417,7 +429,7 @@ int iosystem::Menu(std::vector<bitmap*> vBackGround, v2 Pos,
   }
 
   bMenuIsActive=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearMenu();
 #endif
   return iSelected;
@@ -459,7 +471,7 @@ int iosystem::StringQuestion(festring& Input,
                              stringkeyhandler StringKeyHandler)
 {
   bInUse=true;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   int MobileInputKeys[3] = { KEY_BACK_SPACE, KEY_ENTER, KEY_ESC };
   mobileui::SetPrompt(Topic.CStr(), Input.CStr());
   mobileui::SetQuestionChoices(MobileInputKeys, AllowExit ? 3 : 2);
@@ -532,7 +544,7 @@ int iosystem::StringQuestion(festring& Input,
                  Color, "%s", Input.CStr());
     FONT->Printf(DOUBLE_BUFFER, v2(Pos.X, Pos.Y + 11),
                  Color, "%*c", CursorPos + 1, '_');
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     mobileui::SetPrompt(Topic.CStr(), Input.CStr());
 #endif
 
@@ -683,6 +695,8 @@ int iosystem::StringQuestion(festring& Input,
 
 #ifdef ANDROID
   SDL_StopTextInput();
+#endif
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetQuestionChoices(0, 0);
   mobileui::ClearPrompt();
 #endif
@@ -744,7 +758,7 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
     DOUBLE_BUFFER->NormalBlit(B);
 
   festring Input;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetPrompt(Topic.CStr(), Input.CStr(), true);
 #endif
   FONT->Printf(DOUBLE_BUFFER, Pos, Color, "%s", Topic.CStr());
@@ -758,7 +772,7 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
                  Color, "%s", Input.CStr());
     FONT->Printf(DOUBLE_BUFFER, v2(Pos.X, Pos.Y + 11),
                  Color, "%*c", CursorPos + 1, '_');
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     mobileui::SetPrompt(Topic.CStr(), Input.CStr(), true);
 #endif
     graphics::BlitDBToScreen();
@@ -785,7 +799,7 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
     {
       if(ReturnZeroOnEsc){
         bInUse=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
         mobileui::ClearPrompt();
 #endif
         return 0;
@@ -830,7 +844,7 @@ long iosystem::NumberQuestion(cfestring& Topic, v2 Pos, col16 Color,
   }
 
   bInUse=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearPrompt();
 #endif
   return atoi(Input.CStr());
@@ -857,7 +871,7 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
 
   long BarValue = StartValue;
   festring Input;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   festring MobileValue;
   MobileValue << StartValue;
   mobileui::SetPrompt(Topic.CStr(), MobileValue.CStr(), true);
@@ -963,7 +977,7 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
     DOUBLE_BUFFER->DrawVerticalLine(Pos.X + 1 + (BarValue - Min)
                                     * 200 / (Max - Min), Pos.Y + 12,
                                     Pos.Y + 18, Color1, true);
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     festring MobileValue;
     if(FirstTime)
       MobileValue << StartValue;
@@ -1045,7 +1059,7 @@ long iosystem::ScrollBarQuestion(cfestring& Topic, v2 Pos,
   }
 
   bInUse=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearPrompt();
 #endif
   return BarValue;
@@ -1090,7 +1104,7 @@ bool iosystem::AlertConfirmMsg(const char* cMsg,std::vector<festring> vfsCritMsg
   sAlertConfirmMsgInst.cMsg=cMsg;
   sAlertConfirmMsgInst.vfsCritMsgs=vfsCritMsgs;
   sAlertConfirmMsgInst.bConfirmMode=bConfirmMode;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   festring MobileMessage = cMsg;
   for(int i = 0; i < vfsCritMsgs.size(); ++i)
     MobileMessage << "\n" << vfsCritMsgs[i];
@@ -1107,7 +1121,7 @@ bool iosystem::AlertConfirmMsg(const char* cMsg,std::vector<festring> vfsCritMsg
 
   bInUse=false;
   sAlertConfirmMsgInst.bShow=false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::SetQuestionChoices(0, 0);
   mobileui::ClearPrompt();
 #endif

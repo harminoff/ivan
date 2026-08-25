@@ -24,7 +24,8 @@
 
 level::level()
 : Room(1, static_cast<room*>(0)), GlobalRainLiquid(0), SunLightEmitation(0),
-  AmbientLuminance(0), SquareStack(0), NightAmbientLuminance(0) { }
+  AmbientLuminance(0), NodeMap(0), WalkabilityMap(0), SquareStack(0),
+  NightAmbientLuminance(0) { }
 void level::SetRoom(int I, room* What) { Room[I] = What; }
 void level::AddToAttachQueue(v2 Pos) { AttachQueue.push_back(Pos); }
 
@@ -42,8 +43,9 @@ level::~level()
 {
   ulong c;
 
-  for(c = 0; c < XSizeTimesYSize; ++c)
-    delete NodeMap[0][c];
+  if(NodeMap)
+    for(c = 0; c < XSizeTimesYSize; ++c)
+      delete NodeMap[0][c];
 
   for(c = 0; c < Room.size(); ++c)
     delete Room[c];
@@ -2499,6 +2501,11 @@ void node::CalculateNextNodes()
 
 node* level::FindRoute(v2 From, v2 To, const std::set<v2>& Illegal, int RequiredWalkability, ccharacter* SpecialMover)
 {
+  if(!NodeMap || !WalkabilityMap
+     || From.X < 0 || From.Y < 0 || From.X >= XSize || From.Y >= YSize
+     || To.X < 0 || To.Y < 0 || To.X >= XSize || To.Y >= YSize)
+    return 0;
+
   node::NodeMap = NodeMap;
   node::RequiredWalkability = RequiredWalkability;
   node::SpecialMover = SpecialMover;
@@ -2511,8 +2518,17 @@ node* level::FindRoute(v2 From, v2 To, const std::set<v2>& Illegal, int Required
     return 0;
 
   for(int x = 0; x < XSize; ++x)
+  {
+    if(!NodeMap[x] || !WalkabilityMap[x])
+      return 0;
+
     for(int y = 0; y < YSize; ++y)
+    {
+      if(!NodeMap[x][y])
+        return 0;
       NodeMap[x][y]->Processed = false;
+    }
+  }
 
   node* Node = NodeMap[From.X][From.Y];
   Node->Last = 0;

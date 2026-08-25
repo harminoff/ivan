@@ -28,6 +28,9 @@
 #include "dbgmsgproj.h"
 #ifdef ANDROID
 #include "mobileui.h"
+#elif defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+namespace mobileui = adaptiveui;
 #endif
 
 const felist* FelistCurrentlyDrawn = 0;
@@ -97,6 +100,10 @@ struct felistentry
   uint ImageKey;
   truth Selectable;
   festring Help;
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  adaptiveui::ItemMetrics ItemMetrics;
+  festring AdaptiveGroup;
+#endif
 };
 
 felistentry::felistentry(cfestring& String, col16 Color,
@@ -330,15 +337,22 @@ uint felist::Draw()
       }
   }
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   // Desktop lists can place up to 26 choices on one page.  Ten comfortably
   // sized rows are a better phone target and keep direct-touch selection
   // reliable in both orientations. Equipment exposes all of its slots to the
   // mobile overlay because that screen supplies its own clipped scroll view.
   const bool MobileEquipmentList = !Description.empty()
                                 && Description[0]->String == "Equipment";
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(MobileEquipmentList)
+    PageLength = std::max(uint(1), uint(Entry.size()));
+  else
+    PageLength = std::min(PageLength, uint(10));
+#else
   if(!MobileEquipmentList)
     PageLength = std::min(PageLength, uint(10));
+#endif
 #endif
 
   for(;;){
@@ -468,9 +482,10 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
   {
     if(FlagsChk != Flags)ABORT("flags changed during felist draw %s %s",std::bitset<16>(FlagsChk).to_string().c_str(), std::bitset<16>(Flags).to_string().c_str());
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     std::vector<std::string> MobileOptionStrings;
     std::vector<const char*> MobileOptions;
+    std::vector<uint> MobileEntryIndices;
     int MobileSelected = -1;
     uint SelectableIndex = 0;
     const bool MobileEquipmentList = !Description.empty()
@@ -478,6 +493,12 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     const bool MobileMessageHistory = !Description.empty()
                                    && Description[0]->String
                                       == "Message history";
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    const std::string DesktopMenuTitle = Description.empty() ? ""
+      : Description[0]->String.CStr();
+    bool DesktopItemGrid = DesktopMenuTitle.find("Your inventory") == 0
+      || DesktopMenuTitle.find("Choose ") == 0;
+#endif
     for(uint EntryIndex = 0; EntryIndex < Entry.size(); ++EntryIndex)
       if(Entry[EntryIndex]->Selectable)
       {
@@ -501,6 +522,7 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
             }
           }
           MobileOptionStrings.push_back(MobileEntry);
+          MobileEntryIndices.push_back(EntryIndex);
         }
         ++SelectableIndex;
       }
@@ -538,6 +560,67 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
 #endif
     graphics::DrawAtDoubleBufferBeforeFelistPage(); // here prevents full dungeon blink
     truth LastEntryVisible = DrawPage(Buffer,&v2FinalPageSize,&vEntryRect);DBGLN;
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    std::vector<std::string> DesktopDetailStrings;
+    std::vector<const char*> DesktopDetails;
+    std::vector<std::string> DesktopGroupStrings;
+    std::vector<const char*> DesktopGroups;
+    std::vector<SDL_Rect> DesktopIconSources;
+    std::vector<adaptiveui::ItemMetrics> DesktopItemMetrics;
+    for(size_t OptionIndex = 0; OptionIndex < MobileEntryIndices.size();
+        ++OptionIndex)
+    {
+      felistentry* MenuEntry = Entry[MobileEntryIndices[OptionIndex]];
+      DesktopItemMetrics.push_back(MenuEntry->ItemMetrics);
+      std::string Detail = MenuEntry->Help.CStr();
+      const size_t Description = Detail.find("\n\n");
+      if(Description != std::string::npos)
+        Detail = Detail.substr(Description + 2);
+      DesktopDetailStrings.push_back(Detail);
+      DesktopGroupStrings.push_back(MenuEntry->AdaptiveGroup.CStr());
+
+      SDL_Rect Source = { 0, 0, 0, 0 };
+      const uint Selectable = PageBegin + uint(OptionIndex);
+      for(size_t RectIndex = 0; RectIndex < vEntryRect.size(); ++RectIndex)
+        if(vEntryRect[RectIndex].iSelectableIndex == Selectable
+           && vEntryRect[RectIndex].bHasImage)
+        {
+          Source.x = std::max(0,
+            vEntryRect[RectIndex].v2ImageTopLeft.X);
+          Source.y = std::max(0,
+            vEntryRect[RectIndex].v2ImageTopLeft.Y);
+          Source.w = std::max(1, v2DefaultEntryImageSize.X);
+          Source.h = std::max(1, v2DefaultEntryImageSize.Y);
+          break;
+        }
+      DesktopIconSources.push_back(Source);
+    }
+    for(size_t Index = 0; Index < DesktopDetailStrings.size(); ++Index)
+    {
+      DesktopDetails.push_back(DesktopDetailStrings[Index].c_str());
+      DesktopGroups.push_back(DesktopGroupStrings[Index].c_str());
+    }
+    if(!MobileEquipmentList
+       && DesktopMenuTitle.find("Equipment menu") != 0)
+      for(size_t Index = 0; Index < DesktopIconSources.size(); ++Index)
+        if(DesktopIconSources[Index].w > 0
+           && DesktopIconSources[Index].h > 0)
+        {
+          DesktopItemGrid = true;
+          break;
+        }
+    adaptiveui::SetMenuPresentation(
+      DesktopDetails.empty() ? 0 : &DesktopDetails[0],
+      DesktopIconSources.empty() ? 0 : &DesktopIconSources[0],
+      int(DesktopDetails.size()), DesktopItemGrid);
+    adaptiveui::SetMenuGroups(
+      DesktopGroups.empty() ? 0 : &DesktopGroups[0],
+      int(DesktopGroups.size()));
+    adaptiveui::SetMenuItemMetrics(
+      DesktopItemMetrics.empty() ? 0 : &DesktopItemMetrics[0],
+      int(DesktopItemMetrics.size()));
+#endif
 
     if(FirstDrawNoFade && iDrawCount == 0){
       JustRedrawEverythingOnce=true;
@@ -650,7 +733,9 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
         mouseclick mc = globalwindowhandler::GetLastMouseEvent();
         if(mc.IsMotion)
         {
-          v2 v2MousePos = mc.pos / graphics::GetScale();
+          v2 v2MousePos = mc.IsCanvasCoordinates
+                        ? mc.pos
+                        : graphics::MapPointerToCanvas(mc.pos);
           uint iSel = GetMouseSelectedEntry(v2MousePos);
           if(iSel!=-1 && Selected!=iSel)
           {
@@ -666,7 +751,9 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
         }
         else if(mc.btn == 1)
         {
-          v2 v2MousePos = mc.pos / graphics::GetScale();
+          v2 v2MousePos = mc.IsCanvasCoordinates
+                        ? mc.pos
+                        : graphics::MapPointerToCanvas(mc.pos);
           uint iSel = GetMouseSelectedEntry(v2MousePos);
           if(iSel != -1)
           {
@@ -684,7 +771,7 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     }
     DBGLN;
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(Pressed >= KEY_MOBILE_MENU_SELECT_BASE
        && Pressed <= KEY_MOBILE_MENU_SELECT_MAX)
     {
@@ -700,9 +787,22 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     if(MobileEquipmentList
        && (Pressed == KEY_PAGE_DOWN || Pressed == KEY_PAGE_UP))
     {
+#ifdef ANDROID
       Selected = mobileui::PageMenu(Selected,
                                     Pressed == KEY_PAGE_DOWN ? 1 : -1,
                                     Selectables);
+#else
+      const uint PageStep = std::max(uint(1), uint(
+        adaptiveui::CalculateEquipmentPageSize(adaptiveui::GetLayout(),
+                                               int(Selectables))));
+      if(Pressed == KEY_PAGE_DOWN)
+        Selected = std::min(Selected + PageStep, Selectables - 1);
+      else if(Selected >= PageStep)
+        Selected -= PageStep;
+      else
+        Selected = 0;
+      BackGround.FastBlit(Buffer);
+#endif
       JustRedrawEverythingOnce = true;
       continue;
     }
@@ -744,6 +844,24 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
       continue;
     }
 
+#endif
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    if(DesktopItemGrid && (Pressed == KEY_LEFT || Pressed == KEY_RIGHT
+                           || Pressed == KEY_UP || Pressed == KEY_DOWN))
+    {
+      const int PageCount = std::min(int(PageLength),
+        std::max(0, int(Selectables - PageBegin)));
+      const int LocalSelected = int(Selected - PageBegin);
+      const int LocalTarget = adaptiveui::NavigateInventoryMenu(
+        LocalSelected, Pressed, PageCount);
+      if(LocalTarget >= 0 && LocalTarget != LocalSelected)
+      {
+        Selected = PageBegin + uint(LocalTarget);
+        JustRedrawEverythingOnce = true;
+      }
+      continue;
+    }
 #endif
 
     if(Pressed == KEY_ESC || Pressed == KEY_CONTROLLER_B) // this here grants will be preferred over everything else below
@@ -962,7 +1080,7 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
   globalwindowhandler::DeInstallControlLoop(FelistDrawController);
 
   FelistCurrentlyDrawn=NULL;DBGLN;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   mobileui::ClearMenu();
 #endif
 
@@ -1022,6 +1140,8 @@ truth felist::DrawPage(bitmap* Buffer, v2* pv2FinalPageSize, std::vector<EntryRe
     int iTLY=LastFillBottom;
     int iWidth = Width - 6;
     int iHeight = -1;
+    v2 v2ImagePos(0, 0);
+    bool bHasImage = false;
 
     truth isTheSelectedOne = bIsSelectable && Selected == i;
 
@@ -1036,6 +1156,8 @@ truth felist::DrawPage(bitmap* Buffer, v2* pv2FinalPageSize, std::vector<EntryRe
         Buffer->Fill(iTLX, LastFillBottom, iWidth, iHeight=20, colBkg);
 
         v2 v2EntryPos = v2(Pos.X + 13, LastFillBottom);
+        v2ImagePos = v2EntryPos;
+        bHasImage = EntryDrawer != 0;
         if(EntryDrawer && IsEntryDrawingAtValidPos(Buffer,v2EntryPos)){
           EntryDrawer(Buffer,
                       v2EntryPos,
@@ -1060,6 +1182,8 @@ truth felist::DrawPage(bitmap* Buffer, v2* pv2FinalPageSize, std::vector<EntryRe
         uint PictureTop = LastFillBottom + ChapterSize * 5 - 9;
 
         v2 v2EntryPos = v2(Pos.X + 13, PictureTop);
+        v2ImagePos = v2EntryPos;
+        bHasImage = EntryDrawer != 0;
 
         for(uint l = 0; l < ChapterSize; ++l)
         {
@@ -1161,6 +1285,8 @@ truth felist::DrawPage(bitmap* Buffer, v2* pv2FinalPageSize, std::vector<EntryRe
       er.iSelectableIndex=i;
       er.v2TopLeft=v2(iTLX, iTLY);
       er.v2BottomRight=(er.v2TopLeft+v2(iWidth,iHeight));
+      er.v2ImageTopLeft=v2ImagePos;
+      er.bHasImage=bHasImage;
       (*pvEntryRect).push_back(er);
     }
 
@@ -1273,6 +1399,34 @@ void felist::SetLastEntryHelp(cfestring Help)
 {
   Entry[Entry.size()-1]->Help=Help;
 }
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+void felist::SetLastEntryAdaptiveGroup(cfestring Group)
+{
+  Entry[Entry.size() - 1]->AdaptiveGroup = Group;
+}
+
+void felist::SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
+                                     truth Armor, truth Weapon,
+                                     truth Shield, int ArmorValue,
+                                     int MinimumDamage, int MaximumDamage,
+                                     int ToHit, int Block, int Enchantment)
+{
+  adaptiveui::ItemMetrics& Metrics = Entry[Entry.size() - 1]->ItemMetrics;
+  Metrics.ItemId = ItemId;
+  Metrics.Present = true;
+  Metrics.Armor = Armor;
+  Metrics.Weapon = Weapon;
+  Metrics.Shield = Shield;
+  Metrics.Weight = Weight;
+  Metrics.ArmorValue = ArmorValue;
+  Metrics.MinimumDamage = MinimumDamage;
+  Metrics.MaximumDamage = MaximumDamage;
+  Metrics.ToHit = ToHit;
+  Metrics.Block = Block;
+  Metrics.Enchantment = Enchantment;
+}
+#endif
 
 void felist::Save(outputfile& SaveFile) const
 {

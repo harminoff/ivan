@@ -600,6 +600,15 @@ void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
                             !(Flags & NO_SPECIAL_INFO));
     int ImageKey = game::AddToItemDrawVector(PileVector[p]);
     Contents.AddEntry(Entry, LIGHT_GRAY, 0, ImageKey);
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+    Contents.SetLastEntryItemMetrics(
+      Item->GetID(), Item->GetWeight(),
+      Item->IsArmor(Viewer), Item->IsWeapon(Viewer),
+      Item->IsShield(Viewer), Item->GetStrengthValue(),
+      Item->GetBaseMinDamage(), Item->GetBaseMaxDamage(),
+      Item->GetBaseToHitValue(), Item->GetBaseBlockValue(),
+      Item->GetEnchantment());
+#endif
     if(!Item->GetDescriptiveInfo().IsEmpty())
       Contents.SetLastEntryHelp(festring()<<Entry<<"\n\n"<<Item->GetDescriptiveInfo());
   }

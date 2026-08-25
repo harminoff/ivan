@@ -31,6 +31,11 @@ class ivanconfig
   static long GetShowItemsAtPlayerSquare(){ return ShowItemsAtPlayerSquare.Value; }
   static long GetStartingWindowWidth() { return iStartingWindowWidth; }
   static long GetStartingWindowHeight() { return iStartingWindowHeight; }
+#ifdef ADAPTIVE_UI
+  static long GetStartingEnhancedWindowWidth() { return iStartingEnhancedWindowWidth; }
+  static long GetStartingEnhancedWindowHeight() { return iStartingEnhancedWindowHeight; }
+  static truth IsEnhancedDesktopUI() { return DesktopUIStyle.Value == 0; }
+#endif
   static long GetFrameSkip() { return FrameSkip.Value; }
   static long GetGoOnStopMode() { return GoOnStopMode.Value; }
   static long GetHoldPosMaxDist() { return HoldPosMaxDist.Value; }
@@ -68,6 +73,8 @@ class ivanconfig
   static int GetStackListPageLength() { return StackListPageLength.Value; }
   static truth GetSmartOpenCloseApply() { return SmartOpenCloseApply.Value; }
   static truth IsSetupCustomKeys() { return SetupCustomKeys.Value; }
+  static void EnableCustomKeysForDirectRemap()
+  { SetupCustomKeys.Value = true; }
   static truth GetBeNice() { return BeNice.Value; }
   static int GetAltListItemPos() { return AltListItemPos.Value; }
   static truth GetPlaySounds() { return PlaySounds.Value; }
@@ -120,6 +127,13 @@ class ivanconfig
   static void HitIndicatorDisplayer(const cycleoption* O, festring& Entry);
   static void WindowWidthDisplayer(const numberoption* O, festring& Entry);
   static void WindowHeightDisplayer(const numberoption* O, festring& Entry);
+#ifdef ADAPTIVE_UI
+  static truth EnhancedWindowWidthChangeInterface(numberoption* O);
+  static truth EnhancedWindowHeightChangeInterface(numberoption* O);
+  static void EnhancedWindowWidthChanger(numberoption* O, long What);
+  static void EnhancedWindowHeightChanger(numberoption* O, long What);
+  static void DesktopUIStyleDisplayer(const cycleoption* O, festring& Entry);
+#endif
   static void StackListPageLengthDisplayer(const numberoption* O, festring& Entry);
   static void DistLimitMagicMushroomsDisplayer(const cycleoption* O, festring& Entry);
   static void FrameSkipDisplayer(const numberoption* O, festring& Entry);
@@ -221,6 +235,14 @@ class ivanconfig
 
   static numberoption WindowHeight;
   static int iStartingWindowHeight;
+
+#ifdef ADAPTIVE_UI
+  static cycleoption DesktopUIStyle;
+  static numberoption EnhancedWindowWidth;
+  static int iStartingEnhancedWindowWidth;
+  static numberoption EnhancedWindowHeight;
+  static int iStartingEnhancedWindowHeight;
+#endif
 
   static cycleoption HoldPosMaxDist;
   static numberoption FrameSkip;
