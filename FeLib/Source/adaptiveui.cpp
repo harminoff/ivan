@@ -36,6 +36,7 @@ namespace
   const int DesktopSidebarFontScale = 2;
   const int DesktopSidebarLineHeight = 16;
   const int DesktopSidebarRowHeight = 54;
+  const int DesktopActionFooterReserve = 38;
   const int DesktopEquipmentMinimumRowHeight = 48;
 
   int Clamp(int Value, int Low, int High)
@@ -1087,6 +1088,7 @@ namespace
            Selected ? 244 : 174, Selected ? 226 : 165,
            Selected ? 171 : 139);
     }
+    SDL_RenderSetClipRect(Renderer, &CurrentLayout.ActionArea);
     for(size_t Index = 0; Index < CurrentLayout.ActionButtons.size(); ++Index)
     {
       const SDL_Rect& Button = CurrentLayout.ActionButtons[Index];
@@ -1131,6 +1133,7 @@ namespace
              Action.Available ? 223 : 117,
              Action.Available ? 198 : 117);
     }
+    SDL_RenderSetClipRect(Renderer, 0);
     if(CurrentLayout.ActionButtons.empty())
       Centered(Renderer, CurrentLayout.ActionArea, "NO ACTIONS", 2,
                150, 140, 110);
@@ -1313,9 +1316,16 @@ namespace
         && Hud.MenuTitle == "Keyboard Layout";
   }
 
+  bool IsHallOfFameMenu()
+  {
+    return Hud.MenuActive && HasGameplayContext()
+        && Hud.MenuTitle == "Adventurers' Hall of Fame";
+  }
+
   bool IsExpandedMainMenu()
   {
-    return IsExpandedHistoryMenu() || IsOptionsMenu() || IsHelpMenu();
+    return IsExpandedHistoryMenu() || IsOptionsMenu() || IsHelpMenu()
+        || IsHallOfFameMenu();
   }
 
   std::string DisplayMenuTitle()
@@ -2321,7 +2331,7 @@ std::string DisplayMenuSubtitle()
       {
         if(Seen++ < CurrentLayout.ActionScroll)
           continue;
-        if(int(CurrentLayout.ActionButtons.size()) >= Capacity)
+        if(int(CurrentLayout.ActionButtonIndices.size()) >= Capacity)
           break;
         CurrentLayout.ActionButtonIndices.push_back(Index);
       }
@@ -2520,7 +2530,8 @@ namespace adaptiveui
                           std::max(1, Result.RailContent.w - 4),
                           std::max(1, Result.RailContent.y
                                         + Result.RailContent.h
-                                        - TabsBottom - 24) };
+                                        - TabsBottom
+                                        - DesktopActionFooterReserve) };
     return Result;
   }
 

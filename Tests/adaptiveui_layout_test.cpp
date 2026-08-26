@@ -14,6 +14,13 @@ namespace
         && A.y < B.y + B.h && B.y < A.y + A.h;
   }
 
+  bool ContainedBy(const SDL_Rect& Inner, const SDL_Rect& Outer)
+  {
+    return Inner.x >= Outer.x && Inner.y >= Outer.y
+        && Inner.x + Inner.w <= Outer.x + Outer.w
+        && Inner.y + Inner.h <= Outer.y + Outer.h;
+  }
+
   void CheckSize(int Width, int Height)
   {
     const adaptiveui::Layout Layout = adaptiveui::CalculateLayout(
@@ -162,7 +169,8 @@ namespace
     {
       Labels[Index] = "SCROLLABLE ACTION";
       Keys[Index] = 700 + Index;
-      Groups[Index] = adaptiveui::ACTION_CONTEXT;
+      Groups[Index] = Index < 13 ? adaptiveui::ACTION_ITEMS
+                                 : adaptiveui::ACTION_CONTEXT;
     }
     Labels[47] = "HISTORY";
     Keys[47] = KEY_MOBILE_COMMAND_BASE + 34;
@@ -170,11 +178,28 @@ namespace
     adaptiveui::SetActions(Labels, Keys, Groups, 48);
     adaptiveui::SetMapFocus(352, 240);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
-    assert(adaptiveui::GetLayout().ActionButtons.size() >= 16);
+    assert(!adaptiveui::GetLayout().ActionButtons.empty());
     assert(adaptiveui::SelectActionCategory(adaptiveui::ACTION_ITEMS));
     assert(adaptiveui::GetLayout().ActiveCategory
            == adaptiveui::ACTION_ITEMS);
-    assert(adaptiveui::GetLayout().ActionButtons.empty());
+    assert(!adaptiveui::GetLayout().ActionButtons.empty());
+    assert(adaptiveui::GetLayout().ActionButtons.size() < 13);
+    for(size_t Index = 0;
+        Index < adaptiveui::GetLayout().ActionButtons.size(); ++Index)
+      assert(ContainedBy(adaptiveui::GetLayout().ActionButtons[Index],
+                         adaptiveui::GetLayout().ActionArea));
+    adaptiveui::PointerResult ItemWheel = adaptiveui::HandlePointer(
+      adaptiveui::GetLayout().ActionArea.x + 5,
+      adaptiveui::GetLayout().ActionArea.y + 5,
+      false, -1, false, 0);
+    assert(ItemWheel.Type == adaptiveui::PointerResult::REDRAW);
+    ItemWheel = adaptiveui::HandlePointer(
+      adaptiveui::GetLayout().ActionArea.x + 5,
+      adaptiveui::GetLayout().ActionArea.y + 5,
+      false, -1, false, 0);
+    assert(ItemWheel.Type == adaptiveui::PointerResult::REDRAW);
+    const adaptiveui::Layout ScrolledItems = adaptiveui::GetLayout();
+    assert(ScrolledItems.ActionButtonIndices.back() == 12);
     assert(adaptiveui::SelectActionCategory(adaptiveui::ACTION_CONTEXT));
     assert(!adaptiveui::GetLayout().ActionButtons.empty());
 
@@ -228,12 +253,13 @@ namespace
       AfterWheel.ActionButtons[0].y + 2,
       true, 0, false, 1);
     assert(Click.Type == adaptiveui::PointerResult::COMMAND_KEY);
-    assert(Click.CommandCode == 702);
+    assert(Click.CommandCode == adaptiveui::GetHudModel().Actions[
+      AfterWheel.ActionButtonIndices[0]].DispatchCode);
 
     const adaptiveui::Layout BeforeEmptyCategory = adaptiveui::GetLayout();
     adaptiveui::PointerResult EmptyCategory = adaptiveui::HandlePointer(
-      BeforeEmptyCategory.ActionTabs[adaptiveui::ACTION_ITEMS].x + 2,
-      BeforeEmptyCategory.ActionTabs[adaptiveui::ACTION_ITEMS].y + 2,
+      BeforeEmptyCategory.ActionTabs[adaptiveui::ACTION_CHARACTER].x + 2,
+      BeforeEmptyCategory.ActionTabs[adaptiveui::ACTION_CHARACTER].y + 2,
       true, 0, false, 1);
     assert(EmptyCategory.Type == adaptiveui::PointerResult::REDRAW);
     assert(adaptiveui::GetLayout().ActionButtons.empty());
@@ -641,6 +667,24 @@ namespace
       true, 0, false, 1);
     assert(CloseHistory.Type == adaptiveui::PointerResult::COMMAND_KEY);
     assert(CloseHistory.CommandCode == KEY_ESC);
+
+    adaptiveui::SetMenu("Adventurers' Hall of Fame", "", Options,
+                        40, -1, 1, 4);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout HallOfFameLayout = adaptiveui::GetLayout();
+    assert(HallOfFameLayout.Menu.x == HallOfFameLayout.MapPanel.x);
+    assert(HallOfFameLayout.Menu.y == HallOfFameLayout.MapPanel.y);
+    assert(HallOfFameLayout.Menu.w == HallOfFameLayout.MapPanel.w);
+    assert(HallOfFameLayout.Menu.h == HallOfFameLayout.MapPanel.h);
+    assert(!Overlaps(HallOfFameLayout.Menu, HallOfFameLayout.Log));
+    assert(!Overlaps(HallOfFameLayout.Menu, HallOfFameLayout.Rail));
+    adaptiveui::PointerResult CloseHallOfFame = adaptiveui::HandlePointer(
+      HallOfFameLayout.MenuBack.x + HallOfFameLayout.MenuBack.w / 2,
+      HallOfFameLayout.MenuBack.y + HallOfFameLayout.MenuBack.h / 2,
+      true, 0, false, 1);
+    assert(CloseHallOfFame.Type
+           == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(CloseHallOfFame.CommandCode == KEY_ESC);
 
     adaptiveui::ClearMenu();
     adaptiveui::SetActions(0, 0, 0, 0);
