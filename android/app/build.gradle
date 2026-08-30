@@ -47,7 +47,7 @@ tasks.register("prepareIvanAssets", Sync) {
         rename { "zlib.txt" }
     }
     doLast {
-        new File(generatedAssets.get().asFile, "content-version.txt").text = "0.59-de528ac-android-5\n"
+        new File(generatedAssets.get().asFile, "content-version.txt").text = "0.59-crafting-tiles-android-6\n"
     }
 }
 
@@ -68,8 +68,8 @@ android {
         applicationId "io.github.harminoff.ivan"
         minSdk 26
         targetSdk 35
-        versionCode 5
-        versionName "0.59-android.5"
+        versionCode 6
+        versionName "0.59-android.6"
 
         externalNativeBuild {
             cmake {

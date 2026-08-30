@@ -6,13 +6,17 @@ https://harminoff.itch.io/ivan-android-unofficial
 
 ## Current release candidate
 
-- Version: `0.59-android.5` (`versionCode` 5)
+- Version: `0.59-android.6` (`versionCode` 6)
 - Application ID: `io.github.harminoff.ivan`
 - Minimum Android version: Android 8.0 / API 26
 - Architectures: `arm64-v8a` and `x86_64`
-- APK: `builds/ivan-android-0.59-android.5.apk` (ignored by Git)
-- APK SHA-256: `F24444E64CD88093F7EFDF7290538FEF88DE4DBDE499449568ED242523CE50C1`
+- APK: `builds/ivan-android-0.59-android.6.apk` (ignored by Git)
+- APK SHA-256: `5E2D7535295AC9F20BF5A9C22BA61763EBF7B219281061C943BB5C788C30F7F3`
 - Signing certificate SHA-256: `966DB1CE3EC261589D8699192D371A8908A3A31959CB4A65E25ED9F71BA539CB`
+
+The matching Windows desktop package is
+`builds/ivan-windows-0.59-crafting-and-tiles.zip` (ignored by Git), with
+SHA-256 `D91782CFA6231260AA0955DC1C7AFE4049B61058B557F05659FDB41A36B6B417`.
 
 The release keystore and recovery information live in the ignored
 `android/signing` directory. Back up that directory securely before publishing;
