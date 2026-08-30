@@ -16,6 +16,9 @@
 #include <vector>
 
 #include "v2.h"
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+#endif
 
 class outputfile;
 class inputfile;
@@ -43,13 +46,29 @@ class felist
   void AddEntry(cfestring&, col16, uint = 0,
                 uint = NO_IMAGE, truth = true);
   void SetLastEntryHelp(cfestring Help);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  void SetAdaptivePresentationKind(adaptiveui::MenuPresentationKind Kind)
+  { PresentationKind = Kind; PresentationKindExplicit = true; }
   void SetLastEntryAdaptiveGroup(cfestring Group);
+  void SetLastEntryAdaptiveAvailable(truth Available);
+  void SetLastEntryItemActions(unsigned int Actions);
   void SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
                                truth Armor, truth Weapon,
-                               truth Shield, int ArmorValue,
+                               truth Shield, truth Equippable, int ArmorValue,
                                int MinimumDamage, int MaximumDamage,
-                               int ToHit, int Block, int Enchantment);
+                               int ToHit, int Block, int Enchantment,
+                               cchar* Accuracy, cchar* Durability,
+                               cchar* BlockQuality, int CategorySkill,
+                               int SpecificSkill, cchar* ItemLabel);
+  void SetLastEntryComparisonMetrics(unsigned long ItemId, long Weight,
+                                     truth Armor, truth Weapon,
+                                     truth Shield, truth Equippable,
+                                     int ArmorValue,
+                                     int MinimumDamage, int MaximumDamage,
+                                     int ToHit, int Block, int Enchantment,
+                                     cchar* Accuracy, cchar* Durability,
+                                     cchar* BlockQuality, int CategorySkill,
+                                     int SpecificSkill, cchar* ItemLabel);
 #endif
   void AddDescription(cfestring&, col16 = WHITE);
   static void SetAllowMouse(bool b);
@@ -127,6 +146,10 @@ class felist
   v2 v2OriginalPos;
   static v2 v2DefaultEntryImageSize;
   std::vector<int> AlternateKeyList;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  adaptiveui::MenuPresentationKind PresentationKind;
+  bool PresentationKindExplicit;
+#endif
 };
 
 #endif

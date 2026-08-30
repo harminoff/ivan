@@ -78,7 +78,9 @@ namespace mobileui = adaptiveui;
 
 #include "dbgmsgproj.h"
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+static truth MobileTruthQuestion(cfestring&, int);
+#elif defined(ADAPTIVE_UI)
 static truth DesktopTruthQuestion(cfestring&, int);
 static int DesktopQuitQuestion(cfestring&);
 #endif
@@ -1261,7 +1263,9 @@ truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForT
   else if(DefaultAnswer != REQUIRES_ANSWER)
     ABORT("Illegal TruthQuestion DefaultAnswer send!");
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+  return MobileTruthQuestion(String, OtherKeyForTrue);
+#elif defined(ADAPTIVE_UI)
   if(graphics::IsEnhancedPresentation())
     return DesktopTruthQuestion(String, OtherKeyForTrue);
 #endif
@@ -4146,6 +4150,18 @@ truth game::HandleQuitMessage()
 {
 #ifdef USE_SDL
 
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(!IsRunning())
+  {
+    if(graphics::IsEnhancedPresentation())
+      return DesktopTruthQuestion(
+        CONST_S("Are you sure you want to quit IVAN?"), 0);
+    return !Menu(std::vector<bitmap*>(), v2(RES.X >> 1, RES.Y >> 1),
+                 CONST_S("Are you sure you want to quit IVAN?\r"),
+                 CONST_S("Yes\rNo\r"), LIGHT_GRAY);
+  }
+#endif
+
   if(IsRunning())
   {
 #if defined(ADAPTIVE_UI) && !defined(ANDROID)
@@ -6328,12 +6344,58 @@ void WriteCustomKeyBindingsCfgFile(FILE *fl,festring fsDesc,int iKey){
   fflush(fl);
 }
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+static truth MobileTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
+{
+  bQuestionMode = true;
+  mobileui::SetConfirmationPrompt(Prompt.CStr());
+  std::string LowerPrompt = Prompt.CStr();
+  std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
+    [](unsigned char Character) { return char(std::tolower(Character)); });
+  if(LowerPrompt.find("continue anyway") != std::string::npos
+     || LowerPrompt.find("still continue") != std::string::npos
+     || LowerPrompt.find("continue? [y/n]") != std::string::npos)
+    mobileui::SetPromptDetail(msgsystem::GetPromptContextMessage().CStr());
+  const int Choices[] = { 'y', 'n' };
+  mobileui::SetQuestionChoices(Choices, 2);
+  if(game::IsRunning())
+    game::DrawEverythingNoBlit();
+  graphics::BlitDBToScreen();
+
+  truth Accepted = false;
+  for(;;)
+  {
+    const int Key = GET_KEY();
+    if(Key == 'y' || Key == 'Y' || Key == KEY_CONTROLLER_A
+       || Key == OtherKeyForTrue)
+    {
+      Accepted = true;
+      break;
+    }
+    if(Key == 'n' || Key == 'N' || Key == KEY_ESC
+       || Key == KEY_CONTROLLER_B)
+      break;
+  }
+
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+  bQuestionMode = false;
+  return Accepted;
+}
+#elif defined(ADAPTIVE_UI)
 static truth DesktopTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
 {
   bQuestionMode = true;
   adaptiveui::SetConfirmationPrompt(Prompt.CStr());
-  game::DrawEverythingNoBlit();
+  std::string LowerPrompt = Prompt.CStr();
+  std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
+    [](unsigned char Character) { return char(std::tolower(Character)); });
+  if(LowerPrompt.find("continue anyway") != std::string::npos
+     || LowerPrompt.find("still continue") != std::string::npos
+     || LowerPrompt.find("continue? [y/n]") != std::string::npos)
+    adaptiveui::SetPromptDetail(msgsystem::GetPromptContextMessage().CStr());
+  if(game::IsRunning())
+    game::DrawEverythingNoBlit();
   graphics::BlitDBToScreen();
 
   truth Accepted = false;
@@ -6462,7 +6524,10 @@ truth game::ConfigureCustomCommandKey(int CommandIndex)
                    << ConflictDescription << "\". Take it for \""
                    << SelectedCommand->GetDescription()
                    << "\" and leave the old control unbound?";
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+    if(!TruthQuestion(ConflictPrompt))
+      return false;
+#elif defined(ADAPTIVE_UI)
     if(!graphics::IsEnhancedPresentation()
        || !ConfirmDesktopKeyTransfer(ConflictPrompt))
       return false;

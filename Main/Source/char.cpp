@@ -35,6 +35,7 @@
 
 #ifdef ANDROID
 #include "mobileui.h"
+#include "adaptiveui.h"
 #elif defined(ADAPTIVE_UI)
 #include "adaptiveui.h"
 namespace mobileui = adaptiveui;
@@ -6402,7 +6403,7 @@ void character::DrawPanel(truth AnimationDraw) const
 
   ++PanelPosY;
 
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   const char* AdaptiveConditions[32];
   int AdaptiveConditionCount = 0;
   if(GetAction() && AdaptiveConditionCount < 32)
@@ -6422,7 +6423,7 @@ void character::DrawPanel(truth AnimationDraw) const
          FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                       (1 << c) & EquipmentState || TemporaryStateCounter[c] >= PERMANENT ? BLUE : WHITE,
                       "%s", StateData[c].Description);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
          if(AdaptiveConditionCount < 32)
            AdaptiveConditions[AdaptiveConditionCount++] = StateData[c].Description;
 #endif
@@ -6435,7 +6436,7 @@ void character::DrawPanel(truth AnimationDraw) const
   {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  HungerStateColors[HungerState], HungerStateStrings[HungerState]);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(AdaptiveConditionCount < 32)
       AdaptiveConditions[AdaptiveConditionCount++] = HungerStateStrings[HungerState];
 #endif
@@ -6448,7 +6449,7 @@ void character::DrawPanel(truth AnimationDraw) const
   {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  BurdenStateColors[BurdenState], BurdenStateStrings[BurdenState]);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(AdaptiveConditionCount < 32)
       AdaptiveConditions[AdaptiveConditionCount++] = BurdenStateStrings[BurdenState];
 #endif
@@ -6461,7 +6462,7 @@ void character::DrawPanel(truth AnimationDraw) const
   {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10),
                  TirednessStateColors[TirednessState], TirednessStateStrings[TirednessState]);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(AdaptiveConditionCount < 32)
       AdaptiveConditions[AdaptiveConditionCount++] = TirednessStateStrings[TirednessState];
 #endif
@@ -6470,7 +6471,7 @@ void character::DrawPanel(truth AnimationDraw) const
   if(game::IsInWilderness() && game::PlayerHasBoat() && IsSwimming())
   {
     FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, "On Ship");
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(AdaptiveConditionCount < 32)
       AdaptiveConditions[AdaptiveConditionCount++] = "ON SHIP";
 #endif
@@ -6483,7 +6484,7 @@ void character::DrawPanel(truth AnimationDraw) const
 
     if(SecondLine[0] != '\0')
       FONT->Printf(DOUBLE_BUFFER, v2(PanelPosX, PanelPosY++ * 10), WHITE, SecondLine);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     if(AdaptiveConditionCount < 32)
       AdaptiveConditions[AdaptiveConditionCount++] = "RUNNING";
 #endif
@@ -6499,7 +6500,7 @@ void character::DrawPanel(truth AnimationDraw) const
   snprintf(MobileLine3, sizeof(MobileLine3), "END %d  PER %d  INT %d  WIS %d",
            GetAttribute(ENDURANCE), GetAttribute(PERCEPTION),
            GetAttribute(INTELLIGENCE), GetAttribute(WISDOM));
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
    snprintf(MobileLine4, sizeof(MobileLine4),
            "WILL %d  CHA %d  HT %d  WT %ld",
            GetAttribute(WILL_POWER), GetAttribute(CHARISMA), GetSize(),
@@ -6511,7 +6512,7 @@ void character::DrawPanel(truth AnimationDraw) const
            Time.Hour, Time.Min, game::GetTurn());
 #endif
    mobileui::SetStats(MobileLine1, MobileLine2, MobileLine3, MobileLine4);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
    adaptiveui::SetConditions(AdaptiveConditions, AdaptiveConditionCount);
    char AdaptiveLocation[128];
    if(game::IsInWilderness())
@@ -9155,7 +9156,7 @@ truth character::TryToChangeEquipment(stack* MainStack, stack* SecStack, int Cho
   else
   {
     game::DrawEverythingNoBlit();
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     adaptiveui::ItemMetrics EquippedMetrics;
     festring EquippedLabel("none");
     if(OldEquipment)
@@ -9174,6 +9175,24 @@ truth character::TryToChangeEquipment(stack* MainStack, stack* SecStack, int Cho
       EquippedMetrics.ToHit = OldEquipment->GetBaseToHitValue();
       EquippedMetrics.Block = OldEquipment->GetBaseBlockValue();
       EquippedMetrics.Enchantment = OldEquipment->GetEnchantment();
+      festring EquippedName;
+      OldEquipment->AddName(EquippedName, INDEFINITE);
+      EquippedMetrics.Label = EquippedName.CStr();
+      if(EquippedMetrics.Weapon)
+      {
+        EquippedMetrics.Accuracy =
+          OldEquipment->GetBaseToHitValueDescription();
+        EquippedMetrics.Durability = OldEquipment->IsBroken()
+          ? "broken" : OldEquipment->GetStrengthValueDescription();
+      }
+      if(EquippedMetrics.Shield)
+        EquippedMetrics.BlockQuality =
+          OldEquipment->GetBaseBlockValueDescription();
+      if(EquippedMetrics.Weapon || EquippedMetrics.Shield)
+      {
+        EquippedMetrics.CategorySkill = GetCWeaponSkillLevel(OldEquipment);
+        EquippedMetrics.SpecificSkill = GetSWeaponSkillLevel(OldEquipment);
+      }
     }
     adaptiveui::SetEquipmentComparison(EquippedLabel.CStr(), EquippedMetrics);
 #endif
@@ -9641,6 +9660,9 @@ void character::ShowAdventureInfo() const
 
 void character::ShowAdventureInfoAlt() const
 {
+  if(game::GetCurrentArea())
+    game::GetCurrentArea()->SendNewDrawRequest();
+  game::DrawEverything();
   while(true) {
     felist List(CONST_S("What do you want to see?"));
     List.AddEntry("n = nothing", LIGHT_GRAY, 0, NO_IMAGE, true);
@@ -11715,7 +11737,7 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
   felist List(CONST_S("Equipment menu [ESC exits]"));
 #endif
   festring Entry;
-#if !defined(ADAPTIVE_UI) || defined(ANDROID)
+#if !defined(ANDROID) && !defined(ADAPTIVE_UI)
   long TotalEquippedWeight;
 #endif
 
@@ -11724,7 +11746,7 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
     List.Empty();
     List.EmptyDescription();
 
-#if !defined(ADAPTIVE_UI) || defined(ANDROID)
+#if !defined(ANDROID) && !defined(ADAPTIVE_UI)
     TotalEquippedWeight = 0;
     for(int c = 0; c < GetEquipments(); ++c) // if equipment exists, add to TotalEquippedWeight
     {
@@ -11735,7 +11757,7 @@ truth character::EquipmentScreen(stack* MainStack, stack* SecStack)
 
     if(IsPlayer())
     {
-#if !defined(ADAPTIVE_UI) || defined(ANDROID)
+#if !defined(ANDROID) && !defined(ADAPTIVE_UI)
       festring Total("Total weight: ");
       Total << TotalEquippedWeight;
       Total << "g";

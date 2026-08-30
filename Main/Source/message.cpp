@@ -40,6 +40,7 @@ namespace mobileui = adaptiveui;
 felist msgsystem::MessageHistory(CONST_S("Message history"), WHITE, 128);
 festring msgsystem::LastMessage;
 festring msgsystem::BigMessage;
+festring msgsystem::PromptContextMessage;
 int msgsystem::Times;
 v2 msgsystem::Begin, msgsystem::End;
 truth msgsystem::Enabled = true;
@@ -50,9 +51,6 @@ int msgsystem::LastMessageLines;
 
 void msgsystem::AddMessage(cchar* Format, ...)
 {
-  if(!Enabled)
-    return;
-
   if(BigMessageMode && BigMessage.GetSize() >= 512)
     LeaveBigMessageMode();
 
@@ -68,10 +66,6 @@ void msgsystem::AddMessage(cchar* Format, ...)
   if(!Buffer.GetSize())
     ABORT("Empty message request!");
 
-#ifndef NOSOUND
-  soundeffects::playSound(Buffer);
-#endif
-
   Buffer.Capitalize();
 
   /* Comment the first line and uncomment the second before the release! */
@@ -80,12 +74,36 @@ void msgsystem::AddMessage(cchar* Format, ...)
     //Buffer << " (this sentence isn't terminated correctly because Hex doesn't know grammar rules)";
     Buffer << '.';
 
+  // Keep the most recently emitted sentence independently of message-history
+  // aggregation.  Questions may be raised while big-message mode is active,
+  // before LastMessage is updated, and need this exact sentence as context.
+  PromptContextMessage = Buffer;
+  PromptContextMessage.EnsureOwnsData();
+
+  // Suppressed game messages still provide the explanation for an immediate
+  // confirmation question.  Keep them out of history and audio, but retain
+  // the completed sentence above so adaptive prompts can show it.
+  if(!Enabled)
+    return;
+
+#ifndef NOSOUND
+  soundeffects::playSound(Buffer);
+#endif
+
   if(BigMessageMode)
   {
     if(BigMessage.GetSize())
       BigMessage << ' ';
 
     BigMessage << Buffer; DBG1(Buffer.CStr());
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    // Big-message mode normally defers publishing until the aggregate is
+    // closed.  A question can be raised before that happens (for example, a
+    // dangerous pickup/equipment warning followed by "Continue anyway?").
+    // Keep the adaptive presentation fed with the newest complete sentence so
+    // the confirmation can display its explanatory context immediately.
+    mobileui::SetLog(Buffer.CStr());
+#endif
     return;
   }
 
@@ -204,6 +222,7 @@ void msgsystem::Format()
 {
   MessageHistory.Empty();
   LastMessage.Empty();
+  PromptContextMessage.Empty();
   MessagesChanged = true;
   BigMessageMode = false;
 }

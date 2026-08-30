@@ -79,6 +79,7 @@ class commandsystem
   static truth Offer(character*);
   static truth Open(character*);
   static truth PickUp(character*);
+  static truth EquipPickedItem(character*, item*);
   static truth Pray(character*);
   static truth Craft(character*);
   static truth Quit(character*);

@@ -22,6 +22,12 @@ class entity;
 typedef std::vector<item*> itemvector;
 typedef std::vector<itemvector> itemvectorvector;
 
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+item* SpawnAdaptiveCategoryIcon(long Category);
+void SetAdaptiveComparisonMetrics(felist& List, ccharacter* Viewer,
+                                  citem* Candidate);
+#endif
+
 /* Stack contains an arbitrary number of items in a linked list, which can
    be browsed using stackiterators like this:
 
@@ -83,8 +89,11 @@ class stack
   int GetVisibleSideItems(ccharacter*, int) const;
   void SetMotherSquare(square* What) { MotherSquare = What; }
   item* DrawContents(ccharacter*, cfestring&, int = 0, sorter = 0) const;
-  int DrawContents(itemvector&, ccharacter*, cfestring&, int = 0, sorter = 0) const;
-  int DrawContents(itemvector&, stack*, ccharacter*, cfestring&, cfestring&, cfestring&, cfestring&, col16, int, sorter = 0) const;
+  int DrawContents(itemvector&, ccharacter*, cfestring&, int = 0,
+                   sorter = 0, long = ANY_CATEGORY) const;
+  int DrawContents(itemvector&, stack*, ccharacter*, cfestring&, cfestring&,
+                   cfestring&, cfestring&, col16, int, sorter = 0,
+                   long = ANY_CATEGORY) const;
   v2 GetPos() const;
   void Clean(truth = false);
   void Save(outputfile&) const;
@@ -159,10 +168,12 @@ class stack
   static void SetStandardPageLength(uint l){ StandardPageLength = l; };
   static uint GetStandardPageLength(){ return StandardPageLength; };
   static uint GetDefaultPageLength(){ return 12; };
-  void AddContentsToList(felist&, ccharacter*, cfestring&, int, int, sorter) const;
+  void AddContentsToList(felist&, ccharacter*, cfestring&, int, int, sorter,
+                         long = ANY_CATEGORY, ulong = 0) const;
  private:
   void RemoveElement(stackslot*);
-  int SearchChosen(itemvector&, ccharacter*, int, int, int, int, sorter = 0) const;
+  int SearchChosen(itemvector&, ccharacter*, int, int, int, int, sorter = 0,
+                   long = ANY_CATEGORY, ulong = 0) const;
   static truth AllowDamage(int, int);
   static int Selected;
   stackslot* Bottom;

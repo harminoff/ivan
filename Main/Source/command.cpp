@@ -46,6 +46,7 @@
 #include "specialkeys.h"
 #ifdef ANDROID
 #include "mobileui.h"
+#include "adaptiveui.h"
 #elif defined(ADAPTIVE_UI)
 #include "adaptiveui.h"
 namespace mobileui = adaptiveui;
@@ -111,7 +112,7 @@ command* commandsystem::Command[] =
   new command(&Eat, "eat", 'e', 'e', 'e', true),
   new command(&Drink, "drink liquid", 'D', 'D', 'D', true),
   new command(&Taste, "taste a bit of liquid", 'T', 'T', 'T', true),
-  new command(&Dip, "dip into liquid", '!', '!', '!', false),
+  new command(&Dip, "dip into liquid", '!', '!', '!', true),
   new command(&Open, "open", 'o', 'O', 'o', false),
   new command(&Close, "close", 'c', 'c', 'c', false),
   new command(&Search, "search", 's', 's', 's', false),
@@ -647,14 +648,15 @@ truth commandsystem::Consume(character* Char, cchar* ConsumeVerb, cchar* Consume
 truth commandsystem::ShowInventory(character* Char)
 {
   itemvector WhichItem;
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   adaptiveui::SetInventoryWeights(Char->GetStack()->GetWeight(),
                                   long(Char->GetCarryingStrength()) * 2500L);
-#endif
+  festring Title("Your inventory");
+#else
   festring Title("Your inventory (total weight: ");
   Title << Char->GetStack()->GetWeight();
   Title << "g)";
-
+#endif
   Char->GetStack()->DrawContents(WhichItem, Char, Title, REMEMBER_SELECTED);
 
   if(WhichItem.empty()) return false;
@@ -819,6 +821,81 @@ truth commandsystem::ShowInventory(character* Char)
   return false;
 }
 
+truth commandsystem::EquipPickedItem(character* Char, item* Item)
+{
+  if(!Char || !Item || !Char->CanUseEquipment())
+    return false;
+
+  const auto EquipInSlot = [&](int Chosen) -> truth
+  {
+    item* OldEquipment = Char->GetEquipment(Chosen);
+    if(OldEquipment)
+    {
+      if(!OldEquipment->CanBeUnEquipped(Chosen))
+      {
+        ADD_MESSAGE("You fail to unequip %s.",
+                    OldEquipment->CHAR_NAME(DEFINITE));
+        return false;
+      }
+      ADD_MESSAGE("You unequip %s.", OldEquipment->CHAR_NAME(DEFINITE));
+      OldEquipment->MoveTo(Char->GetStack());
+    }
+    if(!Item->CanBeEquipped(Chosen))
+    {
+      ADD_MESSAGE("You fail to equip %s.", Item->CHAR_NAME(DEFINITE));
+      return false;
+    }
+    Item->RemoveFromSlot();
+    Char->SetEquipment(Chosen, Item);
+    if(Char->CheckIfEquipmentIsNotUsable(Chosen))
+    {
+      Item->MoveTo(Char->GetStack());
+      return false;
+    }
+    ADD_MESSAGE("You equip %s.", Item->CHAR_NAME(DEFINITE));
+    return true;
+  };
+
+  const auto EquipInEither = [&](int Right, int Left) -> truth
+  {
+    if(!Char->GetEquipment(Right))
+      return EquipInSlot(Right);
+    if(!Char->GetEquipment(Left))
+      return EquipInSlot(Left);
+    const int Choice = game::KeyQuestion(
+      "Equip on the (r)ight or (l)eft?", KEY_ESC, 11,
+      'r', 'R', 'l', 'L', KEY_CONTROLLER_A - 1, KEY_CONTROLLER_A + 1,
+      KEY_LEFT, KEY_RIGHT, KEY_CONTROLLER_X, KEY_CONTROLLER_A,
+      KEY_CONTROLLER_B);
+    switch(Choice)
+    {
+     case 'l': case 'L': case KEY_CONTROLLER_A - 1:
+     case KEY_CONTROLLER_A: case KEY_LEFT:
+      return EquipInSlot(Left);
+     case 'r': case 'R': case KEY_CONTROLLER_A + 1:
+     case KEY_CONTROLLER_B: case KEY_RIGHT:
+      return EquipInSlot(Right);
+     default:
+      return false;
+    }
+  };
+
+  if(Item->IsHelmet(Char)) return EquipInSlot(HELMET_INDEX);
+  if(Item->IsCloak(Char)) return EquipInSlot(CLOAK_INDEX);
+  if(Item->IsAmulet(Char)) return EquipInSlot(AMULET_INDEX);
+  if(Item->IsBodyArmor(Char)) return EquipInSlot(BODY_ARMOR_INDEX);
+  if(Item->IsBelt(Char)) return EquipInSlot(BELT_INDEX);
+  if(Item->IsRing(Char))
+    return EquipInEither(RIGHT_RING_INDEX, LEFT_RING_INDEX);
+  if(Item->IsGauntlet(Char))
+    return EquipInEither(RIGHT_GAUNTLET_INDEX, LEFT_GAUNTLET_INDEX);
+  if(Item->IsBoot(Char))
+    return EquipInEither(RIGHT_BOOT_INDEX, LEFT_BOOT_INDEX);
+  if(Item->IsWeapon(Char) || Item->IsShield(Char))
+    return EquipInEither(RIGHT_WIELDED_INDEX, LEFT_WIELDED_INDEX);
+  return false;
+}
+
 truth commandsystem::PickUp(character* Char)
 {
 
@@ -839,7 +916,22 @@ truth commandsystem::PickUp(character* Char)
       Stack->Pile(PileVector, Char, 3 - c);
   }
 
-  if(PileVector.size() == 1)
+  truth PreviewSingleItem = false;
+#ifdef ANDROID
+  PreviewSingleItem = PileVector.size() == 1 && !PileVector[0].empty();
+#elif defined(ADAPTIVE_UI)
+  if(PileVector.size() == 1 && !PileVector[0].empty())
+  {
+    item* GroundItem = PileVector[0][0];
+    PreviewSingleItem = GroundItem->IsWeapon(Char)
+      || GroundItem->IsArmor(Char)
+      || GroundItem->IsShield(Char)
+      || GroundItem->IsRing(Char)
+      || GroundItem->IsAmulet(Char);
+  }
+#endif
+
+  if(PileVector.size() == 1 && !PreviewSingleItem)
   {
     if(PileVector[0][0]->CanBePickedUp())
     {
@@ -892,7 +984,13 @@ truth commandsystem::PickUp(character* Char)
   {
     itemvector ToPickup;
     game::DrawEverythingNoBlit();
-    Char->GetStackUnder()->DrawContents(ToPickup, Char, CONST_S("What do you want to pick up?"), REMEMBER_SELECTED);
+    const int PickupChoice = Char->GetStackUnder()->DrawContents(
+      ToPickup, Char, CONST_S("What do you want to pick up?"),
+      REMEMBER_SELECTED|NO_CATEGORY_SELECT);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    const int PickupAction = (PickupChoice & FELIST_MOBILE_ACTION_MASK)
+                           >> FELIST_MOBILE_ACTION_SHIFT;
+#endif
 
     if(ToPickup.empty())
       break;
@@ -916,7 +1014,45 @@ truth commandsystem::PickUp(character* Char)
         }
 
         ADD_MESSAGE("%s picked up.", ToPickup[0]->GetName(INDEFINITE, ToPickup.size()).CStr());
+        if(PickupChoice & FELIST_MOBILE_EQUIP_BIT)
+          EquipPickedItem(Char, ToPickup[0]);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+        else
+          switch(PickupAction)
+          {
+           case adaptiveui::ITEM_ACTION_DRINK:
+            if(Char->UsesNutrition() && ToPickup[0]->IsDrinkable(Char)
+               && Char->CheckConsume(CONST_S("drink")))
+              Char->ConsumeItem(ToPickup[0], "drinking", false);
+            break;
+           case adaptiveui::ITEM_ACTION_TASTE:
+            if(Char->UsesNutrition() && ToPickup[0]->IsDrinkable(Char)
+               && Char->CheckConsume(CONST_S("drink")))
+              Char->ConsumeItem(ToPickup[0], "sipping", true);
+            break;
+           case adaptiveui::ITEM_ACTION_EAT:
+            if(Char->UsesNutrition() && ToPickup[0]->IsEatable(Char)
+               && Char->CheckConsume(CONST_S("eat")))
+              Char->ConsumeItem(ToPickup[0], "eating", false);
+            break;
+           case adaptiveui::ITEM_ACTION_READ:
+            if((Char->CanRead() || game::GetSeeWholeMapCheatMode())
+               && ToPickup[0]->IsReadable(Char))
+              Char->ReadItem(ToPickup[0]);
+            break;
+           case adaptiveui::ITEM_ACTION_ZAP:
+            if(ToPickup[0]->IsZappable(Char) && Char->CheckZap())
+              ZapItem(Char, ToPickup[0]);
+            break;
+           case adaptiveui::ITEM_ACTION_APPLY:
+            if(ToPickup[0]->IsAppliable(Char))
+              ApplyWork(Char, ToPickup[0]);
+            break;
+          }
+#endif
         Success = true;
+        if(PreviewSingleItem)
+          break;
       }
     }
     else
@@ -1072,9 +1208,14 @@ truth commandsystem::Dip(character* Char)
   truth HasDipDestination = Char->PossessesItem(&item::IsDipDestination);
   truth DipDestinationNear = false;
 
+  // Potions cannot be used as dip destinations in the wilderness, but
+  // adjacent ocean squares can now provide brine.
+  if(game::IsInWilderness())
+    HasDipDestination = false;
+
   for(int d = 0; d < 9; ++d)
   {
-    lsquare* Square = Char->GetNaturalNeighbourLSquare(d);
+    square* Square = Char->GetNaturalNeighbourSquare(d);
 
     if(Square && Square->IsDipDestination())
       DipDestinationNear = true;
@@ -1097,11 +1238,12 @@ truth commandsystem::Dip(character* Char)
                                         + "? [press a direction key or '.']", false, true);
       v2 Pos = Char->GetPos() + game::GetMoveVector(Dir);
 
-      if(Dir == DIR_ERROR || !Char->GetArea()->IsValidPos(Pos) || !Char->GetNearLSquare(Pos)->IsDipDestination()){
+      if(Dir == DIR_ERROR || !Char->GetArea()->IsValidPos(Pos)
+         || !Char->GetNearSquare(Pos)->IsDipDestination()){
         return false;
       }
 
-      bool b = Char->GetNearLSquare(Pos)->DipInto(Item, Char);
+      bool b = Char->GetNearSquare(Pos)->DipInto(Item, Char);
 
       return b;
     }
@@ -1128,51 +1270,35 @@ truth commandsystem::Dip(character* Char)
 
 truth commandsystem::ShowKeyLayout(character* Who)
 {
-#ifdef ANDROID
-  festring Help = CONST_S(
-    "[Android Touch Help:]\n"
-    "MOVEMENT\n\n"
-    "Tap a direction to move one tile. Hold a direction to keep moving. "
-    "WAIT passes one turn. Pinch the game canvas to zoom in or all the way "
-    "out. Hold, then drag the canvas to look around; moving recenters it.\n\n"
-    "ACTIONS\n\n"
-    "Use the six category icons around the pad: Directions, Context, Items, "
-    "Character, Move, and System. Only actions usable now are shown. Tap MORE "
-    "when a category has another page.\n\n"
-    "MENUS\n\n"
-    "Tap a visible row to choose it. Use the menu controls for paging, "
-    "selection, and Back. Tap the control header to switch between menu "
-    "navigation and directions when a menu asks for a direction.\n\n"
-    "MESSAGES\n\n"
-    "New messages appear above the controls. Hold the message bar to open "
-    "message history.\n\n"
-    "MAP\n\n"
-    "Open Map from System. Use Cursor to move to a tile, then create, edit, or "
-    "delete its note.\n\n"
-    "DISPLAY\n\n"
-    "Controller side, Android status-bar, and vibration options are in "
-    "Configuration.");
-  game::TextScreen(Help);
-  return false;
-#else
   uint SelectedControl = 0;
   for(;;)
   {
   felist List(CONST_S("Keyboard Layout"));
   List.AddDescription(CONST_S(""));
 
+#ifdef ANDROID
+  List.AddDescription("Touch directions move one tile; hold to repeat. Pinch "
+                      "to zoom and hold-drag the map to inspect it.");
+  List.AddDescription("Action tabs expose currently available commands. Tap "
+                      "rows or icons to select them; Back returns one level.");
+  List.AddDescription("Select a command below to remap it for a hardware "
+                      "keyboard. Conflicting bindings require confirmation.");
+#else
   List.AddDescription("IVAN uses most of the keyboard for command key bindings, though some ");
   List.AddDescription("commands are only accessible in wizard mode. Note that the game ");
   List.AddDescription("distinguishes between lowercase and uppercase letters, so if you are ");
   List.AddDescription("experiencing troubles, first check whether you don't have active CapsLock.");
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ADAPTIVE_UI)
   if(graphics::IsEnhancedPresentation())
     List.AddDescription("Select a command to remap it. Press ESC while choosing a key to cancel.");
+#endif
 #endif
 
   List.AddDescription(CONST_S(""));
 
+#ifndef ANDROID
   List.AddDescription(CONST_S("Key       Description"));
+#endif
   List.SetPageLength(24);
   festring Buffer;
 
@@ -1246,8 +1372,13 @@ truth commandsystem::ShowKeyLayout(character* Who)
   }
   int Result = List.Draw();
   if(Who && Result >= 0 && Result < Keys.size()) {
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-    if(graphics::IsEnhancedPresentation())
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+#ifdef ANDROID
+    const bool AdaptiveControls = true;
+#else
+    const bool AdaptiveControls = graphics::IsEnhancedPresentation();
+#endif
+    if(AdaptiveControls)
     {
       SelectedControl = Result;
       if(game::ConfigureCustomCommandKey(CommandIndices[Result]))
@@ -1262,7 +1393,6 @@ truth commandsystem::ShowKeyLayout(character* Who)
 
   return false;
   }
-#endif
 }
 
 void commandsystem::PlayerDiedLookMode(bool bSeeWholeMapCheatMode){
@@ -2402,6 +2532,11 @@ truth commandsystem::Search(character* Char)
 
 truth commandsystem::ShowWorldSeed(character*)
 {
+  if(!game::GetWorldMap())
+  {
+    ADD_MESSAGE("World seed not currently available. Try in the world map.");
+    return false;
+  }
   int Seed = game::GetWorldMap()->GetWorldSeed();
   if(!Seed)
     ADD_MESSAGE("World seed is 0");
@@ -3084,7 +3219,7 @@ void commandsystem::UpdateMobileActions(character* Char)
   Add(32, "SAVE", mobileui::ACTION_SYSTEM, true);
 
   mobileui::SetActions(Labels, Keys, Groups, Count);
-#ifdef ADAPTIVE_UI
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   adaptiveui::SetActionShortcuts(DisplayKeys, Count);
 #endif
 }

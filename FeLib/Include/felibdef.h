@@ -215,8 +215,15 @@ inline int GetMinColor24(col24 Color)
 #define KEY_MOBILE_COMMAND_BASE  0x300 /* command table index is added */
 #define KEY_MOBILE_COMMAND_MAX   0x33F
 #define KEY_MOBILE_MENU_SELECT_BASE 0x400 /* visible list row is added */
-#define KEY_MOBILE_MENU_SELECT_MAX  0x41F
-#define KEY_MOBILE_PAPER_DOLL       0x420
+#define KEY_MOBILE_MENU_SELECT_MAX  0x5FF
+#define KEY_MOBILE_PAPER_DOLL       0x600
+#define KEY_MOBILE_MENU_PREVIEW_BASE 0x700 /* select row without accepting */
+#define KEY_MOBILE_MENU_PREVIEW_MAX  0x8FF
+#define KEY_MOBILE_MENU_EQUIP_BASE   0x900 /* pick up and equip visible row */
+#define KEY_MOBILE_MENU_EQUIP_MAX    0xAFF
+#define KEY_MOBILE_MENU_ACTION_BASE  0xB00 /* action blocks contain visible row */
+#define KEY_MOBILE_MENU_ACTION_STRIDE 0x200
+#define KEY_MOBILE_MENU_ACTION_MAX   0x18FF
 
 #define NO_FLAME 0xFFFF
 
@@ -230,6 +237,9 @@ inline int GetMinColor24(col24 Color)
 /* felist errors */
 
 #define FELIST_ERROR_BIT 0x8000
+#define FELIST_MOBILE_EQUIP_BIT 0x4000
+#define FELIST_MOBILE_ACTION_MASK 0x3800
+#define FELIST_MOBILE_ACTION_SHIFT 11
 #define LIST_WAS_EMPTY 0xFFFF
 #define ESCAPED 0xFFFE
 #define NOTHING_SELECTED 0xFFFD

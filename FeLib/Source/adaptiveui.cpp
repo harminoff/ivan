@@ -109,7 +109,9 @@ namespace
     std::string Prompt = Hud.Prompt;
     std::transform(Prompt.begin(), Prompt.end(), Prompt.begin(),
       [](unsigned char Character) { return char(std::tolower(Character)); });
-    return Prompt.find("continue anyway") != std::string::npos;
+    return Prompt.find("continue anyway") != std::string::npos
+        || Prompt.find("still continue") != std::string::npos
+        || Prompt == "continue? [y/n]";
   }
 
   struct EquipmentRow
@@ -949,7 +951,7 @@ namespace
   {
     Frame(Renderer, CurrentLayout.Dashboard);
     const int HeaderHeight = 4;
-    const int ChipHeight = Hud.Conditions.empty() ? 4 : 18;
+    const int ChipHeight = 4;
     const int ContentTop = CurrentLayout.Dashboard.y + HeaderHeight;
     const int ContentBottom = CurrentLayout.Dashboard.y
                             + CurrentLayout.Dashboard.h - ChipHeight;
@@ -1034,28 +1036,41 @@ namespace
              Value, Scale, 236, 226, 198);
       }
     }
-    int ChipX = CurrentLayout.Dashboard.x + 10;
-    const int ChipY = CurrentLayout.Dashboard.y
-                     + CurrentLayout.Dashboard.h - 16;
+  }
+
+  std::string ConditionLabel(const adaptiveui::StatusIndicator& Indicator)
+  {
+    return Indicator.Label + (Indicator.Value.empty()
+      ? "" : ":" + Indicator.Value);
+  }
+
+  void DrawEquipmentConditions(SDL_Renderer* Renderer)
+  {
+    const SDL_Rect Area = CurrentLayout.EquipmentConditions;
+    if(Hud.Conditions.empty() || Area.w <= 0 || Area.h <= 0)
+      return;
+
+    int X = Area.x;
+    int Y = Area.y + 2;
     for(size_t Index = 0; Index < Hud.Conditions.size(); ++Index)
     {
-      const std::string Label = Hud.Conditions[Index].Label
-                              + (Hud.Conditions[Index].Value.empty()
-                                 ? "" : ":" + Hud.Conditions[Index].Value);
-      const int Width = std::max(30, TextWidth(Label, 1) + 12);
-      if(ChipX + Width > CurrentLayout.Dashboard.x
-                      + CurrentLayout.Dashboard.w - 8)
+      const adaptiveui::StatusIndicator& Indicator = Hud.Conditions[Index];
+      const std::string Label = ConditionLabel(Indicator);
+      const int Width = std::min(Area.w,
+        std::max(30, TextWidth(Label, 1) + 12));
+      if(X != Area.x && X + Width > Area.x + Area.w)
+      {
+        X = Area.x;
+        Y += 18;
+      }
+      if(Y + 14 > Area.y + Area.h)
         break;
-      Fill(Renderer, { ChipX, ChipY, Width, 14 }, 24, 23, 20, 255);
-      Outline(Renderer, { ChipX, ChipY, Width, 14 },
-              Hud.Conditions[Index].Red,
-              Hud.Conditions[Index].Green,
-              Hud.Conditions[Index].Blue);
-      Text(Renderer, ChipX + 6, ChipY + 3, Label, 1,
-           Hud.Conditions[Index].Red,
-           Hud.Conditions[Index].Green,
-           Hud.Conditions[Index].Blue);
-      ChipX += Width + 5;
+      Fill(Renderer, { X, Y, Width, 14 }, 24, 23, 20, 255);
+      Outline(Renderer, { X, Y, Width, 14 },
+              Indicator.Red, Indicator.Green, Indicator.Blue);
+      Text(Renderer, X + 6, Y + 3, Label, 1,
+           Indicator.Red, Indicator.Green, Indicator.Blue);
+      X += Width + 5;
     }
   }
 
@@ -1316,6 +1331,12 @@ namespace
         && Hud.MenuTitle == "Keyboard Layout";
   }
 
+  bool IsCraftingGuideTextPage()
+  {
+    return Hud.MenuActive && HasGameplayContext()
+        && Hud.MenuTitle.find("Crafting guide - ") == 0;
+  }
+
   bool IsHallOfFameMenu()
   {
     return Hud.MenuActive && HasGameplayContext()
@@ -1406,6 +1427,14 @@ std::string DisplayMenuSubtitle()
     return Hud.MenuActive && HasGameplayContext() && Hud.MenuIconGrid;
   }
 
+  bool IsInventoryCategoryMenu()
+  {
+    return IsInventoryGridMenu()
+      && (Hud.MenuTitle == "Inventory categories"
+          || Hud.MenuTitle.find(" - categories") != std::string::npos
+          || Hud.MenuTitle.find(" - material routes") != std::string::npos);
+  }
+
   int HistoryDispatchCode()
   {
     for(size_t Index = 0; Index < Hud.Actions.size(); ++Index)
@@ -1424,10 +1453,22 @@ std::string DisplayMenuSubtitle()
     SDL_Rect Cancel;
   };
 
+  bool HasBlockingPromptDialog()
+  {
+    return Hud.PromptActive && !Hud.PositionPrompt
+        && (Hud.PromptShowsInput || Hud.PromptNumeric
+            || Hud.PromptCapturesKey
+            || Hud.PromptConfirmsKeyTransfer
+            || Hud.PromptConfirmsChoice
+            || Hud.PromptOffersQuitChoices);
+  }
+
   PromptGeometry GetPromptGeometry()
   {
     const int Width = Clamp(CurrentLayout.OutputWidth * 9 / 20, 440, 620);
-    const int Height = Hud.PromptCapturesKey
+    const int Height = Hud.PromptConfirmsChoice
+                       && !Hud.PromptDetail.empty() ? 240
+                     : Hud.PromptCapturesKey
                     || Hud.PromptConfirmsKeyTransfer
                     || Hud.PromptConfirmsChoice
                     || Hud.PromptOffersQuitChoices ? 190 : 156;
@@ -1466,12 +1507,7 @@ std::string DisplayMenuSubtitle()
 
   void DrawPromptDialog(SDL_Renderer* Renderer)
   {
-    if(!Hud.PromptActive || Hud.PositionPrompt
-       || (!Hud.PromptShowsInput && !Hud.PromptNumeric
-            && !Hud.PromptCapturesKey
-            && !Hud.PromptConfirmsKeyTransfer
-            && !Hud.PromptConfirmsChoice
-            && !Hud.PromptOffersQuitChoices))
+    if(!HasBlockingPromptDialog())
       return;
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_BLEND);
     Fill(Renderer, { 0, 0, CurrentLayout.OutputWidth,
@@ -1491,9 +1527,13 @@ std::string DisplayMenuSubtitle()
     if(Hud.PromptCapturesKey || Hud.PromptConfirmsKeyTransfer
        || Hud.PromptConfirmsChoice || Hud.PromptOffersQuitChoices)
     {
+      const std::string PromptText = Hud.PromptConfirmsChoice
+        && !Hud.PromptDetail.empty()
+          ? Hud.PromptDetail + "\n\n" + Hud.Prompt : Hud.Prompt;
       TopWrapped(Renderer, { Input.x, Input.y, Input.w,
-                             Hud.PromptCapturesKey ? 58 : 76 },
-                 Hud.Prompt, 2, 240, 230, 202);
+                             Hud.PromptCapturesKey ? 58
+                               : std::max(76, Dialog.h - 96) },
+                 PromptText, 2, 240, 230, 202);
       if(Hud.PromptCapturesKey)
       {
         SDL_Rect Capture = { Dialog.x + 16, Dialog.y + 112,
@@ -1736,7 +1776,10 @@ std::string DisplayMenuSubtitle()
       if(UsedGridBottom < Geometry.Detail.y)
       {
         Geometry.Detail.y = UsedGridBottom;
-        Geometry.Detail.h = std::max(30, Geometry.Bottom - UsedGridBottom);
+        const int RemainingHeight = std::max(
+          30, Geometry.Bottom - UsedGridBottom);
+        Geometry.Detail.h = IsInventoryCategoryMenu()
+          ? std::min(92, RemainingHeight) : RemainingHeight;
       }
     }
     else
@@ -1843,6 +1886,51 @@ std::string DisplayMenuSubtitle()
     Y += 11;
   }
 
+  void DrawItemMetric(SDL_Renderer* Renderer, int X, int& Y,
+                      const std::string& Label,
+                      const std::string& Value)
+  {
+    if(Value.empty())
+      return;
+    Text(Renderer, X, Y, Label + " " + Value,
+         1, 224, 216, 190);
+    Y += 11;
+  }
+
+  void DrawStandaloneItemMetrics(SDL_Renderer* Renderer, int X, int& Y,
+                                 const adaptiveui::ItemMetrics& Metrics)
+  {
+    if(Metrics.Shield)
+    {
+      DrawItemMetric(Renderer, X, Y, "ARMOR",
+                     std::to_string(Metrics.ArmorValue));
+      DrawItemMetric(Renderer, X, Y, "BLOCK", Metrics.BlockQuality);
+    }
+    else
+    {
+      if(Metrics.Armor)
+        DrawItemMetric(Renderer, X, Y, "ARMOR",
+                       std::to_string(Metrics.ArmorValue));
+      if(Metrics.Weapon)
+      {
+        DrawItemMetric(Renderer, X, Y, "DAMAGE",
+          std::to_string(Metrics.MinimumDamage) + "-"
+            + std::to_string(Metrics.MaximumDamage));
+        DrawItemMetric(Renderer, X, Y, "HIT", Metrics.Accuracy);
+        DrawItemMetric(Renderer, X, Y, "DURABILITY", Metrics.Durability);
+      }
+    }
+    if(Metrics.Enchantment)
+      DrawItemMetric(Renderer, X, Y, "ENCHANT",
+                     std::to_string(Metrics.Enchantment));
+    if(Metrics.CategorySkill || Metrics.SpecificSkill)
+      DrawItemMetric(Renderer, X, Y, "SKILL C/S",
+        std::to_string(Metrics.CategorySkill) + "/"
+          + std::to_string(Metrics.SpecificSkill));
+    DrawItemMetric(Renderer, X, Y, "WEIGHT",
+                   std::to_string(Metrics.Weight) + "G");
+  }
+
   void DrawInventoryGrid(SDL_Renderer* Renderer,
                          const MenuGeometry& Geometry)
   {
@@ -1867,12 +1955,18 @@ std::string DisplayMenuSubtitle()
       const int Index = MenuIndexForDisplayPosition(DisplayIndex);
       const SDL_Rect Cell = InventoryCell(Geometry, DisplayIndex - First);
       const bool Selected = Index == Hud.MenuSelected;
+      const bool Available = Index >= int(Hud.MenuAvailability.size())
+                          || Hud.MenuAvailability[Index] != 0;
       const bool Equipped = Hud.EquipmentComparisonActive
                          && DisplayIndex == 0;
-      Fill(Renderer, Cell, Selected ? 31 : 18, Selected ? 62 : 22,
-           Selected ? 39 : 21, 255);
-      Outline(Renderer, Cell, Selected ? 119 : 62,
-              Selected ? 185 : 53, Selected ? 103 : 39);
+      Fill(Renderer, Cell,
+           Available ? (Selected ? 31 : 18) : (Selected ? 31 : 17),
+           Available ? (Selected ? 62 : 22) : (Selected ? 37 : 18),
+           Available ? (Selected ? 39 : 21) : (Selected ? 33 : 18), 255);
+      Outline(Renderer, Cell,
+              Available ? (Selected ? 119 : 62) : (Selected ? 104 : 51),
+              Available ? (Selected ? 185 : 53) : (Selected ? 103 : 49),
+              Available ? (Selected ? 103 : 39) : (Selected ? 92 : 47));
       if(Equipped)
       {
         const SDL_Rect EquippedOutline = { Cell.x + 2, Cell.y + 2,
@@ -1886,11 +1980,17 @@ std::string DisplayMenuSubtitle()
         const SDL_Rect Icon = { Cell.x + (Cell.w - IconSize) / 2,
                                 Cell.y + (Cell.h - IconSize) / 2,
                                 IconSize, IconSize };
+        if(!Available)
+          SDL_SetTextureColorMod(CurrentMenuTexture, 105, 105, 100);
         SDL_RenderCopy(Renderer, CurrentMenuTexture,
                        &Hud.MenuIconSources[Index], &Icon);
+        if(!Available)
+          SDL_SetTextureColorMod(CurrentMenuTexture, 255, 255, 255);
       }
       else
-        Centered(Renderer, Cell, "?", 2, 181, 169, 143);
+        Centered(Renderer, Cell, "?", 2,
+                 Available ? 181 : 105, Available ? 169 : 101,
+                 Available ? 143 : 94);
     }
 
     Fill(Renderer, Geometry.Detail, 12, 14, 13, 255);
@@ -1901,6 +2001,23 @@ std::string DisplayMenuSubtitle()
       const int Index = Hud.MenuSelected;
       const InventoryLabel Label = ParseInventoryLabel(
         Hud.MenuOptions[Index]);
+      std::string Detail = Index < int(Hud.MenuDetails.size())
+        ? Hud.MenuDetails[Index] : "";
+      std::string ItemDescription;
+      const bool CraftItemMenu = Hud.MenuTitle.find("Craft an item - ") == 0
+        && Hud.MenuTitle.find("categories") == std::string::npos
+        && Hud.MenuTitle.find("material routes") == std::string::npos;
+      const std::string DescriptionMarker = "@ITEM_DESCRIPTION@\n";
+      if(CraftItemMenu && Detail.find(DescriptionMarker) == 0)
+      {
+        const size_t DescriptionEnd = Detail.find("\n\n");
+        if(DescriptionEnd != std::string::npos)
+        {
+          ItemDescription = Detail.substr(DescriptionMarker.size(),
+            DescriptionEnd - DescriptionMarker.size());
+          Detail = Detail.substr(DescriptionEnd + 2);
+        }
+      }
       const int NameScale = 2;
       const std::vector<std::string> NameLines = Wrap(
         Label.Name,
@@ -1914,60 +2031,100 @@ std::string DisplayMenuSubtitle()
           Y += 17)
         Text(Renderer, Left, Y, NameLines[Line],
              NameScale, 248, 224, 154);
+      if(!ItemDescription.empty())
+      {
+        Y += 2;
+        const std::vector<std::string> DescriptionLines = Wrap(
+          ItemDescription, std::max(1, (Right - Left) / 6));
+        for(size_t Line = 0; Line < DescriptionLines.size(); ++Line,
+            Y += 11)
+          Text(Renderer, Left, Y, DescriptionLines[Line],
+               1, 224, 216, 190);
+      }
       Y += 5;
       Fill(Renderer, { Left, Y, std::max(1, Right - Left), 1 },
            67, 53, 38);
       Y += 7;
-      const bool Comparing = Hud.EquipmentComparisonActive
-        && Index < int(Hud.MenuItemMetrics.size());
-      if(Comparing)
+      const adaptiveui::ItemMetrics* Candidate =
+        Index < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Index].Present
+        ? &Hud.MenuItemMetrics[Index] : 0;
+      const adaptiveui::ItemMetrics* Current = 0;
+      if(Hud.EquipmentComparisonActive)
+        Current = &Hud.EquippedItemMetrics;
+      else if(Index < int(Hud.MenuComparisonMetrics.size())
+              && Hud.MenuComparisonMetrics[Index].Present)
+        Current = &Hud.MenuComparisonMetrics[Index];
+      if(Candidate)
       {
-        const adaptiveui::ItemMetrics& Current = Hud.EquippedItemMetrics;
-        const adaptiveui::ItemMetrics& Candidate = Hud.MenuItemMetrics[Index];
-        if(Current.Present && Candidate.Present)
+        if(Current && Current->Present)
         {
-          if(Current.Armor && Candidate.Armor)
+          const std::string CurrentLabel = Current->Label.empty()
+            ? ParseInventoryLabel(Hud.EquippedItemLabel).Name
+            : Current->Label;
+          Text(Renderer, Left, Y, CurrentLabel.empty()
+            ? "EQUIPPED > SELECTED" : "EQUIPPED: " + CurrentLabel,
+               1, 181, 169, 143);
+          Y += 11;
+          if(Current->Armor && Candidate->Armor)
             DrawComparisonMetric(Renderer, Left, Y, "ARMOR",
-              std::to_string(Current.ArmorValue),
-              std::to_string(Candidate.ArmorValue),
-              Candidate.ArmorValue - Current.ArmorValue, true);
-          if(Current.Weapon && Candidate.Weapon)
+              std::to_string(Current->ArmorValue),
+              std::to_string(Candidate->ArmorValue),
+              Candidate->ArmorValue - Current->ArmorValue, true);
+          if(Current->Weapon && Candidate->Weapon
+             && !Current->Shield && !Candidate->Shield)
           {
             DrawComparisonMetric(Renderer, Left, Y, "DAMAGE",
-              std::to_string(Current.MinimumDamage) + "-"
-                + std::to_string(Current.MaximumDamage),
-              std::to_string(Candidate.MinimumDamage) + "-"
-                + std::to_string(Candidate.MaximumDamage),
-              Candidate.MinimumDamage + Candidate.MaximumDamage
-                - Current.MinimumDamage - Current.MaximumDamage, true);
+              std::to_string(Current->MinimumDamage) + "-"
+                + std::to_string(Current->MaximumDamage),
+              std::to_string(Candidate->MinimumDamage) + "-"
+                + std::to_string(Candidate->MaximumDamage),
+              Candidate->MinimumDamage + Candidate->MaximumDamage
+                - Current->MinimumDamage - Current->MaximumDamage, true);
             DrawComparisonMetric(Renderer, Left, Y, "HIT",
-              std::to_string(Current.ToHit), std::to_string(Candidate.ToHit),
-              Candidate.ToHit - Current.ToHit, true);
+              Current->Accuracy, Candidate->Accuracy,
+              Candidate->ToHit - Current->ToHit, true);
+            DrawComparisonMetric(Renderer, Left, Y, "DURABILITY",
+              Current->Durability, Candidate->Durability,
+              Candidate->ArmorValue - Current->ArmorValue, true);
           }
-          if(Current.Shield && Candidate.Shield)
+          if(Current->Shield && Candidate->Shield)
             DrawComparisonMetric(Renderer, Left, Y, "BLOCK",
-              std::to_string(Current.Block), std::to_string(Candidate.Block),
-              Candidate.Block - Current.Block, true);
-          if(Current.Enchantment || Candidate.Enchantment)
+              Current->BlockQuality, Candidate->BlockQuality,
+              Candidate->Block - Current->Block, true);
+          if(Current->Enchantment || Candidate->Enchantment)
             DrawComparisonMetric(Renderer, Left, Y, "ENCHANT",
-              std::to_string(Current.Enchantment),
-              std::to_string(Candidate.Enchantment),
-              Candidate.Enchantment - Current.Enchantment, true);
+              std::to_string(Current->Enchantment),
+              std::to_string(Candidate->Enchantment),
+              Candidate->Enchantment - Current->Enchantment, true);
           DrawComparisonMetric(Renderer, Left, Y, "WEIGHT",
-            std::to_string(Current.Weight) + "G",
-            std::to_string(Candidate.Weight) + "G",
-            int(Candidate.Weight - Current.Weight), false);
+            std::to_string(Current->Weight) + "G",
+            std::to_string(Candidate->Weight) + "G",
+            int(Candidate->Weight - Current->Weight), false);
+          if(Candidate->CategorySkill || Candidate->SpecificSkill)
+            DrawItemMetric(Renderer, Left, Y, "SELECTED SKILL C/S",
+              std::to_string(Candidate->CategorySkill) + "/"
+                + std::to_string(Candidate->SpecificSkill));
         }
         else
         {
-          Text(Renderer, Left, Y, Current.Present
-            ? "SELECT NONE TO UNEQUIP" : "SLOT IS CURRENTLY EMPTY",
-            1, 181, 169, 143);
-          Y += 11;
+          if(Hud.EquipmentComparisonActive)
+          {
+            Text(Renderer, Left, Y, "CURRENT SLOT EMPTY",
+                 1, 181, 169, 143);
+            Y += 11;
+          }
+          DrawStandaloneItemMetrics(Renderer, Left, Y, *Candidate);
         }
         Y += 4;
       }
-      else
+      else if(Hud.EquipmentComparisonActive)
+      {
+        Text(Renderer, Left, Y, "SELECT NONE TO UNEQUIP",
+             1, 181, 169, 143);
+        Y += 15;
+      }
+      else if(!IsInventoryCategoryMenu())
       {
         Text(Renderer, Left, Y, "WEIGHT", 2, 206, 188, 145);
         Text(Renderer, Left + 84, Y + 4,
@@ -1975,8 +2132,11 @@ std::string DisplayMenuSubtitle()
              1, 240, 230, 202);
         Y += 22;
       }
-      const std::string Detail = Index < int(Hud.MenuDetails.size())
-        ? Hud.MenuDetails[Index] : "";
+      else
+      {
+        Text(Renderer, Left, Y, "SELECT TO OPEN", 1, 181, 169, 143);
+        Y += 18;
+      }
       Fill(Renderer, { Left, Y, std::max(1, Right - Left), 1 },
            67, 53, 38);
       Y += 7;
@@ -1992,8 +2152,20 @@ std::string DisplayMenuSubtitle()
       int DescriptionY = DetailText.y;
       for(size_t Line = 0; Line < DescriptionLines.size(); ++Line,
           DescriptionY += Advance)
-        Text(Renderer, DetailText.x, DescriptionY,
-             DescriptionLines[Line], DescriptionScale, 224, 216, 190);
+      {
+        const std::string& Value = DescriptionLines[Line];
+        const bool Heading = Value == "STATUS" || Value == "MAIN MATERIAL"
+          || Value == "SECONDARY MATERIAL" || Value == "TOOLS"
+          || Value == "FACILITIES" || Value == "DESCRIPTION";
+        const bool Ready = Value.find("READY") != std::string::npos
+          || Value == "Ready to choose ingredients";
+        const bool Missing = Value.find("MISSING") != std::string::npos
+          || Value == "Cannot craft with current supplies";
+        Text(Renderer, DetailText.x, DescriptionY, Value, DescriptionScale,
+             Heading ? 236 : Ready ? 137 : Missing ? 214 : 224,
+             Heading ? 204 : Ready ? 186 : Missing ? 112 : 216,
+             Heading ? 126 : Ready ? 106 : Missing ? 92 : 190);
+      }
       SDL_RenderSetClipRect(Renderer, 0);
     }
     else
@@ -2045,6 +2217,37 @@ std::string DisplayMenuSubtitle()
            67, 53, 38);
     if(IsInventoryGridMenu())
       DrawInventoryGrid(Renderer, Geometry);
+    else if(IsCraftingGuideTextPage())
+    {
+      const SDL_Rect Content = {
+        Area.x + Padding, Geometry.Top,
+        std::max(1, Area.w - Padding * 2),
+        std::max(1, Geometry.Bottom - Geometry.Top)
+      };
+      SDL_RenderSetClipRect(Renderer, &Content);
+      int Y = Content.y;
+      const int Columns = std::max(1, Content.w / 12);
+      for(size_t Index = 0; Index < Hud.MenuOptions.size(); ++Index)
+      {
+        const std::string Section = Hud.MenuOptions[Index];
+        const std::string Separator = " :: ";
+        const size_t Break = Section.find(Separator);
+        const std::string Heading = Break == std::string::npos
+          ? Section : Section.substr(0, Break);
+        const std::string Body = Break == std::string::npos
+          ? "" : Section.substr(Break + Separator.size());
+
+        Text(Renderer, Content.x, Y, Heading, 2, 236, 204, 126);
+        Y += 18;
+        Fill(Renderer, { Content.x, Y, Content.w, 1 }, 67, 53, 38);
+        Y += 7;
+        const std::vector<std::string> Lines = Wrap(Body, Columns);
+        for(size_t Line = 0; Line < Lines.size(); ++Line, Y += 16)
+          Text(Renderer, Content.x, Y, Lines[Line], 2, 224, 216, 190);
+        Y += 12;
+      }
+      SDL_RenderSetClipRect(Renderer, 0);
+    }
     else
     {
       if(IsEquipmentMenu() && Hud.MenuSelected >= 0)
@@ -2400,9 +2603,10 @@ std::string DisplayMenuSubtitle()
 }
 
 adaptiveui::ItemMetrics::ItemMetrics()
-  : ItemId(0), Present(false), Armor(false), Weapon(false), Shield(false), Weight(0),
+  : ItemId(0), Present(false), Armor(false), Weapon(false), Shield(false),
+    Equippable(false), Actions(0), Weight(0),
     ArmorValue(0), MinimumDamage(0), MaximumDamage(0), ToHit(0), Block(0),
-    Enchantment(0)
+    Enchantment(0), CategorySkill(0), SpecificSkill(0)
 {
 }
 
@@ -2413,7 +2617,7 @@ adaptiveui::HudModel::HudModel()
     PositionPrompt(false),
     PaperDollScreen(false), PaperDollSource({ 0, 0, 0, 0 }),
     ScreenTextActive(false), ScreenTextTitle("STORY"), MenuActive(false),
-    MenuIconGrid(false), EquipmentComparisonActive(false),
+    MenuKind(MENU_ROWS), MenuIconGrid(false), EquipmentComparisonActive(false),
     InventoryCurrentWeight(-1),
     InventoryMaximumWeight(-1),
     MenuSelected(-1), MenuScroll(0), MenuPage(1), MenuPages(1), QuestionChoiceCount(0),
@@ -2424,13 +2628,24 @@ adaptiveui::HudModel::HudModel()
     QuestionChoices[Index] = 0;
 }
 
+adaptiveui::MobileMenuLayout::MobileMenuLayout()
+  : Area({ 0, 0, 0, 0 }), PaperDoll({ 0, 0, 0, 0 }),
+    Conditions({ 0, 0, 0, 0 }), GridViewport({ 0, 0, 0, 0 }),
+    Detail({ 0, 0, 0, 0 }), Footer({ 0, 0, 0, 0 }),
+    Columns(1), CellSize(1), ContentHeight(0), MaximumScrollY(0),
+    Landscape(false)
+{
+}
+
 adaptiveui::Layout::Layout()
   : OutputWidth(1), OutputHeight(1), CanvasWidth(1), CanvasHeight(1),
     Gutter(8), Gap(8), DashboardRows(1), Fullscreen(false),
     Dashboard({ 0, 0, 1, 1 }), MapPanel({ 0, 0, 1, 1 }),
     CanvasSource({ 0, 0, 1, 1 }), Canvas({ 0, 0, 1, 1 }),
     Rail({ 0, 0, 1, 1 }), EquipmentPanel({ 0, 0, 1, 1 }),
-    EquipmentCanvas({ 0, 0, 1, 1 }), RailContent({ 0, 0, 1, 1 }),
+    EquipmentCanvas({ 0, 0, 1, 1 }),
+    EquipmentConditions({ 0, 0, 0, 0 }),
+    RailContent({ 0, 0, 1, 1 }),
     Log({ 0, 0, 1, 1 }),
     Menu({ 0, 0, 1, 1 }), Prompt({ 0, 0, 1, 1 }),
     PromptDialog({ 0, 0, 1, 1 }), PromptInput({ 0, 0, 1, 1 }),
@@ -2494,6 +2709,7 @@ namespace adaptiveui
       { Result.EquipmentPanel.x + 5, Result.EquipmentPanel.y + 5,
         std::max(1, Result.EquipmentPanel.w - 10),
         std::max(1, Result.EquipmentPanel.h - 10) }, 96, 112);
+    Result.EquipmentConditions = { 0, 0, 0, 0 };
     const int RailContentTop = Result.EquipmentPanel.y
                              + Result.EquipmentPanel.h + Result.Gap;
     Result.RailContent = { Result.Rail.x + 5, RailContentTop,
@@ -2570,6 +2786,120 @@ namespace adaptiveui
                                / std::max(1, Current.Canvas.h),
                                0, Source.h - 1);
     return true;
+  }
+
+  MobileMenuLayout CalculateMobileMenuLayout(const SDL_Rect& Area,
+                                               float Density,
+                                               int ItemCount,
+                                               bool ShowPaperDoll,
+                                               bool ShowDetail,
+                                               int ScrollY)
+  {
+    MobileMenuLayout Result;
+    Result.Area = Area;
+    Result.Landscape = Area.w > Area.h * 6 / 5;
+    Density = std::max(.75f, Density);
+    const int Padding = Clamp(int(5.f * Density + .5f), 6, 20);
+    const int Gap = Clamp(int(4.f * Density + .5f), 6, 18);
+    const int FooterHeight = Clamp(int(18.f * Density + .5f), 42, 72);
+    SDL_Rect Content = { Area.x + Padding, Area.y + Padding,
+      std::max(1, Area.w - Padding * 2),
+      std::max(1, Area.h - Padding * 2 - FooterHeight - Gap) };
+    Result.Footer = { Content.x, Content.y + Content.h + Gap,
+                      Content.w, FooterHeight };
+
+    if(Result.Landscape)
+    {
+      const int MaximumRight = std::max(1, Content.w / 2);
+      const int MinimumRight = std::min(MaximumRight,
+        std::max(1, int(150 * Density)));
+      const int RightWidth = ShowDetail || ShowPaperDoll
+        ? Clamp(Content.w * 38 / 100, MinimumRight, MaximumRight)
+        : 0;
+      Result.GridViewport = { Content.x, Content.y,
+        std::max(1, Content.w - (RightWidth ? RightWidth + Gap : 0)),
+        Content.h };
+      if(RightWidth)
+      {
+        SDL_Rect Right = { Result.GridViewport.x + Result.GridViewport.w + Gap,
+                           Content.y, RightWidth, Content.h };
+        if(ShowPaperDoll)
+        {
+          const int DollHeight = ShowDetail ? Right.h * 42 / 100 : Right.h;
+          Result.PaperDoll = { Right.x + Gap, Right.y,
+            std::max(1, Right.w - Gap * 2), std::max(1, DollHeight) };
+          Result.Conditions = { Right.x, Right.y, std::max(0, Right.w / 3),
+                                std::max(1, DollHeight) };
+        }
+        if(ShowDetail)
+        {
+          const int DetailY = ShowPaperDoll
+            ? Result.PaperDoll.y + Result.PaperDoll.h + Gap : Right.y;
+          Result.Detail = { Right.x, DetailY, Right.w,
+            std::max(1, Right.y + Right.h - DetailY) };
+        }
+      }
+    }
+    else
+    {
+      int Top = Content.y;
+      if(ShowPaperDoll)
+      {
+        const int DollHeight = Clamp(Content.h * 27 / 100,
+          int(84 * Density), Content.h * 2 / 5);
+        Result.PaperDoll = { Content.x, Top, Content.w, DollHeight };
+        Result.Conditions = { Content.x, Top,
+                              std::max(0, Content.w * 30 / 100), DollHeight };
+        Top += DollHeight + Gap;
+      }
+      int DetailHeight = 0;
+      if(ShowDetail)
+        DetailHeight = Clamp(Content.h * 28 / 100,
+          int(78 * Density), Content.h * 2 / 5);
+      Result.GridViewport = { Content.x, Top, Content.w,
+        std::max(1, Content.y + Content.h - Top
+                       - (DetailHeight ? DetailHeight + Gap : 0)) };
+      if(DetailHeight)
+        Result.Detail = { Content.x,
+          Result.GridViewport.y + Result.GridViewport.h + Gap,
+          Content.w, DetailHeight };
+    }
+
+    const int MinimumCell = Clamp(int(48.f * Density + .5f), 48, 168);
+    Result.Columns = std::max(1, Result.GridViewport.w / MinimumCell);
+    Result.Columns = std::min(Result.Columns, std::max(1, ItemCount));
+    const int CellWidth = std::max(1, Result.GridViewport.w / Result.Columns);
+    Result.CellSize = std::max(MinimumCell, CellWidth);
+    const int Rows = ItemCount > 0
+      ? (ItemCount + Result.Columns - 1) / Result.Columns : 0;
+    Result.ContentHeight = Rows * Result.CellSize;
+    Result.MaximumScrollY = std::max(0,
+      Result.ContentHeight - Result.GridViewport.h);
+    ScrollY = Clamp(ScrollY, 0, Result.MaximumScrollY);
+    Result.Cells.reserve(std::max(0, ItemCount));
+    for(int Index = 0; Index < ItemCount; ++Index)
+    {
+      const int Column = Index % Result.Columns;
+      const int Row = Index / Result.Columns;
+      const int X0 = Result.GridViewport.x
+                   + Result.GridViewport.w * Column / Result.Columns;
+      const int X1 = Result.GridViewport.x
+                   + Result.GridViewport.w * (Column + 1) / Result.Columns;
+      Result.Cells.push_back({ X0 + 2,
+        Result.GridViewport.y + Row * Result.CellSize - ScrollY + 2,
+        std::max(1, X1 - X0 - 4), std::max(1, Result.CellSize - 4) });
+    }
+    return Result;
+  }
+
+  int MobileMenuIndexAt(const MobileMenuLayout& Current, int X, int Y)
+  {
+    if(!Contains(Current.GridViewport, X, Y))
+      return -1;
+    for(size_t Index = 0; Index < Current.Cells.size(); ++Index)
+      if(Contains(Current.Cells[Index], X, Y))
+        return int(Index);
+    return -1;
   }
 
   void SetPlatformMode(PlatformMode Mode)
@@ -2709,6 +3039,15 @@ namespace adaptiveui
           && (Hud.Prompt.back() == '\r' || Hud.Prompt.back() == '\n'
               || Hud.Prompt.back() == ' '))
       Hud.Prompt.pop_back();
+    std::string LowerPrompt = Hud.Prompt;
+    std::transform(LowerPrompt.begin(), LowerPrompt.end(),
+      LowerPrompt.begin(), [](unsigned char Character)
+      { return char(std::tolower(Character)); });
+    const bool ContinueConfirmation =
+      LowerPrompt.find("continue anyway") != std::string::npos
+      || LowerPrompt.find("still continue") != std::string::npos
+      || LowerPrompt == "continue?";
+    Hud.PromptDetail = ContinueConfirmation ? Hud.LogMessage : "";
     Hud.PromptInput.clear();
     Hud.PromptShowsInput = false;
     Hud.PromptNumeric = false;
@@ -2828,8 +3167,11 @@ namespace adaptiveui
     Hud.MenuDetails.clear();
     Hud.MenuGroups.clear();
     Hud.MenuIconSources.clear();
+    Hud.MenuAvailability.clear();
     Hud.MenuItemMetrics.clear();
+    Hud.MenuComparisonMetrics.clear();
     Hud.MenuDisplayOrder.clear();
+    Hud.MenuKind = MENU_ROWS;
     Hud.MenuIconGrid = false;
     for(int Index = 0; Index < Count; ++Index)
       Hud.MenuOptions.push_back(Options && Options[Index]
@@ -2845,7 +3187,7 @@ namespace adaptiveui
 
   void SetMenuPresentation(const char* const* Details,
                            const SDL_Rect* IconSources, int Count,
-                           bool IconGrid)
+                           MenuPresentationKind Kind)
   {
     Hud.MenuDetails.clear();
     Hud.MenuIconSources.clear();
@@ -2862,8 +3204,9 @@ namespace adaptiveui
       Hud.MenuDetails.push_back("");
       Hud.MenuIconSources.push_back({ 0, 0, 0, 0 });
     }
-    Hud.MenuIconGrid = CurrentPlatform == Desktop && IconGrid
-                    && !IsEquipmentMenu();
+    Hud.MenuKind = Kind;
+    Hud.MenuIconGrid = Kind == MENU_CATEGORY_GRID || Kind == MENU_ITEM_GRID
+                    || Kind == MENU_PICKUP_GRID;
     Dirty = true;
   }
 
@@ -2891,6 +3234,29 @@ namespace adaptiveui
     Dirty = true;
   }
 
+  void SetMenuAvailability(const unsigned char* Available, int Count)
+  {
+    Hud.MenuAvailability.clear();
+    Count = Clamp(Count, 0, int(Hud.MenuOptions.size()));
+    for(int Index = 0; Index < Count; ++Index)
+      Hud.MenuAvailability.push_back(!Available || Available[Index] ? 1 : 0);
+    while(Hud.MenuAvailability.size() < Hud.MenuOptions.size())
+      Hud.MenuAvailability.push_back(1);
+    Dirty = true;
+  }
+
+  void SetMenuComparisonMetrics(const ItemMetrics* Metrics, int Count)
+  {
+    Hud.MenuComparisonMetrics.clear();
+    Count = Clamp(Count, 0, int(Hud.MenuOptions.size()));
+    for(int Index = 0; Index < Count; ++Index)
+      Hud.MenuComparisonMetrics.push_back(
+        Metrics ? Metrics[Index] : ItemMetrics());
+    while(Hud.MenuComparisonMetrics.size() < Hud.MenuOptions.size())
+      Hud.MenuComparisonMetrics.push_back(ItemMetrics());
+    Dirty = true;
+  }
+
   void SetEquipmentComparison(const char* Label,
                               const ItemMetrics& Metrics)
   {
@@ -2915,8 +3281,11 @@ namespace adaptiveui
     Hud.MenuDetails.clear();
     Hud.MenuGroups.clear();
     Hud.MenuIconSources.clear();
+    Hud.MenuAvailability.clear();
     Hud.MenuItemMetrics.clear();
+    Hud.MenuComparisonMetrics.clear();
     Hud.MenuDisplayOrder.clear();
+    Hud.MenuKind = MENU_ROWS;
     Hud.MenuIconGrid = false;
     Hud.EquipmentComparisonActive = false;
     Hud.EquippedItemLabel.clear();
@@ -3133,10 +3502,26 @@ namespace adaptiveui
     {
       CurrentLayout.EquipmentPanel = { 0, 0, 0, 0 };
       CurrentLayout.EquipmentCanvas = { 0, 0, 0, 0 };
+      CurrentLayout.EquipmentConditions = { 0, 0, 0, 0 };
       CurrentLayout.RailContent = {
         CurrentLayout.Rail.x + 5, CurrentLayout.Rail.y + 5,
         std::max(1, CurrentLayout.Rail.w - 10),
         std::max(1, CurrentLayout.Rail.h - 10)
+      };
+    }
+    else if(!Hud.Conditions.empty())
+    {
+      const int InnerHeight = std::max(1,
+        CurrentLayout.EquipmentPanel.h - 10);
+      const int Gap = 5;
+      const int ConditionsX = CurrentLayout.EquipmentPanel.x + 5;
+      const int ConditionWidth = std::max(0,
+        CurrentLayout.EquipmentCanvas.x - Gap - ConditionsX);
+      CurrentLayout.EquipmentConditions = {
+        ConditionsX,
+        CurrentLayout.EquipmentPanel.y + 5,
+        ConditionWidth,
+        InnerHeight
       };
     }
     CurrentLayout.CanvasSource = ActiveCanvasSource(CanvasWidth,
@@ -3263,11 +3648,17 @@ namespace adaptiveui
           DrawMapSidebar(Renderer);
         }
         else
+        {
+          DrawEquipmentConditions(Renderer);
           DrawActions(Renderer);
+        }
         DrawLog(Renderer);
       }
-      DrawPromptDialog(Renderer);
     }
+    // Confirmation, text-entry, and key-capture prompts are true modals.
+    // Draw them last so menus, story/help screens, map views, and gameplay
+    // chrome can never cover a window-close confirmation.
+    DrawPromptDialog(Renderer);
   }
 
   PointerResult HandlePointer(int OutputX, int OutputY, bool Pressed,
@@ -3277,7 +3668,7 @@ namespace adaptiveui
     if(CurrentPlatform != Desktop)
       return Result;
 
-    if(Hud.ScreenTextActive)
+    if(Hud.ScreenTextActive && !HasBlockingPromptDialog())
     {
       if(Pressed)
       {
@@ -3289,7 +3680,7 @@ namespace adaptiveui
       return Result;
     }
 
-    if(Hud.MapScreen)
+    if(Hud.MapScreen && !HasBlockingPromptDialog())
     {
       if(WheelY && Contains(CurrentLayout.MapNotesArea, OutputX, OutputY))
       {
@@ -3368,7 +3759,7 @@ namespace adaptiveui
       return Result;
     }
 
-    if(Hud.PromptActive && !Hud.PositionPrompt)
+    if(HasBlockingPromptDialog())
     {
       if(Pressed && (Hud.PromptShowsInput || Hud.PromptNumeric
                       || Hud.PromptCapturesKey
@@ -3519,6 +3910,11 @@ namespace adaptiveui
             return Result;
           }
         }
+      }
+      else if(IsCraftingGuideTextPage() && InMenu)
+      {
+        Result.Type = PointerResult::CONSUMED;
+        return Result;
       }
       else if(InMenu && OutputY >= Geometry.Top
               && OutputY < Geometry.Bottom

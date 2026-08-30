@@ -235,7 +235,7 @@ void configsystem::Show(void (*BackGroundDrawer)(),
       }
 
       List.AddEntry(Entry, LIGHT_GRAY);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       List.SetLastEntryAdaptiveGroup(VisibleOption->fsCategory);
 #endif
       // TODO: help should show all possible values with details, may require cycling thru them

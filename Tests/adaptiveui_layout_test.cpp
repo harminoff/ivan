@@ -136,8 +136,14 @@ namespace
     assert(adaptiveui::GetHudModel().MenuActive);
     assert(adaptiveui::GetHudModel().MenuPages == 3);
     assert(adaptiveui::GetHudModel().MenuOptions.size() == 4);
+    const unsigned char Available[4] = { 1, 0, 1, 0 };
+    adaptiveui::SetMenuAvailability(Available, 4);
+    assert(adaptiveui::GetHudModel().MenuAvailability.size() == 4);
+    assert(adaptiveui::GetHudModel().MenuAvailability[0] == 1);
+    assert(adaptiveui::GetHudModel().MenuAvailability[1] == 0);
     adaptiveui::ClearMenu();
     assert(!adaptiveui::GetHudModel().MenuActive);
+    assert(adaptiveui::GetHudModel().MenuAvailability.empty());
 
     assert(adaptiveui::TranslateDesktopShortcut(SDLK_PERIOD, KMOD_SHIFT) == '>');
     assert(adaptiveui::TranslateDesktopShortcut(SDLK_COMMA, KMOD_SHIFT) == '<');
@@ -176,8 +182,36 @@ namespace
     Keys[47] = KEY_MOBILE_COMMAND_BASE + 34;
     Groups[47] = adaptiveui::ACTION_SYSTEM;
     adaptiveui::SetActions(Labels, Keys, Groups, 48);
+    const char* Conditions[] = {
+      "Fearless", "Stressed", "Burdened", "Very hungry", "Exhausted"
+    };
+    adaptiveui::SetConditions(0, 0);
     adaptiveui::SetMapFocus(352, 240);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const SDL_Rect UnconditionedEquipmentCanvas =
+      adaptiveui::GetLayout().EquipmentCanvas;
+    adaptiveui::SetConditions(Conditions, 5);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    assert(adaptiveui::GetHudModel().Conditions.size() == 5);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.x
+           == UnconditionedEquipmentCanvas.x);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.y
+           == UnconditionedEquipmentCanvas.y);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.w
+           == UnconditionedEquipmentCanvas.w);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.h
+           == UnconditionedEquipmentCanvas.h);
+    assert(adaptiveui::GetLayout().EquipmentConditions.w > 0);
+    assert(adaptiveui::GetLayout().EquipmentConditions.h > 0);
+    assert(ContainedBy(adaptiveui::GetLayout().EquipmentConditions,
+                       adaptiveui::GetLayout().EquipmentPanel));
+    assert(!Overlaps(adaptiveui::GetLayout().EquipmentCanvas,
+                     adaptiveui::GetLayout().EquipmentConditions));
+    assert(adaptiveui::GetLayout().EquipmentConditions.x
+             + adaptiveui::GetLayout().EquipmentConditions.w
+           < adaptiveui::GetLayout().EquipmentCanvas.x);
+    assert(adaptiveui::GetLayout().EquipmentConditions.y
+           <= adaptiveui::GetLayout().EquipmentCanvas.y);
     assert(!adaptiveui::GetLayout().ActionButtons.empty());
     assert(adaptiveui::SelectActionCategory(adaptiveui::ACTION_ITEMS));
     assert(adaptiveui::GetLayout().ActiveCategory
@@ -451,7 +485,8 @@ namespace
     SDL_Rect EquipmentIcons[13];
     for(int Index = 0; Index < 13; ++Index)
       EquipmentIcons[Index] = { Index * 16, 0, 16, 16 };
-    adaptiveui::SetMenuPresentation(0, EquipmentIcons, 13, true);
+    adaptiveui::SetMenuPresentation(0, EquipmentIcons, 13,
+                                    adaptiveui::MENU_ROWS);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     assert(adaptiveui::GetHudModel().MenuOptions.size() == 13);
     assert(!adaptiveui::GetHudModel().MenuIconGrid);
@@ -510,7 +545,7 @@ namespace
     adaptiveui::SetMenu("Your inventory (total weight: 1200g)", "",
                         Options, 40, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    40, true);
+                                     40, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::SetInventoryWeights(1200, 25000);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     const adaptiveui::Layout InventoryLayout = adaptiveui::GetLayout();
@@ -574,13 +609,32 @@ namespace
     assert(Green > 200 && Red < 40 && Blue < 40);
     SDL_FreeFormat(PixelFormat);
 
+    const char* CategoryOptions[18] = {
+      "Amulets", "Belts", "Body armor", "Books", "Boots", "Cloaks",
+      "Food", "Gauntlets", "Helmets", "Miscellaneous", "Potions",
+      "Rings", "Scrolls", "Shields", "Tools", "Valuables", "Wands",
+      "Weapons"
+    };
+    adaptiveui::SetMenu("Craft an item - categories", "",
+                        CategoryOptions, 18, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
+                                     18, adaptiveui::MENU_CATEGORY_GRID);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout CategoryLayout = adaptiveui::GetLayout();
+    assert(CategoryLayout.MenuCells.size() == 18);
+    assert(CategoryLayout.MenuDetail.h <= 92);
+    assert(CategoryLayout.MenuDetail.h >= 30);
+    for(size_t Index = 0; Index < CategoryLayout.MenuCells.size(); ++Index)
+      assert(!Overlaps(CategoryLayout.MenuCells[Index],
+                       CategoryLayout.MenuDetail));
+
     const char* ShortInventory[5] = {
       "an encrypted scroll [200g]", "a short sword [1200g]",
       "a potion [250g]", "a book [600g]", "a lantern [900g]" };
     adaptiveui::SetMenu("Your inventory (total weight: 3150g)", "",
                         ShortInventory, 5, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    5, true);
+                                     5, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     const adaptiveui::Layout ShortInventoryLayout = adaptiveui::GetLayout();
     assert(ShortInventoryLayout.MenuCells.size() == 5);
@@ -591,7 +645,7 @@ namespace
     adaptiveui::ClearMenu();
     adaptiveui::SetMenu("Choose helmet:", "", ShortInventory, 5, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    5, true);
+                                     5, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::ItemMetrics HelmetMetrics[5];
     for(int Index = 0; Index < 5; ++Index)
     {
@@ -602,6 +656,13 @@ namespace
       HelmetMetrics[Index].ArmorValue = 4 + Index;
     }
     adaptiveui::SetMenuItemMetrics(HelmetMetrics, 5);
+    adaptiveui::ItemMetrics HelmetComparisons[5];
+    HelmetComparisons[0].Present = true;
+    HelmetComparisons[0].Armor = true;
+    HelmetComparisons[0].ArmorValue = 3;
+    HelmetComparisons[0].Weight = 1100;
+    HelmetComparisons[0].Label = "an iron helmet";
+    adaptiveui::SetMenuComparisonMetrics(HelmetComparisons, 5);
     adaptiveui::ItemMetrics EquippedHelmet;
     EquippedHelmet.Present = true;
     EquippedHelmet.ItemId = 102;
@@ -615,7 +676,13 @@ namespace
     assert(EquipmentChooserLayout.MenuCells.size() == 5);
     assert(EquipmentChooserLayout.MenuDetail.w > 0);
     assert(adaptiveui::GetHudModel().EquipmentComparisonActive);
+    assert(adaptiveui::GetHudModel().EquippedItemMetrics.ItemId == 102);
     assert(adaptiveui::GetHudModel().MenuItemMetrics.size() == 5);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics.size() == 5);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics[0].ArmorValue
+           == 3);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics[0].Label
+           == "an iron helmet");
     assert(adaptiveui::GetHudModel().MenuDisplayOrder[0] == 2);
     assert(adaptiveui::NavigateInventoryMenu(2, KEY_RIGHT, 5) == 0);
     adaptiveui::PointerResult EquippedItemClick = adaptiveui::HandlePointer(
@@ -722,9 +789,11 @@ namespace
     adaptiveui::ClearPrompt();
     assert(!adaptiveui::IsTextEntryPromptActive());
 
+    adaptiveui::SetMenu("MAIN MENU", "", Options, 3, 0, 1, 4);
     adaptiveui::SetConfirmationPrompt(
       "Your quest is not yet completed! Really quit? [y/N]");
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    assert(adaptiveui::GetHudModel().MenuActive);
     assert(adaptiveui::GetHudModel().PromptConfirmsChoice);
     assert(adaptiveui::GetHudModel().Prompt.find("[y/N]")
            == std::string::npos);
@@ -748,6 +817,7 @@ namespace
     adaptiveui::DrawBackground(Renderer);
     adaptiveui::Draw(Renderer);
     adaptiveui::ClearPrompt();
+    adaptiveui::ClearMenu();
 
     adaptiveui::SetQuitPrompt(
       "Do you want to save your game before quitting?");
@@ -883,6 +953,91 @@ namespace
     SDL_DestroyRenderer(Renderer);
     SDL_DestroyWindow(Window);
     SDL_Quit();
+    adaptiveui::SetConditions(0, 0);
+  }
+
+  void CheckMobileMenuLayouts()
+  {
+    const SDL_Rect PortraitSafe = { 18, 96, 1044, 2112 };
+    const adaptiveui::MobileMenuLayout Portrait =
+      adaptiveui::CalculateMobileMenuLayout(PortraitSafe, 3.f, 18,
+                                             true, true, 0);
+    assert(!Portrait.Landscape);
+    assert(ContainedBy(Portrait.PaperDoll, PortraitSafe));
+    assert(ContainedBy(Portrait.GridViewport, PortraitSafe));
+    assert(ContainedBy(Portrait.Detail, PortraitSafe));
+    assert(ContainedBy(Portrait.Footer, PortraitSafe));
+    assert(!Overlaps(Portrait.PaperDoll, Portrait.GridViewport));
+    assert(!Overlaps(Portrait.GridViewport, Portrait.Detail));
+    assert(Portrait.Cells.size() == 18);
+    assert(Portrait.CellSize >= 144);
+
+    const SDL_Rect LandscapeSafe = { 96, 18, 2112, 1044 };
+    const adaptiveui::MobileMenuLayout Landscape =
+      adaptiveui::CalculateMobileMenuLayout(LandscapeSafe, 3.f, 18,
+                                             true, true, 0);
+    assert(Landscape.Landscape);
+    assert(ContainedBy(Landscape.GridViewport, LandscapeSafe));
+    assert(ContainedBy(Landscape.PaperDoll, LandscapeSafe));
+    assert(ContainedBy(Landscape.Detail, LandscapeSafe));
+    assert(!Overlaps(Landscape.GridViewport, Landscape.PaperDoll));
+    assert(!Overlaps(Landscape.GridViewport, Landscape.Detail));
+
+    const SDL_Rect Compact = { 0, 0, 360, 520 };
+    const adaptiveui::MobileMenuLayout LongInventory =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 1.f, 128,
+                                             false, true, 0);
+    assert(LongInventory.MaximumScrollY > 0);
+    const adaptiveui::MobileMenuLayout Scrolled =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 1.f, 128,
+        false, true, LongInventory.MaximumScrollY);
+    const int Last = int(Scrolled.Cells.size()) - 1;
+    assert(Last >= 0);
+    assert(Scrolled.Cells[Last].y < Scrolled.GridViewport.y
+                                  + Scrolled.GridViewport.h);
+    const int Hit = adaptiveui::MobileMenuIndexAt(
+      Scrolled, Scrolled.Cells[Last].x + Scrolled.Cells[Last].w / 2,
+      Scrolled.Cells[Last].y + Scrolled.Cells[Last].h / 2);
+    assert(Hit == Last);
+    assert(adaptiveui::MobileMenuIndexAt(Scrolled,
+      Scrolled.Detail.x + 1, Scrolled.Detail.y + 1) == -1);
+
+    const adaptiveui::MobileMenuLayout Empty =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 2.f, 0,
+                                             false, false, 500);
+    assert(Empty.Cells.empty());
+    assert(Empty.MaximumScrollY == 0);
+    const adaptiveui::MobileMenuLayout Single =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 2.f, 1,
+                                             false, true, 0);
+    assert(Single.Cells.size() == 1);
+    assert(Single.Columns == 1);
+
+    // A narrow cutout-safe landscape area must never invert the responsive
+    // right-pane clamp.
+    const adaptiveui::MobileMenuLayout NarrowLandscape =
+      adaptiveui::CalculateMobileMenuLayout({ 40, 20, 420, 300 }, 3.f, 5,
+                                             true, true, 0);
+    assert(NarrowLandscape.GridViewport.w > 0);
+    assert(NarrowLandscape.PaperDoll.w > 0);
+  }
+
+  void CheckConfirmationContext()
+  {
+    adaptiveui::SetLog("The weapon is much too heavy for you to use safely.");
+    adaptiveui::SetConfirmationPrompt("Continue anyway? [y/N]");
+    const adaptiveui::HudModel& Continue = adaptiveui::GetHudModel();
+    assert(Continue.Prompt == "Continue anyway?");
+    assert(Continue.PromptDetail
+           == "The weapon is much too heavy for you to use safely.");
+    assert(Continue.PromptConfirmsChoice);
+    adaptiveui::ClearPrompt();
+
+    adaptiveui::SetConfirmationPrompt("Really quit? [y/N]");
+    const adaptiveui::HudModel& Ordinary = adaptiveui::GetHudModel();
+    assert(Ordinary.Prompt == "Really quit?");
+    assert(Ordinary.PromptDetail.empty());
+    adaptiveui::ClearPrompt();
   }
 }
 
@@ -896,6 +1051,8 @@ int main()
   CheckSize(3440, 1440);
   CheckSize(2560, 1440);
   CheckDynamicEquipmentPaging();
+  CheckMobileMenuLayouts();
+  CheckConfirmationContext();
   assert(adaptiveui::CalculateLayout(1280, 720, 800, 600, true).Fullscreen);
   CheckFeeds();
   CheckPointerInput();

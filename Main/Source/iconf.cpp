@@ -915,7 +915,7 @@ truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
     felist List(CONST_S("AUTO PICK UP ITEMS"));
     game::SetStandardListAttributes(List);
     const bool ShowPresets =
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       true;
 #else
       false;
@@ -929,7 +929,7 @@ truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
     List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
     List.SetLastEntryHelp(CONST_S(
       "Turns automatic pickup on or off without changing your item choices."));
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     List.SetLastEntryAdaptiveGroup(CONST_S("AUTO PICKUP"));
 
     for(int Index = 0; Index < AutoPickupPresetCount; ++Index)
@@ -949,21 +949,21 @@ truth ivanconfig::AutoPickUpMatchingChangeInterface(stringoption* O)
             << AutoPickupChoices[Index].Label;
       List.AddEntry(Entry, LIGHT_GRAY, 0, NO_IMAGE, true);
       List.SetLastEntryHelp(AutoPickupChoices[Index].Help);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       List.SetLastEntryAdaptiveGroup(CONST_S("ITEM TYPES"));
 #endif
     }
 
     List.AddEntry(CONST_S("SAVE CHANGES"), GREEN,
                   0, NO_IMAGE, true);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     List.SetLastEntryHelp(CONST_S(
       "Apply these automatic pickup choices and return to Options."));
     List.SetLastEntryAdaptiveGroup(CONST_S("ACTIONS"));
 #endif
     List.AddEntry(CONST_S("CANCEL"), RED,
                   0, NO_IMAGE, true);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
     List.SetLastEntryHelp(CONST_S(
       "Discard changes and return to Options."));
     List.SetLastEntryAdaptiveGroup(CONST_S("ACTIONS"));

@@ -26,10 +26,12 @@
 #include "specialkeys.h"
 #include "festring.h"
 #include "dbgmsgproj.h"
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+#endif
 #ifdef ANDROID
 #include "mobileui.h"
 #elif defined(ADAPTIVE_UI)
-#include "adaptiveui.h"
 namespace mobileui = adaptiveui;
 #endif
 
@@ -100,9 +102,11 @@ struct felistentry
   uint ImageKey;
   truth Selectable;
   festring Help;
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   adaptiveui::ItemMetrics ItemMetrics;
+  adaptiveui::ItemMetrics ComparisonMetrics;
   festring AdaptiveGroup;
+  truth AdaptiveAvailable = true;
 #endif
 };
 
@@ -142,6 +146,9 @@ felist::felist(cfestring& Topic, col16 TopicColor, uint Maximum)
   Pos(10, 32), //y=32 gum to let filter be nicely readable always
   Width(780), PageLength(30), BackColor(0), Flags(SELECTABLE|FADE), FirstDrawNoFade(false),
   UpKey(KEY_UP), DownKey(KEY_DOWN), EntryDrawer(0), v2FinalPageSize(0,0)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  , PresentationKind(adaptiveui::MENU_ROWS), PresentationKindExplicit(false)
+#endif
 {
   AddDescription(Topic, TopicColor);
 }
@@ -338,21 +345,29 @@ uint felist::Draw()
   }
 
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
-  // Desktop lists can place up to 26 choices on one page.  Ten comfortably
-  // sized rows are a better phone target and keep direct-touch selection
-  // reliable in both orientations. Equipment exposes all of its slots to the
-  // mobile overlay because that screen supplies its own clipped scroll view.
+  // Adaptive grids and equipment expose their full contents to the renderer,
+  // which owns clipping and continuous scrolling. Ordinary row lists retain
+  // compact phone-sized pages.
   const bool MobileEquipmentList = !Description.empty()
                                 && Description[0]->String == "Equipment";
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-  if(MobileEquipmentList)
+  bool AdaptiveGrid = false;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  AdaptiveGrid = PresentationKind == adaptiveui::MENU_CATEGORY_GRID
+              || PresentationKind == adaptiveui::MENU_ITEM_GRID
+              || PresentationKind == adaptiveui::MENU_PICKUP_GRID
+              || PresentationKind == adaptiveui::MENU_BUTTON_ROWS;
+#endif
+  const std::string AdaptiveTitle = Description.empty() ? ""
+    : Description[0]->String.CStr();
+  if(!AdaptiveGrid)
+    AdaptiveGrid = AdaptiveTitle.find(" - categories") != std::string::npos
+      || AdaptiveTitle.find(" - material routes") != std::string::npos
+      || AdaptiveTitle.find("Your inventory") == 0
+      || AdaptiveTitle.find("Choose ") == 0;
+  if(MobileEquipmentList || AdaptiveGrid)
     PageLength = std::max(uint(1), uint(Entry.size()));
   else
     PageLength = std::min(PageLength, uint(10));
-#else
-  if(!MobileEquipmentList)
-    PageLength = std::min(PageLength, uint(10));
-#endif
 #endif
 
   for(;;){
@@ -493,11 +508,23 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     const bool MobileMessageHistory = !Description.empty()
                                    && Description[0]->String
                                       == "Message history";
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-    const std::string DesktopMenuTitle = Description.empty() ? ""
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    const std::string AdaptiveMenuTitle = Description.empty() ? ""
       : Description[0]->String.CStr();
-    bool DesktopItemGrid = DesktopMenuTitle.find("Your inventory") == 0
-      || DesktopMenuTitle.find("Choose ") == 0;
+    adaptiveui::MenuPresentationKind AdaptiveMenuKind = PresentationKind;
+    if(!PresentationKindExplicit)
+    {
+      if(AdaptiveMenuTitle.find("Crafting guide") == 0)
+        AdaptiveMenuKind = adaptiveui::MENU_GUIDE;
+      else if(AdaptiveMenuTitle.find(" - categories")
+          != std::string::npos
+        || AdaptiveMenuTitle.find(" - material routes") != std::string::npos)
+        AdaptiveMenuKind = adaptiveui::MENU_CATEGORY_GRID;
+      else if(AdaptiveMenuTitle.find("Your inventory") == 0
+           || AdaptiveMenuTitle.find("Choose ") == 0
+           || AdaptiveMenuTitle.find("Craft an item - ") == 0)
+        AdaptiveMenuKind = adaptiveui::MENU_ITEM_GRID;
+    }
 #endif
     for(uint EntryIndex = 0; EntryIndex < Entry.size(); ++EntryIndex)
       if(Entry[EntryIndex]->Selectable)
@@ -561,24 +588,30 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     graphics::DrawAtDoubleBufferBeforeFelistPage(); // here prevents full dungeon blink
     truth LastEntryVisible = DrawPage(Buffer,&v2FinalPageSize,&vEntryRect);DBGLN;
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-    std::vector<std::string> DesktopDetailStrings;
-    std::vector<const char*> DesktopDetails;
-    std::vector<std::string> DesktopGroupStrings;
-    std::vector<const char*> DesktopGroups;
-    std::vector<SDL_Rect> DesktopIconSources;
-    std::vector<adaptiveui::ItemMetrics> DesktopItemMetrics;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    std::vector<std::string> AdaptiveDetailStrings;
+    std::vector<const char*> AdaptiveDetails;
+    std::vector<std::string> AdaptiveGroupStrings;
+    std::vector<const char*> AdaptiveGroups;
+    std::vector<SDL_Rect> AdaptiveIconSources;
+    std::vector<unsigned char> AdaptiveAvailability;
+    std::vector<adaptiveui::ItemMetrics> AdaptiveItemMetrics;
+    std::vector<adaptiveui::ItemMetrics> AdaptiveComparisonMetrics;
     for(size_t OptionIndex = 0; OptionIndex < MobileEntryIndices.size();
         ++OptionIndex)
     {
       felistentry* MenuEntry = Entry[MobileEntryIndices[OptionIndex]];
-      DesktopItemMetrics.push_back(MenuEntry->ItemMetrics);
+      AdaptiveItemMetrics.push_back(MenuEntry->ItemMetrics);
+      AdaptiveComparisonMetrics.push_back(MenuEntry->ComparisonMetrics);
+      AdaptiveAvailability.push_back(MenuEntry->AdaptiveAvailable ? 1 : 0);
       std::string Detail = MenuEntry->Help.CStr();
       const size_t Description = Detail.find("\n\n");
-      if(Description != std::string::npos)
+      const std::string EntryText = MenuEntry->String.CStr();
+      if(Description != std::string::npos
+         && Detail.substr(0, Description) == EntryText)
         Detail = Detail.substr(Description + 2);
-      DesktopDetailStrings.push_back(Detail);
-      DesktopGroupStrings.push_back(MenuEntry->AdaptiveGroup.CStr());
+      AdaptiveDetailStrings.push_back(Detail);
+      AdaptiveGroupStrings.push_back(MenuEntry->AdaptiveGroup.CStr());
 
       SDL_Rect Source = { 0, 0, 0, 0 };
       const uint Selectable = PageBegin + uint(OptionIndex);
@@ -594,32 +627,39 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
           Source.h = std::max(1, v2DefaultEntryImageSize.Y);
           break;
         }
-      DesktopIconSources.push_back(Source);
+      AdaptiveIconSources.push_back(Source);
     }
-    for(size_t Index = 0; Index < DesktopDetailStrings.size(); ++Index)
+    for(size_t Index = 0; Index < AdaptiveDetailStrings.size(); ++Index)
     {
-      DesktopDetails.push_back(DesktopDetailStrings[Index].c_str());
-      DesktopGroups.push_back(DesktopGroupStrings[Index].c_str());
+      AdaptiveDetails.push_back(AdaptiveDetailStrings[Index].c_str());
+      AdaptiveGroups.push_back(AdaptiveGroupStrings[Index].c_str());
     }
-    if(!MobileEquipmentList
-       && DesktopMenuTitle.find("Equipment menu") != 0)
-      for(size_t Index = 0; Index < DesktopIconSources.size(); ++Index)
-        if(DesktopIconSources[Index].w > 0
-           && DesktopIconSources[Index].h > 0)
+    if(!PresentationKindExplicit && !MobileEquipmentList
+       && AdaptiveMenuTitle.find("Equipment menu") != 0)
+      for(size_t Index = 0; Index < AdaptiveIconSources.size(); ++Index)
+        if(AdaptiveIconSources[Index].w > 0
+           && AdaptiveIconSources[Index].h > 0)
         {
-          DesktopItemGrid = true;
+          if(AdaptiveMenuKind == adaptiveui::MENU_ROWS)
+            AdaptiveMenuKind = adaptiveui::MENU_ITEM_GRID;
           break;
         }
     adaptiveui::SetMenuPresentation(
-      DesktopDetails.empty() ? 0 : &DesktopDetails[0],
-      DesktopIconSources.empty() ? 0 : &DesktopIconSources[0],
-      int(DesktopDetails.size()), DesktopItemGrid);
+      AdaptiveDetails.empty() ? 0 : &AdaptiveDetails[0],
+      AdaptiveIconSources.empty() ? 0 : &AdaptiveIconSources[0],
+      int(AdaptiveDetails.size()), AdaptiveMenuKind);
     adaptiveui::SetMenuGroups(
-      DesktopGroups.empty() ? 0 : &DesktopGroups[0],
-      int(DesktopGroups.size()));
+      AdaptiveGroups.empty() ? 0 : &AdaptiveGroups[0],
+      int(AdaptiveGroups.size()));
+    adaptiveui::SetMenuAvailability(
+      AdaptiveAvailability.empty() ? 0 : &AdaptiveAvailability[0],
+      int(AdaptiveAvailability.size()));
     adaptiveui::SetMenuItemMetrics(
-      DesktopItemMetrics.empty() ? 0 : &DesktopItemMetrics[0],
-      int(DesktopItemMetrics.size()));
+      AdaptiveItemMetrics.empty() ? 0 : &AdaptiveItemMetrics[0],
+      int(AdaptiveItemMetrics.size()));
+    adaptiveui::SetMenuComparisonMetrics(
+      AdaptiveComparisonMetrics.empty() ? 0 : &AdaptiveComparisonMetrics[0],
+      int(AdaptiveComparisonMetrics.size()));
 #endif
 
     if(FirstDrawNoFade && iDrawCount == 0){
@@ -772,6 +812,18 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     DBGLN;
 
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if(Pressed >= KEY_MOBILE_MENU_PREVIEW_BASE
+       && Pressed <= KEY_MOBILE_MENU_PREVIEW_MAX)
+    {
+      const uint Target = PageBegin + Pressed - KEY_MOBILE_MENU_PREVIEW_BASE;
+      if(Target < Selectables)
+      {
+        Selected = Target;
+        JustRedrawEverythingOnce = true;
+      }
+      continue;
+    }
+
     if(Pressed >= KEY_MOBILE_MENU_SELECT_BASE
        && Pressed <= KEY_MOBILE_MENU_SELECT_MAX)
     {
@@ -780,6 +832,40 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
       {
         Selected = Target;
         Return = Selected;
+        break;
+      }
+    }
+
+    if(Pressed >= KEY_MOBILE_MENU_EQUIP_BASE
+       && Pressed <= KEY_MOBILE_MENU_EQUIP_MAX)
+    {
+      const uint Target = PageBegin + Pressed - KEY_MOBILE_MENU_EQUIP_BASE;
+      if(Target < Selectables
+         && AdaptiveMenuKind == adaptiveui::MENU_PICKUP_GRID)
+      {
+        Selected = Target;
+        Return = Selected | FELIST_MOBILE_EQUIP_BIT;
+        break;
+      }
+    }
+
+    if(Pressed >= KEY_MOBILE_MENU_ACTION_BASE
+       && Pressed <= KEY_MOBILE_MENU_ACTION_MAX)
+    {
+      const int Offset = Pressed - KEY_MOBILE_MENU_ACTION_BASE;
+      const int Action = Offset / KEY_MOBILE_MENU_ACTION_STRIDE + 1;
+      const uint Target = PageBegin
+        + uint(Offset % KEY_MOBILE_MENU_ACTION_STRIDE);
+      const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
+      const bool Advertised = Target < Hud.MenuItemMetrics.size()
+        && (Hud.MenuItemMetrics[Target].Actions
+            & adaptiveui::ItemActionMask(adaptiveui::ItemAction(Action)));
+      if(Target < Selectables && Advertised
+         && AdaptiveMenuKind == adaptiveui::MENU_PICKUP_GRID)
+      {
+        Selected = Target;
+        Return = Selected
+          | (uint(Action) << FELIST_MOBILE_ACTION_SHIFT);
         break;
       }
     }
@@ -846,8 +932,11 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
 
 #endif
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-    if(DesktopItemGrid && (Pressed == KEY_LEFT || Pressed == KEY_RIGHT
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if((AdaptiveMenuKind == adaptiveui::MENU_CATEGORY_GRID
+        || AdaptiveMenuKind == adaptiveui::MENU_ITEM_GRID
+        || AdaptiveMenuKind == adaptiveui::MENU_PICKUP_GRID)
+       && (Pressed == KEY_LEFT || Pressed == KEY_RIGHT
                            || Pressed == KEY_UP || Pressed == KEY_DOWN))
     {
       const int PageCount = std::min(int(PageLength),
@@ -1400,17 +1489,31 @@ void felist::SetLastEntryHelp(cfestring Help)
   Entry[Entry.size()-1]->Help=Help;
 }
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
 void felist::SetLastEntryAdaptiveGroup(cfestring Group)
 {
   Entry[Entry.size() - 1]->AdaptiveGroup = Group;
 }
 
+void felist::SetLastEntryAdaptiveAvailable(truth Available)
+{
+  Entry[Entry.size() - 1]->AdaptiveAvailable = Available;
+}
+
+void felist::SetLastEntryItemActions(unsigned int Actions)
+{
+  Entry[Entry.size() - 1]->ItemMetrics.Actions = Actions;
+}
+
 void felist::SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
                                      truth Armor, truth Weapon,
-                                     truth Shield, int ArmorValue,
+                                     truth Shield, truth Equippable,
+                                     int ArmorValue,
                                      int MinimumDamage, int MaximumDamage,
-                                     int ToHit, int Block, int Enchantment)
+                                     int ToHit, int Block, int Enchantment,
+                                     cchar* Accuracy, cchar* Durability,
+                                     cchar* BlockQuality, int CategorySkill,
+                                     int SpecificSkill, cchar* ItemLabel)
 {
   adaptiveui::ItemMetrics& Metrics = Entry[Entry.size() - 1]->ItemMetrics;
   Metrics.ItemId = ItemId;
@@ -1418,6 +1521,7 @@ void felist::SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
   Metrics.Armor = Armor;
   Metrics.Weapon = Weapon;
   Metrics.Shield = Shield;
+  Metrics.Equippable = Equippable;
   Metrics.Weight = Weight;
   Metrics.ArmorValue = ArmorValue;
   Metrics.MinimumDamage = MinimumDamage;
@@ -1425,6 +1529,43 @@ void felist::SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
   Metrics.ToHit = ToHit;
   Metrics.Block = Block;
   Metrics.Enchantment = Enchantment;
+  Metrics.Label = ItemLabel ? ItemLabel : "";
+  Metrics.Accuracy = Accuracy ? Accuracy : "";
+  Metrics.Durability = Durability ? Durability : "";
+  Metrics.BlockQuality = BlockQuality ? BlockQuality : "";
+  Metrics.CategorySkill = CategorySkill;
+  Metrics.SpecificSkill = SpecificSkill;
+}
+
+void felist::SetLastEntryComparisonMetrics(
+  unsigned long ItemId, long Weight, truth Armor, truth Weapon,
+  truth Shield, truth Equippable, int ArmorValue,
+  int MinimumDamage, int MaximumDamage,
+  int ToHit, int Block, int Enchantment, cchar* Accuracy,
+  cchar* Durability, cchar* BlockQuality, int CategorySkill,
+  int SpecificSkill, cchar* ItemLabel)
+{
+  adaptiveui::ItemMetrics& Metrics =
+    Entry[Entry.size() - 1]->ComparisonMetrics;
+  Metrics.ItemId = ItemId;
+  Metrics.Present = true;
+  Metrics.Armor = Armor;
+  Metrics.Weapon = Weapon;
+  Metrics.Shield = Shield;
+  Metrics.Equippable = Equippable;
+  Metrics.Weight = Weight;
+  Metrics.ArmorValue = ArmorValue;
+  Metrics.MinimumDamage = MinimumDamage;
+  Metrics.MaximumDamage = MaximumDamage;
+  Metrics.ToHit = ToHit;
+  Metrics.Block = Block;
+  Metrics.Enchantment = Enchantment;
+  Metrics.Label = ItemLabel ? ItemLabel : "";
+  Metrics.Accuracy = Accuracy ? Accuracy : "";
+  Metrics.Durability = Durability ? Durability : "";
+  Metrics.BlockQuality = BlockQuality ? BlockQuality : "";
+  Metrics.CategorySkill = CategorySkill;
+  Metrics.SpecificSkill = SpecificSkill;
 }
 #endif
 

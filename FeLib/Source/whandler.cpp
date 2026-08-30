@@ -886,6 +886,21 @@ bool HandleAdaptivePointer(int WindowX, int WindowY, bool Pressed,
 
 void globalwindowhandler::ProcessMessage(SDL_Event* Event)
 {
+  static bool HandlingQuitRequest = false;
+  const auto HandleQuitRequest = [&]()
+  {
+    // SDL may send both SDL_WINDOWEVENT_CLOSE and SDL_QUIT for one click.
+    // The confirmation loop polls events itself, so guard against recursively
+    // opening a second modal while the first one is waiting for an answer.
+    if(HandlingQuitRequest)
+      return;
+    HandlingQuitRequest = true;
+    const truth ShouldQuit = !QuitMessageHandler || QuitMessageHandler();
+    HandlingQuitRequest = false;
+    if(ShouldQuit)
+      exit(0);
+  };
+
   Uint32 type;
 #if SDL_MAJOR_VERSION == 1
   type=(Event->active.type);
@@ -909,6 +924,9 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
      case SDL_WINDOWEVENT_SIZE_CHANGED:
      case SDL_WINDOWEVENT_RESTORED:
       graphics::BlitDBToScreen();
+      break;
+     case SDL_WINDOWEVENT_CLOSE:
+      HandleQuitRequest();
       break;
     }
 #endif
@@ -940,13 +958,17 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
       mobileui::HandleLogTimeout();
       graphics::BlitDBToScreen();
     }
+    else if(Event->user.code == mobileui::MENU_FLING_EVENT_CODE)
+    {
+      mobileui::HandleMenuFling();
+      graphics::BlitDBToScreen();
+    }
 #endif
     break;
 #endif
 
    case SDL_QUIT:
-    if(!QuitMessageHandler || QuitMessageHandler())
-      exit(0);
+    HandleQuitRequest();
     return;
 
    case SDL_MOUSEBUTTONUP:

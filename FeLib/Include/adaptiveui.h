@@ -26,6 +26,17 @@ namespace adaptiveui
     ACTION_GROUPS = 5
   };
 
+  enum MenuPresentationKind
+  {
+    MENU_ROWS = 0,
+    MENU_CATEGORY_GRID,
+    MENU_ITEM_GRID,
+    MENU_PICKUP_GRID,
+    MENU_BUTTON_ROWS,
+    MENU_GUIDE,
+    MENU_DETAIL
+  };
+
   struct StatusIndicator
   {
     std::string Label;
@@ -66,6 +77,8 @@ namespace adaptiveui
     bool Armor;
     bool Weapon;
     bool Shield;
+    bool Equippable;
+    unsigned int Actions;
     long Weight;
     int ArmorValue;
     int MinimumDamage;
@@ -73,9 +86,31 @@ namespace adaptiveui
     int ToHit;
     int Block;
     int Enchantment;
+    std::string Label;
+    std::string Accuracy;
+    std::string Durability;
+    std::string BlockQuality;
+    int CategorySkill;
+    int SpecificSkill;
 
     ItemMetrics();
   };
+
+  enum ItemAction
+  {
+    ITEM_ACTION_NONE = 0,
+    ITEM_ACTION_DRINK = 1,
+    ITEM_ACTION_TASTE = 2,
+    ITEM_ACTION_EAT = 3,
+    ITEM_ACTION_READ = 4,
+    ITEM_ACTION_ZAP = 5,
+    ITEM_ACTION_APPLY = 6
+  };
+
+  inline unsigned int ItemActionMask(ItemAction Action)
+  {
+    return Action == ITEM_ACTION_NONE ? 0U : 1U << unsigned(Action);
+  }
 
   struct HudModel
   {
@@ -107,8 +142,11 @@ namespace adaptiveui
     std::vector<std::string> MenuDetails;
     std::vector<std::string> MenuGroups;
     std::vector<SDL_Rect> MenuIconSources;
+    std::vector<unsigned char> MenuAvailability;
     std::vector<ItemMetrics> MenuItemMetrics;
+    std::vector<ItemMetrics> MenuComparisonMetrics;
     std::vector<int> MenuDisplayOrder;
+    MenuPresentationKind MenuKind;
     bool MenuIconGrid;
     bool EquipmentComparisonActive;
     std::string EquippedItemLabel;
@@ -134,6 +172,24 @@ namespace adaptiveui
     HudModel();
   };
 
+  struct MobileMenuLayout
+  {
+    SDL_Rect Area;
+    SDL_Rect PaperDoll;
+    SDL_Rect Conditions;
+    SDL_Rect GridViewport;
+    SDL_Rect Detail;
+    SDL_Rect Footer;
+    std::vector<SDL_Rect> Cells;
+    int Columns;
+    int CellSize;
+    int ContentHeight;
+    int MaximumScrollY;
+    bool Landscape;
+
+    MobileMenuLayout();
+  };
+
   struct Layout
   {
     int OutputWidth;
@@ -151,6 +207,7 @@ namespace adaptiveui
     SDL_Rect Rail;
     SDL_Rect EquipmentPanel;
     SDL_Rect EquipmentCanvas;
+    SDL_Rect EquipmentConditions;
     SDL_Rect RailContent;
     SDL_Rect Log;
     SDL_Rect Menu;
@@ -213,7 +270,14 @@ namespace adaptiveui
   int CalculateEquipmentPageSize(const Layout& Current, int ItemCount);
   bool MapOutputToCanvas(const Layout& Current, int OutputX, int OutputY,
                          int CanvasWidth, int CanvasHeight,
-                         int& CanvasX, int& CanvasY);
+                          int& CanvasX, int& CanvasY);
+  MobileMenuLayout CalculateMobileMenuLayout(const SDL_Rect& Area,
+                                               float Density,
+                                               int ItemCount,
+                                               bool ShowPaperDoll,
+                                               bool ShowDetail,
+                                               int ScrollY = 0);
+  int MobileMenuIndexAt(const MobileMenuLayout& Current, int X, int Y);
 
   void SetPlatformMode(PlatformMode Mode);
   PlatformMode GetPlatformMode();
@@ -244,9 +308,11 @@ namespace adaptiveui
                int Page, int Pages);
   void SetMenuPresentation(const char* const* Details,
                            const SDL_Rect* IconSources, int Count,
-                           bool IconGrid);
+                           MenuPresentationKind Kind);
   void SetMenuGroups(const char* const* Groups, int Count);
+  void SetMenuAvailability(const unsigned char* Available, int Count);
   void SetMenuItemMetrics(const ItemMetrics* Metrics, int Count);
+  void SetMenuComparisonMetrics(const ItemMetrics* Metrics, int Count);
   void SetEquipmentComparison(const char* Label,
                               const ItemMetrics& Metrics);
   void SetInventoryWeights(long Current, long Maximum);

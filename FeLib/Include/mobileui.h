@@ -8,7 +8,8 @@ namespace mobileui
 {
   enum { REDRAW_EVENT_CODE = 0x4956414E,
          DIRECTION_REPEAT_EVENT_CODE = 0x4956414F,
-         LOG_HIDE_EVENT_CODE = 0x49564150 };
+         LOG_HIDE_EVENT_CODE = 0x49564150,
+         MENU_FLING_EVENT_CODE = 0x49564151 };
   enum actiongroup
   {
     ACTION_CONTEXT = 0,
@@ -53,6 +54,7 @@ namespace mobileui
   void SetLog(const char* Message);
   void SetPrompt(const char* Prompt, const char* Input = 0,
                  bool Numeric = false);
+  void SetConfirmationPrompt(const char* Prompt);
   void SetPromptDetail(const char* Detail);
   void SetPositionPrompt(bool Active);
   void ClearPrompt();
@@ -83,6 +85,7 @@ namespace mobileui
                    int FingerCount);
   touchresult HandleDirectionRepeat();
   void HandleLogTimeout();
+  void HandleMenuFling();
   touchresult HandleFinger(float NormalizedX, float NormalizedY);
 }
 #endif

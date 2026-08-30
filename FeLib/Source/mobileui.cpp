@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <jni.h>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -26,7 +27,8 @@ namespace
 
   enum { ACTION_ROWS = 3, ACTION_COLUMNS = 3, ACTION_COUNT = 9,
          ACTIONS_PER_PAGE = 8, MAX_MOBILE_ACTIONS = 48,
-         MAX_QUESTION_CHOICES = 9, MAX_MENU_OPTIONS = 26,
+         MAX_QUESTION_CHOICES = 9, MAX_MENU_OPTIONS = 512,
+         MAX_PICKUP_ACTIONS = 3,
          MAX_DISPLAY_CUTOUTS = 8,
          CONTROL_MOVEMENT = 0, CONTROL_ACTIONS = 1,
          CONTROL_SECTION_COUNT = mobileui::ACTION_GROUPS + 1 };
@@ -144,14 +146,40 @@ namespace
     int MenuSelected = -1;
     int MenuPage = 1;
     int MenuPages = 1;
+    int MenuGridSelection = -1;
     SDL_Rect MenuViewport = { 0, 0, 0, 0 };
+    SDL_Rect MenuConfirm = { 0, 0, 0, 0 };
+    SDL_Rect MenuEquip = { 0, 0, 0, 0 };
+    SDL_Rect MenuItemActions[MAX_PICKUP_ACTIONS];
+    int MenuItemActionCodes[MAX_PICKUP_ACTIONS] = { 0 };
+    int MenuItemActionCount = 0;
+    SDL_Rect MenuBack = { 0, 0, 0, 0 };
     int MenuScrollY = 0;
     int MenuMaxScrollY = 0;
+    int MenuScrollStep = 0;
+    SDL_Rect ConditionViewport = { 0, 0, 0, 0 };
+    int ConditionScrollY = 0;
+    int ConditionMaxScrollY = 0;
     bool MenuPressActive = false;
+    bool MenuPressConditions = false;
     bool MenuScrolling = false;
+    bool MenuStoppedFlingOnPress = false;
     int MenuPressY = 0;
     int MenuLastY = 0;
+    Uint32 MenuLastMotionTime = 0;
+    SDL_TimerID MenuFlingTimer = 0;
+    float MenuScrollVelocity = 0.f;
+    float MenuFlingPosition = 0.f;
+    Uint32 MenuFlingLastTime = 0;
+    bool MenuFlingConditions = false;
+    int MenuMotionY[8] = { 0 };
+    Uint32 MenuMotionTime[8] = { 0 };
+    int MenuMotionCount = 0;
   } State;
+
+  SDL_Texture* GameplaySnapshot = 0;
+  int GameplaySnapshotWidth = 0;
+  int GameplaySnapshotHeight = 0;
 
   bool ConsoleDirty = true;
 
@@ -159,6 +187,7 @@ namespace
          DIRECTION_REPEAT_INTERVAL_MS = 110,
          CONTROL_SECTION_DOUBLE_TAP_MS = 400,
          LOG_VISIBLE_MS = 6000,
+         MENU_FLING_INTERVAL_MS = 16,
          CANVAS_PAN_HOLD_MS = 250,
          CANVAS_PAN_SLOP = 8 };
 
@@ -182,6 +211,39 @@ namespace
     return 0;
   }
 
+  Uint32 QueueMenuFling(Uint32, void*)
+  {
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type = SDL_USEREVENT;
+    Event.user.code = mobileui::MENU_FLING_EVENT_CODE;
+    SDL_PushEvent(&Event);
+    return MENU_FLING_INTERVAL_MS;
+  }
+
+  void StopMenuFling()
+  {
+    if(State.MenuFlingTimer)
+    {
+      SDL_RemoveTimer(State.MenuFlingTimer);
+      State.MenuFlingTimer = 0;
+    }
+    State.MenuScrollVelocity = 0.f;
+  }
+
+  void StartMenuFling(bool Conditions)
+  {
+    const float ReleaseVelocity = State.MenuScrollVelocity;
+    StopMenuFling();
+    State.MenuScrollVelocity = ReleaseVelocity;
+    State.MenuFlingConditions = Conditions;
+    State.MenuFlingPosition = float(Conditions
+      ? State.ConditionScrollY : State.MenuScrollY);
+    State.MenuFlingLastTime = SDL_GetTicks();
+    State.MenuFlingTimer = SDL_AddTimer(MENU_FLING_INTERVAL_MS,
+                                        QueueMenuFling, 0);
+  }
+
   void CancelDirectionPress()
   {
     State.DirectionPressActive = false;
@@ -196,6 +258,64 @@ namespace
   int Clamp(int Value, int Low, int High)
   {
     return std::max(Low, std::min(Value, High));
+  }
+
+  void ResetMenuMotionSamples(int Y, Uint32 Time)
+  {
+    State.MenuMotionY[0] = Y;
+    State.MenuMotionTime[0] = Time;
+    State.MenuMotionCount = 1;
+    State.MenuScrollVelocity = 0.f;
+  }
+
+  void AddMenuMotionSample(int Y, Uint32 Time)
+  {
+    enum { SAMPLE_COUNT = 8, VELOCITY_WINDOW_MS = 140 };
+    if(State.MenuMotionCount == SAMPLE_COUNT)
+    {
+      for(int Index = 1; Index < SAMPLE_COUNT; ++Index)
+      {
+        State.MenuMotionY[Index - 1] = State.MenuMotionY[Index];
+        State.MenuMotionTime[Index - 1] = State.MenuMotionTime[Index];
+      }
+      --State.MenuMotionCount;
+    }
+    State.MenuMotionY[State.MenuMotionCount] = Y;
+    State.MenuMotionTime[State.MenuMotionCount] = Time;
+    ++State.MenuMotionCount;
+
+    // Retain a short history, like Android's VelocityTracker. Keeping one
+    // older anchor sample makes sparse SDL finger events stable as well.
+    while(State.MenuMotionCount > 2
+          && Time - State.MenuMotionTime[1] > VELOCITY_WINDOW_MS)
+    {
+      for(int Index = 1; Index < State.MenuMotionCount; ++Index)
+      {
+        State.MenuMotionY[Index - 1] = State.MenuMotionY[Index];
+        State.MenuMotionTime[Index - 1] = State.MenuMotionTime[Index];
+      }
+      --State.MenuMotionCount;
+    }
+  }
+
+  float MenuReleaseVelocity(Uint32 ReleaseTime)
+  {
+    enum { RELEASE_DECAY_MS = 180 };
+    if(State.MenuMotionCount < 2)
+      return 0.f;
+    const int Last = State.MenuMotionCount - 1;
+    const Uint32 Duration = State.MenuMotionTime[Last]
+                          - State.MenuMotionTime[0];
+    if(!Duration)
+      return 0.f;
+    float Velocity = -float(State.MenuMotionY[Last]
+                            - State.MenuMotionY[0]) / float(Duration);
+    const Uint32 Idle = ReleaseTime - State.MenuMotionTime[Last];
+    if(Idle >= RELEASE_DECAY_MS)
+      return 0.f;
+    Velocity *= 1.f - float(Idle) / float(RELEASE_DECAY_MS);
+    const float Maximum = std::max(2.5f, State.Density * 2.f);
+    return std::max(-Maximum, std::min(Velocity, Maximum));
   }
 
   bool Contains(const SDL_Rect& Rect, int X, int Y)
@@ -215,6 +335,18 @@ namespace
   bool MainMenuPresentation()
   {
     return State.MenuActive && State.MenuSubtitle == "MAIN MENU";
+  }
+
+  bool AdaptiveGridMenuPresentation()
+  {
+    if(!State.MenuActive)
+      return false;
+    const adaptiveui::MenuPresentationKind Kind =
+      adaptiveui::GetHudModel().MenuKind;
+    return Kind == adaptiveui::MENU_CATEGORY_GRID
+        || Kind == adaptiveui::MENU_ITEM_GRID
+        || Kind == adaptiveui::MENU_PICKUP_GRID
+        || Kind == adaptiveui::MENU_BUTTON_ROWS;
   }
 
   void FitGameRect(int X, int Y, int Width, int Height)
@@ -1010,8 +1142,16 @@ namespace
       Text(Renderer, Rect.x + 10, Y, Lines[Index].c_str(), Scale);
   }
 
+  std::string MobileItemTitle(const std::string& Label)
+  {
+    const size_t LegacySummary = Label.find(" [");
+    return LegacySummary == std::string::npos
+      ? Label : Label.substr(0, LegacySummary);
+  }
+
   void CenteredWrappedText(SDL_Renderer* Renderer, const SDL_Rect& Rect,
-                           const std::string& Value, int MaximumScale = 4)
+                           const std::string& Value, int MaximumScale = 4,
+                           Uint8 R = 240, Uint8 G = 230, Uint8 B = 202)
   {
     if(Value.empty())
       return;
@@ -1038,7 +1178,7 @@ namespace
     {
       const int Width = TextWidth(Line.c_str(), Scale);
       Text(Renderer, Rect.x + (Rect.w - Width) / 2, Y,
-           Line.c_str(), Scale);
+           Line.c_str(), Scale, R, G, B);
       Y += LineAdvance;
     }
   }
@@ -1115,10 +1255,52 @@ namespace
     return (int)FlattenGameplayBannerText(Value).size() > Columns;
   }
 
+  bool BinaryConfirmationActive()
+  {
+    return State.QuestionChoiceCount == 2
+        && State.QuestionChoices[0] == 'y'
+        && State.QuestionChoices[1] == 'n';
+  }
+
+  SDL_Rect BinaryConfirmationButton(int Index)
+  {
+    const int Height = std::max(1, State.Controls.h / 3);
+    return { State.Controls.x + Index * State.Controls.w / 2,
+             State.Controls.y + State.Controls.h - Height,
+             State.Controls.w / 2, Height };
+  }
+
+  bool GameplayPromptShowsLogContext()
+  {
+    if(!State.PromptActive || State.PromptShowsInput)
+      return false;
+    const bool BinaryConfirmation = BinaryConfirmationActive();
+    if(BinaryConfirmation && !State.PromptDetail.empty())
+      return true;
+    if(!State.PromptDetail.empty() || State.LogMessage.empty())
+      return false;
+    std::string Prompt = State.PromptText;
+    std::transform(Prompt.begin(), Prompt.end(), Prompt.begin(),
+      [](unsigned char Character) { return char(std::tolower(Character)); });
+    return Prompt.find("continue anyway") != std::string::npos
+        || Prompt.find("still continue") != std::string::npos
+        || Prompt == "continue? [y/n]";
+  }
+
   SDL_Rect GameplayLogRect()
   {
     SDL_Rect Rect = State.Log;
-    if(!State.PromptActive
+    // Portrait binary confirmations receive dedicated space during layout;
+    // do not grow that panel back over the map.
+    if(BinaryConfirmationActive() && State.Width < State.Height)
+      return Rect;
+    if(GameplayPromptShowsLogContext())
+    {
+      const int Expansion = State.PromptDetail.empty() ? 2 : 4;
+      Rect.y -= Rect.h * (Expansion - 1);
+      Rect.h *= Expansion;
+    }
+    else if(!State.PromptActive
        && GameplayBannerNeedsTwoLines(Rect, State.LogMessage))
     {
       Rect.y -= Rect.h;
@@ -1167,6 +1349,28 @@ namespace
     std::string VisibleLog = State.LogMessage;
     if(State.PromptActive)
     {
+      if(GameplayPromptShowsLogContext())
+      {
+        const int Pad = 7;
+        const int PromptHeight = BinaryConfirmationActive()
+                              && State.Width < State.Height
+          ? Clamp(LogRect.h / 4, 64, 112)
+          : std::max(State.Log.h, LogRect.h / 3);
+        SDL_Rect Message = { LogRect.x + Pad, LogRect.y + Pad,
+                             LogRect.w - Pad * 2,
+                             LogRect.h - PromptHeight - Pad * 2 };
+        SDL_Rect Prompt = { LogRect.x + Pad,
+                            LogRect.y + LogRect.h - PromptHeight,
+                            LogRect.w - Pad * 2, PromptHeight - Pad };
+        const std::string& Context = State.PromptDetail.empty()
+          ? State.LogMessage : State.PromptDetail;
+        WrappedText(Renderer, Message, Context, false, 140, 4);
+        SDL_SetRenderDrawColor(Renderer, 126, 102, 57, 220);
+        SDL_RenderDrawLine(Renderer, Prompt.x, Prompt.y - 1,
+                           Prompt.x + Prompt.w, Prompt.y - 1);
+        WrappedText(Renderer, Prompt, State.PromptText, true, 0, 4);
+        return;
+      }
       // A detail string is the complete touch-facing prompt. Look mode uses
       // it for the current tile description; appending the desktop keyboard
       // hint (for example, "examine a (c)haracter") wastes a row and exposes
@@ -1245,16 +1449,14 @@ namespace
 
   std::string ExpandedStatValue(int Index, const std::string& Value)
   {
-    static const char* Labels[16] = {
+    static const char* Labels[15] = {
       "HEALTH", NULL, NULL, "ARM STRENGTH", "LEG STRENGTH",
       "DEXTERITY", "AGILITY", "ENDURANCE", "PERCEPTION",
       "INTELLIGENCE", "WISDOM", "WILLPOWER", "CHARISMA",
-      NULL, "TIME", NULL
+      "HEIGHT", "WEIGHT"
     };
-    if(Index < 0 || Index >= 16 || !Labels[Index])
+    if(Index < 0 || Index >= 15 || !Labels[Index])
       return Value;
-    if(Index == 14)
-      return std::string(Labels[Index]) + " " + Value;
     const size_t Number = Value.find(' ');
     return std::string(Labels[Index])
       + (Number == std::string::npos ? "" : Value.substr(Number));
@@ -1268,20 +1470,20 @@ namespace
       const std::vector<std::string> LineValues = StatGroups(State.StatsLines[Line]);
       Values.insert(Values.end(), LineValues.begin(), LineValues.end());
     }
-    if(Values.size() < 16)
+    if(Values.size() < 15)
       return;
 
     // Source order is HP/MANA/GOLD, ARM/LEG/DEX/AGI,
-    // END/PER/INT/WIS, WILL/CHA/DAY/TIME/TURN.  Present it as semantic
+    // END/PER/INT/WIS, WILL/CHA/HEIGHT/WEIGHT.  Present it as semantic
     // vertical groups so related values remain together in either rotation.
     static const int Groups[5][4] = {
       { 0, 1, 2, -1 },       // resources: HP, mana, gold
       { 3, 4, 7, -1 },       // physical: arm, leg, endurance
       { 5, 6, 8, -1 },       // mobility/senses: dex, agility, perception
       { 9, 10, 11, 12 },     // mental/social: int, wis, will, charisma
-      { 13, 14, 15, -1 }     // world: day, time, turn
+      { 13, 14, -1, -1 }     // body: height, weight
     };
-    static const int GroupSizes[5] = { 3, 3, 3, 4, 3 };
+    static const int GroupSizes[5] = { 3, 3, 3, 4, 2 };
     const int Left = State.Stats.x + 8;
     const int Top = State.Stats.y + 5;
     const int Width = State.Stats.w - 16;
@@ -1336,20 +1538,13 @@ namespace
       SDL_RenderDrawLine(Renderer, RightX + RightColumn, Top,
                          RightX + RightColumn, BottomRowTop);
 
-      // DAY/TIME/TURN form a single world-state strip.  Charisma occupies the
-      // fourth cell directly below INT/WIS/WILL, completing that family.
-      static const int BottomValues[4] = { 13, 14, 15, 12 };
-      const int BottomColumns[5] = {
-        Left,
-        Left + LeftColumn,
-        RightX,
-        RightX + RightColumn,
-        Left + Width
-      };
-      for(int Column = 0; Column < 4; ++Column)
+      // Complete the mental family and keep the two physical measurements in
+      // a compact strip below the camera cutout.
+      static const int BottomValues[3] = { 12, 13, 14 };
+      for(int Column = 0; Column < 3; ++Column)
       {
-        const int X0 = BottomColumns[Column];
-        const int X1 = BottomColumns[Column + 1];
+        const int X0 = Left + Width * Column / 3;
+        const int X1 = Left + Width * (Column + 1) / 3;
         Cells.push_back({ X0 + 4, BottomRowTop,
                           X1 - X0 - 8, std::max(1, Bottom - BottomRowTop) });
         CellValues.push_back(BottomValues[Column]);
@@ -1447,8 +1642,1138 @@ namespace
     }
   }
 
-  void PaintMobileMenu(SDL_Renderer* Renderer)
+  void RenderTextureFit(SDL_Renderer* Renderer, SDL_Texture* Texture,
+                        const SDL_Rect& Source, const SDL_Rect& Area)
   {
+    if(!Texture || Source.w <= 0 || Source.h <= 0
+       || Area.w <= 0 || Area.h <= 0)
+      return;
+    SDL_Rect Destination = Area;
+    const float SourceAspect = float(Source.w) / Source.h;
+    const float DestinationAspect = float(Area.w) / Area.h;
+    if(DestinationAspect > SourceAspect)
+    {
+      Destination.w = std::max(1, int(Area.h * SourceAspect));
+      Destination.x += (Area.w - Destination.w) / 2;
+    }
+    else
+    {
+      Destination.h = std::max(1, int(Area.w / SourceAspect));
+      Destination.y += (Area.h - Destination.h) / 2;
+    }
+    SDL_RenderCopy(Renderer, Texture, &Source, &Destination);
+  }
+
+  void CaptureGameplaySnapshot(SDL_Renderer* Renderer,
+                               SDL_Texture* GameTexture)
+  {
+    if(!Renderer || !GameTexture || State.GameWidth <= 0 || State.GameHeight <= 0)
+      return;
+    if(!GameplaySnapshot || GameplaySnapshotWidth != State.GameWidth
+       || GameplaySnapshotHeight != State.GameHeight)
+    {
+      if(GameplaySnapshot)
+        SDL_DestroyTexture(GameplaySnapshot);
+      GameplaySnapshot = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_TARGET, State.GameWidth, State.GameHeight);
+      GameplaySnapshotWidth = GameplaySnapshot ? State.GameWidth : 0;
+      GameplaySnapshotHeight = GameplaySnapshot ? State.GameHeight : 0;
+      if(GameplaySnapshot)
+        SDL_SetTextureBlendMode(GameplaySnapshot, SDL_BLENDMODE_NONE);
+    }
+    if(!GameplaySnapshot)
+      return;
+
+    SDL_Texture* PreviousTarget = SDL_GetRenderTarget(Renderer);
+    Uint8 Red = 0, Green = 0, Blue = 0, Alpha = 255;
+    SDL_GetRenderDrawColor(Renderer, &Red, &Green, &Blue, &Alpha);
+    if(SDL_SetRenderTarget(Renderer, GameplaySnapshot) == 0)
+    {
+      SDL_SetRenderDrawColor(Renderer, 0, 0, 0, 255);
+      SDL_RenderClear(Renderer);
+      SDL_RenderCopy(Renderer, GameTexture, 0, 0);
+      SDL_SetRenderTarget(Renderer, PreviousTarget);
+    }
+    SDL_SetRenderDrawColor(Renderer, Red, Green, Blue, Alpha);
+  }
+
+  void AppendMetric(std::ostringstream& Out, const char* Label, int Value)
+  {
+    Out << Label << ' ' << Value << '\n';
+  }
+
+  std::string MobileItemMetrics(const adaptiveui::ItemMetrics& Candidate)
+  {
+    if(!Candidate.Present)
+      return "";
+    std::ostringstream Out;
+    if(Candidate.Weapon)
+    {
+      Out << "DAMAGE " << Candidate.MinimumDamage << '-'
+          << Candidate.MaximumDamage << '\n';
+      AppendMetric(Out, "HIT", Candidate.ToHit);
+      if(!Candidate.Accuracy.empty())
+        Out << "ACCURACY " << Candidate.Accuracy << '\n';
+      if(!Candidate.Durability.empty())
+        Out << "DURABILITY " << Candidate.Durability << '\n';
+      if(Candidate.CategorySkill || Candidate.SpecificSkill)
+        Out << "SKILL " << Candidate.CategorySkill << '/'
+            << Candidate.SpecificSkill << '\n';
+    }
+    if(Candidate.Armor)
+      AppendMetric(Out, "ARMOR", Candidate.ArmorValue);
+    if(Candidate.Shield)
+    {
+      AppendMetric(Out, "BLOCK", Candidate.Block);
+      if(!Candidate.BlockQuality.empty())
+        Out << "BLOCK QUALITY " << Candidate.BlockQuality << '\n';
+    }
+    if(Candidate.Enchantment)
+      AppendMetric(Out, "ENCHANTMENT", Candidate.Enchantment);
+    AppendMetric(Out, "WEIGHT", int(Candidate.Weight));
+    return Out.str();
+  }
+
+  struct mobilecomparisonrow
+  {
+    std::string Label;
+    std::string Current;
+    std::string Selected;
+    int Advantage;
+  };
+
+  std::string NumberText(int Value)
+  {
+    std::ostringstream Out;
+    Out << Value;
+    return Out.str();
+  }
+
+  std::string DamageText(const adaptiveui::ItemMetrics& Metrics)
+  {
+    std::ostringstream Out;
+    Out << Metrics.MinimumDamage << '-' << Metrics.MaximumDamage;
+    return Out.str();
+  }
+
+  std::string SkillText(const adaptiveui::ItemMetrics& Metrics)
+  {
+    std::ostringstream Out;
+    Out << Metrics.CategorySkill << '/' << Metrics.SpecificSkill;
+    return Out.str();
+  }
+
+  void AddComparisonRow(std::vector<mobilecomparisonrow>& Rows,
+                        const char* Label, const std::string& Current,
+                        const std::string& Selected, int Advantage)
+  {
+    mobilecomparisonrow Row;
+    Row.Label = Label;
+    Row.Current = Current;
+    Row.Selected = Selected;
+    Row.Advantage = Advantage;
+    Rows.push_back(Row);
+  }
+
+  std::vector<mobilecomparisonrow> MobileComparisonRows(
+    const adaptiveui::ItemMetrics& Candidate,
+    const adaptiveui::ItemMetrics& Current)
+  {
+    std::vector<mobilecomparisonrow> Rows;
+    if(Candidate.Weapon && Current.Weapon
+       && !Candidate.Shield && !Current.Shield)
+    {
+      AddComparisonRow(Rows, "DAMAGE", DamageText(Current),
+        DamageText(Candidate), Candidate.MinimumDamage + Candidate.MaximumDamage
+          - Current.MinimumDamage - Current.MaximumDamage);
+      AddComparisonRow(Rows, "HIT", NumberText(Current.ToHit),
+        NumberText(Candidate.ToHit), Candidate.ToHit - Current.ToHit);
+      if(!Candidate.Accuracy.empty() || !Current.Accuracy.empty())
+        AddComparisonRow(Rows, "ACCURACY", Current.Accuracy,
+          Candidate.Accuracy, Candidate.ToHit - Current.ToHit);
+      if(!Candidate.Durability.empty() || !Current.Durability.empty())
+        AddComparisonRow(Rows, "DURABILITY", Current.Durability,
+          Candidate.Durability, Candidate.ArmorValue - Current.ArmorValue);
+      if(Candidate.CategorySkill || Candidate.SpecificSkill
+         || Current.CategorySkill || Current.SpecificSkill)
+        AddComparisonRow(Rows, "SKILL", SkillText(Current),
+          SkillText(Candidate), Candidate.CategorySkill + Candidate.SpecificSkill
+            - Current.CategorySkill - Current.SpecificSkill);
+    }
+    if(Candidate.Armor && Current.Armor)
+      AddComparisonRow(Rows, "ARMOR", NumberText(Current.ArmorValue),
+        NumberText(Candidate.ArmorValue),
+        Candidate.ArmorValue - Current.ArmorValue);
+    if(Candidate.Shield && Current.Shield)
+    {
+      AddComparisonRow(Rows, "BLOCK", NumberText(Current.Block),
+        NumberText(Candidate.Block), Candidate.Block - Current.Block);
+      if(!Candidate.BlockQuality.empty() || !Current.BlockQuality.empty())
+        AddComparisonRow(Rows, "BLOCK QUALITY", Current.BlockQuality,
+          Candidate.BlockQuality, Candidate.Block - Current.Block);
+    }
+    if(Candidate.Enchantment || Current.Enchantment)
+      AddComparisonRow(Rows, "ENCHANTMENT", NumberText(Current.Enchantment),
+        NumberText(Candidate.Enchantment),
+        Candidate.Enchantment - Current.Enchantment);
+    AddComparisonRow(Rows, "WEIGHT", NumberText(int(Current.Weight)),
+      NumberText(int(Candidate.Weight)), int(Current.Weight - Candidate.Weight));
+    return Rows;
+  }
+
+  struct mobileitemcardtext
+  {
+    std::string Description;
+    std::string Requirements;
+    std::string ComparisonLabel;
+    std::vector<std::string> Metrics;
+    bool Missing = false;
+    bool Ready = false;
+  };
+
+  std::string TrimCardText(const std::string& Value)
+  {
+    size_t First = 0;
+    while(First < Value.size()
+          && std::isspace((unsigned char)Value[First]))
+      ++First;
+    size_t Last = Value.size();
+    while(Last > First && std::isspace((unsigned char)Value[Last - 1]))
+      --Last;
+    return Value.substr(First, Last - First);
+  }
+
+  std::vector<std::string> CardLines(const std::string& Value)
+  {
+    std::vector<std::string> Lines;
+    size_t Start = 0;
+    while(Start <= Value.size())
+    {
+      const size_t End = Value.find('\n', Start);
+      const std::string Line = TrimCardText(Value.substr(
+        Start, End == std::string::npos ? std::string::npos : End - Start));
+      if(!Line.empty())
+        Lines.push_back(Line);
+      if(End == std::string::npos)
+        break;
+      Start = End + 1;
+    }
+    return Lines;
+  }
+
+  mobileitemcardtext MobileItemCardText(
+    const std::string& Detail, const std::string& Metrics,
+    const adaptiveui::ItemMetrics* Current)
+  {
+    mobileitemcardtext Result;
+    static const std::string DescriptionMarker = "@ITEM_DESCRIPTION@\n";
+    if(Detail.compare(0, DescriptionMarker.size(), DescriptionMarker) == 0)
+    {
+      const size_t DescriptionEnd = Detail.find("\n\n",
+                                                DescriptionMarker.size());
+      if(DescriptionEnd == std::string::npos)
+        Result.Description = TrimCardText(Detail.substr(
+          DescriptionMarker.size()));
+      else
+      {
+        Result.Description = TrimCardText(Detail.substr(
+          DescriptionMarker.size(),
+          DescriptionEnd - DescriptionMarker.size()));
+        Result.Requirements = TrimCardText(Detail.substr(DescriptionEnd + 2));
+      }
+    }
+    else
+      Result.Description = TrimCardText(Detail);
+
+    Result.Metrics = CardLines(Metrics);
+    if(Current && Current->Present)
+      Result.ComparisonLabel = Current->Label.empty()
+        ? "equipped item" : Current->Label;
+    Result.Missing = Result.Requirements.find("MISSING REQUIREMENTS")
+                  != std::string::npos;
+    Result.Ready = !Result.Missing
+                && Result.Requirements.find("READY") != std::string::npos;
+    return Result;
+  }
+
+  int WrappedLineCount(const std::string& Value, int Width, int Scale)
+  {
+    if(Value.empty())
+      return 0;
+    const int Columns = std::max(1, (Width - Scale * 2) / (Scale * 6));
+    return std::max(1, int(WrapText(Value, Columns).size()));
+  }
+
+  bool CardHeading(const std::string& Value);
+
+  int CardRequirementSectionGapCount(const std::string& Value)
+  {
+    int Gaps = 0;
+    const std::vector<std::string> Lines = CardLines(Value);
+    for(size_t Index = 1; Index < Lines.size(); ++Index)
+      if(CardHeading(Lines[Index])
+         || Lines[Index].compare(0, 6, "Exact ") == 0)
+        ++Gaps;
+    return Gaps;
+  }
+
+  int CardRequirementLineCount(const std::string& Value, int Width, int Scale)
+  {
+    int Lines = 0;
+    const std::vector<std::string> SourceLines = CardLines(Value);
+    for(size_t Index = 0; Index < SourceLines.size(); ++Index)
+      Lines += WrappedLineCount(SourceLines[Index], Width, Scale);
+    return Lines;
+  }
+
+  int MobileItemCardScale(const mobileitemcardtext& Card, int Width,
+                          int Height)
+  {
+    for(int Scale = 5; Scale >= 1; --Scale)
+    {
+      const int Advance = Scale * 8;
+      const int DescriptionScale = std::min(5, Scale + 1);
+      const int DescriptionLines = WrappedLineCount(
+        Card.Description, Width, DescriptionScale);
+      const int RequirementLines = CardRequirementLineCount(
+        Card.Requirements, Width, Scale);
+      const int MetricRows = Card.ComparisonLabel.empty()
+        ? (int(Card.Metrics.size()) + 1) / 2
+        : int(Card.Metrics.size());
+      const int Sections = (!Card.Description.empty() ? 1 : 0)
+                         + (!Card.ComparisonLabel.empty() ? 1 : 0)
+                         + (!Card.Metrics.empty() ? 1 : 0)
+                         + (!Card.Requirements.empty() ? 1 : 0);
+      const int Needed = DescriptionLines * DescriptionScale * 8
+                       + RequirementLines * Advance
+                       + MetricRows * (Card.ComparisonLabel.empty()
+                          ? Advance + Scale * 2 : Scale * 11)
+                       + (!Card.ComparisonLabel.empty()
+                          ? Scale * 31 : 0)
+                       + Sections * Scale * 5
+                       + CardRequirementSectionGapCount(Card.Requirements)
+                         * Scale * 4;
+      if(Needed <= Height)
+        return Scale;
+    }
+    return 1;
+  }
+
+  bool CardHeading(const std::string& Value)
+  {
+    bool HasLetter = false;
+    for(size_t Index = 0; Index < Value.size(); ++Index)
+    {
+      const unsigned char Character = (unsigned char)Value[Index];
+      if(std::isalpha(Character))
+      {
+        HasLetter = true;
+        if(std::islower(Character))
+          return false;
+      }
+      else if(!std::isspace(Character))
+        return false;
+    }
+    return HasLetter;
+  }
+
+  int PaintCardParagraph(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                         const std::string& Value, int Scale,
+                         Uint8 R, Uint8 G, Uint8 B)
+  {
+    if(Value.empty() || Area.h <= 0)
+      return 0;
+    const int Columns = std::max(1, (Area.w - Scale * 2) / (Scale * 6));
+    const std::vector<std::string> Lines = WrapText(Value, Columns);
+    const int Advance = Scale * 8;
+    int Y = Area.y;
+    for(size_t Index = 0; Index < Lines.size()
+        && Y + Scale * 7 <= Area.y + Area.h; ++Index, Y += Advance)
+      Text(Renderer, Area.x, Y, Lines[Index].c_str(), Scale, R, G, B);
+    return std::max(0, Y - Area.y);
+  }
+
+  int PaintCardRequirements(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                            const mobileitemcardtext& Card, int Scale)
+  {
+    if(Card.Requirements.empty() || Area.h <= 0)
+      return 0;
+    const int Columns = std::max(1, (Area.w - Scale * 2) / (Scale * 6));
+    const int Advance = Scale * 8;
+    int Y = Area.y;
+    const std::vector<std::string> SourceLines = CardLines(Card.Requirements);
+    for(size_t Source = 0; Source < SourceLines.size(); ++Source)
+    {
+      const std::string& SourceLine = SourceLines[Source];
+      const bool Heading = CardHeading(SourceLine);
+      const bool ExactNote = SourceLine.compare(0, 6, "Exact ") == 0;
+      if(Source > 0 && (Heading || ExactNote))
+        Y += Scale * 4;
+      const std::vector<std::string> Lines = WrapText(SourceLine, Columns);
+      Uint8 R = 224, G = 211, B = 166;
+      if(SourceLine == "MISSING REQUIREMENTS")
+      {
+        R = 239; G = 109; B = 91;
+      }
+      else if(SourceLine == "READY")
+      {
+        R = 154; G = 220; B = 119;
+      }
+      else if(Heading)
+      {
+        R = 222; G = 189; B = 91;
+      }
+      else if(SourceLine.compare(0, 5, "Have:") == 0)
+      {
+        R = Card.Missing ? 190 : 154;
+        G = Card.Missing ? 179 : 220;
+        B = Card.Missing ? 151 : 119;
+      }
+      else if(ExactNote)
+      {
+        R = 155; G = 145; B = 119;
+      }
+      for(size_t Line = 0; Line < Lines.size()
+          && Y + Scale * 7 <= Area.y + Area.h; ++Line, Y += Advance)
+        Text(Renderer, Area.x, Y, Lines[Line].c_str(), Scale, R, G, B);
+    }
+    return std::max(0, Y - Area.y);
+  }
+
+  int PaintMobileComparison(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                            const adaptiveui::ItemMetrics& Candidate,
+                            const adaptiveui::ItemMetrics& Current,
+                            const std::string& SelectedLabel, int Scale)
+  {
+    const std::vector<mobilecomparisonrow> Rows =
+      MobileComparisonRows(Candidate, Current);
+    if(Rows.empty() || Area.h <= 0)
+      return 0;
+
+    const int HeaderHeight = Scale * 31;
+    const int RowHeight = Scale * 11;
+    const int Height = std::min(Area.h,
+      HeaderHeight + int(Rows.size()) * RowHeight);
+    SDL_Rect Panel = { Area.x, Area.y, Area.w, Height };
+    Fill(Renderer, Panel, 12, 17, 13, 245);
+    const int ValueWidth = Panel.w * 38 / 100;
+    const int LabelWidth = Panel.w - ValueWidth * 2;
+    const int SelectedX = Panel.x + ValueWidth + LabelWidth;
+
+    SDL_Rect CurrentHeader = { Panel.x, Panel.y, ValueWidth, HeaderHeight };
+    SDL_Rect SelectedHeader = { SelectedX, Panel.y, ValueWidth, HeaderHeight };
+    SDL_Rect CurrentHeading = { CurrentHeader.x, CurrentHeader.y,
+                                CurrentHeader.w, Scale * 8 };
+    SDL_Rect SelectedHeading = { SelectedHeader.x, SelectedHeader.y,
+                                 SelectedHeader.w, Scale * 8 };
+    CenterText(Renderer, CurrentHeading, "EQUIPPED",
+               std::min(5, Scale + 2), 181, 169, 143);
+    CenterText(Renderer, SelectedHeading, "SELECTED",
+               std::min(5, Scale + 2), 154, 220, 119);
+    SDL_Rect CurrentName = { CurrentHeader.x + Scale,
+      CurrentHeader.y + Scale * 8, CurrentHeader.w - Scale * 2,
+      CurrentHeader.h - Scale * 8 };
+    SDL_Rect SelectedName = { SelectedHeader.x + Scale,
+      SelectedHeader.y + Scale * 8, SelectedHeader.w - Scale * 2,
+      SelectedHeader.h - Scale * 8 };
+    CenteredWrappedText(Renderer, CurrentName,
+      Current.Label.empty() ? "equipped item" : Current.Label,
+      std::min(5, Scale + 1), 225, 211, 176);
+    CenteredWrappedText(Renderer, SelectedName, SelectedLabel,
+      std::min(5, Scale + 1), 232, 226, 194);
+
+    SDL_SetRenderDrawColor(Renderer, 92, 83, 55, 210);
+    SDL_RenderDrawLine(Renderer, Panel.x, Panel.y + HeaderHeight,
+                       Panel.x + Panel.w, Panel.y + HeaderHeight);
+    for(size_t Index = 0; Index < Rows.size(); ++Index)
+    {
+      const int RowY = Panel.y + HeaderHeight + int(Index) * RowHeight;
+      if(RowY + RowHeight > Panel.y + Panel.h)
+        break;
+      if(Index)
+      {
+        SDL_SetRenderDrawColor(Renderer, 52, 49, 38, 180);
+        SDL_RenderDrawLine(Renderer, Panel.x, RowY,
+                           Panel.x + Panel.w, RowY);
+      }
+      const SDL_Rect CurrentValue = { Panel.x, RowY, ValueWidth, RowHeight };
+      const SDL_Rect MetricLabel = { Panel.x + ValueWidth, RowY,
+                                      LabelWidth, RowHeight };
+      const SDL_Rect SelectedValue = { SelectedX, RowY,
+                                        ValueWidth, RowHeight };
+      CenterText(Renderer, CurrentValue, Rows[Index].Current.c_str(),
+                 std::min(4, Scale), 181, 169, 143);
+      CenterText(Renderer, MetricLabel, Rows[Index].Label.c_str(),
+                 std::min(3, Scale), 222, 189, 91);
+      const Uint8 SelectedR = Rows[Index].Advantage > 0 ? 154
+                            : Rows[Index].Advantage < 0 ? 239 : 232;
+      const Uint8 SelectedG = Rows[Index].Advantage > 0 ? 220
+                            : Rows[Index].Advantage < 0 ? 109 : 226;
+      const Uint8 SelectedB = Rows[Index].Advantage > 0 ? 119
+                            : Rows[Index].Advantage < 0 ? 91 : 194;
+      CenterText(Renderer, SelectedValue, Rows[Index].Selected.c_str(),
+                 std::min(4, Scale), SelectedR, SelectedG, SelectedB);
+    }
+    return Height;
+  }
+
+  void PaintMobileItemCard(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                           const std::string& TitleText,
+                           const std::string& DetailText,
+                           const std::string& MetricsText,
+                           const adaptiveui::ItemMetrics* Candidate,
+                           const adaptiveui::ItemMetrics* Current)
+  {
+    const int Pad = Clamp(int(4 * State.Density), 7, 16);
+    const int Gap = Clamp(int(2 * State.Density), 4, 10);
+    const mobileitemcardtext Card = MobileItemCardText(
+      DetailText, MetricsText, Current);
+    Fill(Renderer, Area, 7, 9, 8, 248);
+    Outline(Renderer, Area, 126, 102, 57);
+
+    std::string DisplayTitle = TitleText;
+    if(!DisplayTitle.empty())
+      DisplayTitle[0] = char(std::toupper((unsigned char)DisplayTitle[0]));
+    const int TextWidth = std::max(1, Area.w - Pad * 2);
+    int TitleScale = 6;
+    std::vector<std::string> TitleLines;
+    for(; TitleScale > 1; --TitleScale)
+    {
+      TitleLines = WrapText(DisplayTitle,
+        std::max(1, TextWidth / (TitleScale * 6)));
+      if(TitleLines.size() <= 2)
+        break;
+    }
+    if(TitleLines.empty())
+      TitleLines = WrapText(DisplayTitle,
+        std::max(1, TextWidth / (TitleScale * 6)));
+    const int TitleHeight = std::max(TitleScale * 11 + Pad,
+      int(TitleLines.size()) * TitleScale * 8 + Pad);
+    SDL_Rect Title = { Area.x + 1, Area.y + 1,
+                       std::max(1, Area.w - 2),
+                       std::min(std::max(1, Area.h - 2), TitleHeight) };
+    Fill(Renderer, Title, 28, 43, 29, 250);
+    const SDL_Rect TitleInner = { Title.x + Pad, Title.y,
+                                  std::max(1, Title.w - Pad * 2), Title.h };
+    CenteredWrappedText(Renderer, TitleInner, DisplayTitle, TitleScale);
+
+    int Y = Title.y + Title.h + Gap;
+    int Available = std::max(0, Area.y + Area.h - Pad - Y);
+    const int Scale = MobileItemCardScale(Card, TextWidth, Available);
+    const int Advance = Scale * 8;
+
+    if(!Card.Description.empty() && Available > 0)
+    {
+      const int DescriptionScale = std::min(5, Scale + 1);
+      const int Height = WrappedLineCount(Card.Description, TextWidth,
+                                          DescriptionScale)
+                       * DescriptionScale * 8 + Pad;
+      SDL_Rect Description = { Area.x + Pad, Y, TextWidth,
+                               std::min(Available, Height) };
+      Fill(Renderer, Description, 12, 16, 14, 245);
+      const SDL_Rect DescriptionTextArea = {
+        Description.x + DescriptionScale * 2,
+        Description.y + DescriptionScale * 2,
+        std::max(1, Description.w - DescriptionScale * 4),
+        std::max(1, Description.h - DescriptionScale * 4) };
+      PaintCardParagraph(Renderer, DescriptionTextArea, Card.Description,
+                         DescriptionScale, 240, 230, 202);
+      Y += Description.h + Gap;
+      Available = std::max(0, Area.y + Area.h - Pad - Y);
+    }
+
+    if(!Card.Metrics.empty() && Available > 0)
+    {
+      if(Candidate && Current && Current->Present)
+      {
+        const int RowCount = int(MobileComparisonRows(
+          *Candidate, *Current).size());
+        const int ReservedComparisonHeight = std::min(Available,
+          Scale * 31 + RowCount * Scale * 11);
+        const int ComparisonY = std::max(Y,
+          Area.y + Area.h - Pad - ReservedComparisonHeight);
+        const SDL_Rect ComparisonArea = { Area.x + Pad, ComparisonY,
+                                          TextWidth, ReservedComparisonHeight };
+        const int PaintedComparisonHeight = PaintMobileComparison(
+          Renderer, ComparisonArea, *Candidate, *Current, DisplayTitle, Scale);
+        Y = ComparisonY + PaintedComparisonHeight + Gap;
+        Available = std::max(0, Area.y + Area.h - Pad - Y);
+      }
+      else
+      {
+        const int Columns = Card.Metrics.size() == 1 ? 1 : 2;
+        const int Rows = (int(Card.Metrics.size()) + Columns - 1) / Columns;
+        const int CellHeight = Advance + Scale * 2;
+        const int MetricsHeight = Rows * CellHeight;
+        const int MetricsY = Card.Requirements.empty()
+          ? std::max(Y, Area.y + Area.h - Pad - MetricsHeight) : Y;
+        SDL_Rect MetricsArea = { Area.x + Pad, MetricsY, TextWidth,
+                                 std::min(Available, MetricsHeight) };
+        const int CellWidth = MetricsArea.w / Columns;
+        Fill(Renderer, MetricsArea, 14, 18, 14, 242);
+        SDL_SetRenderDrawColor(Renderer, 92, 83, 55, 210);
+        SDL_RenderDrawLine(Renderer, MetricsArea.x, MetricsArea.y,
+                           MetricsArea.x + MetricsArea.w, MetricsArea.y);
+        SDL_RenderDrawLine(Renderer, MetricsArea.x,
+                           MetricsArea.y + MetricsArea.h - 1,
+                           MetricsArea.x + MetricsArea.w,
+                           MetricsArea.y + MetricsArea.h - 1);
+        for(int Row = 1; Row < Rows; ++Row)
+          SDL_RenderDrawLine(Renderer, MetricsArea.x,
+                             MetricsArea.y + Row * CellHeight,
+                             MetricsArea.x + MetricsArea.w,
+                             MetricsArea.y + Row * CellHeight);
+        for(size_t Index = 0; Index < Card.Metrics.size(); ++Index)
+        {
+          const int Column = int(Index) % Columns;
+          const int Row = int(Index) / Columns;
+          const bool LoneLastMetric = Columns == 2 && Column == 0
+                                   && Index + 1 == Card.Metrics.size();
+          SDL_Rect Cell = { MetricsArea.x + Column * CellWidth,
+                            MetricsArea.y + Row * CellHeight,
+                            LoneLastMetric ? MetricsArea.w : CellWidth,
+                            CellHeight };
+          if(Column == 0 && !LoneLastMetric
+             && Index + 1 < Card.Metrics.size())
+          {
+            SDL_SetRenderDrawColor(Renderer, 68, 65, 48, 180);
+            SDL_RenderDrawLine(Renderer, Cell.x + Cell.w, Cell.y + Scale,
+                               Cell.x + Cell.w,
+                               Cell.y + Cell.h - Scale);
+          }
+          CenterText(Renderer, Cell, Card.Metrics[Index].c_str(),
+                     std::min(5, Scale + 1), 235, 207, 116);
+        }
+        Y += MetricsArea.h + Gap;
+        Available = std::max(0, Area.y + Area.h - Pad - Y);
+      }
+    }
+
+    if(!Card.Requirements.empty() && Available > 0)
+    {
+      SDL_Rect Requirements = { Area.x + Pad, Y, TextWidth, Available };
+      Fill(Renderer, Requirements, Card.Missing ? 25 : 14,
+           Card.Missing ? 12 : 24, Card.Missing ? 11 : 15, 242);
+      const SDL_Rect RequirementText = {
+        Requirements.x + Scale * 2, Requirements.y + Scale * 2,
+        std::max(1, Requirements.w - Scale * 4),
+        std::max(1, Requirements.h - Scale * 4) };
+      PaintCardRequirements(Renderer, RequirementText, Card, Scale);
+    }
+  }
+
+  void PaintMobileConditions(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                             const adaptiveui::HudModel& Hud)
+  {
+    State.ConditionViewport = Area;
+    State.ConditionMaxScrollY = 0;
+    if(Area.w <= 0 || Area.h <= 0 || Hud.Conditions.empty())
+      return;
+    const int Gap = Clamp(int(2 * State.Density), 3, 8);
+    const int ChipHeight = Clamp(int(13 * State.Density), 28, 48);
+    const int ContentHeight = int(Hud.Conditions.size()) * (ChipHeight + Gap)
+                            - Gap;
+    State.ConditionMaxScrollY = std::max(0, ContentHeight - Area.h);
+    State.ConditionScrollY = Clamp(State.ConditionScrollY, 0,
+                                   State.ConditionMaxScrollY);
+    int Y = Area.y - State.ConditionScrollY;
+    SDL_RenderSetClipRect(Renderer, &Area);
+    for(size_t Index = 0; Index < Hud.Conditions.size(); ++Index)
+    {
+      SDL_Rect Chip = { Area.x, Y, Area.w, ChipHeight };
+      const adaptiveui::StatusIndicator& Condition = Hud.Conditions[Index];
+      if(Chip.y + Chip.h > Area.y && Chip.y < Area.y + Area.h)
+      {
+        Fill(Renderer, Chip, Condition.Red / 5, Condition.Green / 5,
+             Condition.Blue / 5, 245);
+        Outline(Renderer, Chip, Condition.Red, Condition.Green,
+                Condition.Blue);
+        CenterText(Renderer, Chip, Condition.Label.c_str(), 3,
+                   240, 230, 202);
+      }
+      Y += ChipHeight + Gap;
+    }
+    SDL_RenderSetClipRect(Renderer, 0);
+  }
+
+  struct pickupactionbutton
+  {
+    int Code;
+    const char* Label;
+  };
+
+  std::vector<pickupactionbutton> PickupItemActions(
+    const adaptiveui::HudModel& Hud)
+  {
+    std::vector<pickupactionbutton> Result;
+    if(Hud.MenuKind != adaptiveui::MENU_PICKUP_GRID
+       || Hud.MenuSelected < 0
+       || Hud.MenuSelected >= int(Hud.MenuItemMetrics.size()))
+      return Result;
+
+    const adaptiveui::ItemMetrics& Metrics =
+      Hud.MenuItemMetrics[Hud.MenuSelected];
+    if(!Metrics.Present)
+      return Result;
+    if(Metrics.Equippable)
+      Result.push_back({ adaptiveui::ITEM_ACTION_NONE, "EQUIP" });
+
+    const pickupactionbutton Available[] = {
+      { adaptiveui::ITEM_ACTION_DRINK, "DRINK" },
+      { adaptiveui::ITEM_ACTION_TASTE, "TASTE" },
+      { adaptiveui::ITEM_ACTION_EAT, "EAT" },
+      { adaptiveui::ITEM_ACTION_READ, "READ" },
+      { adaptiveui::ITEM_ACTION_ZAP, "ZAP" },
+      { adaptiveui::ITEM_ACTION_APPLY, "APPLY" }
+    };
+    for(size_t Index = 0;
+        Index < sizeof(Available) / sizeof(Available[0])
+        && Result.size() < MAX_PICKUP_ACTIONS; ++Index)
+      if(Metrics.Actions & adaptiveui::ItemActionMask(
+           adaptiveui::ItemAction(Available[Index].Code)))
+        Result.push_back(Available[Index]);
+    return Result;
+  }
+
+  void PaintAdaptiveGridMenu(SDL_Renderer* Renderer, SDL_Texture* GameTexture,
+                             const adaptiveui::HudModel& Hud)
+  {
+    const int Count = std::min(int(Hud.MenuOptions.size()),
+                               int(MAX_MENU_OPTIONS));
+    const bool ShowDoll = Hud.PaperDollScreen
+                       && Hud.PaperDollSource.w > 0
+                       && Hud.PaperDollSource.h > 0;
+    const bool ShowDetail = Count > 0;
+    const bool TextButtons = Hud.MenuKind == adaptiveui::MENU_BUTTON_ROWS;
+    const bool ConfirmGrid = Hud.MenuKind == adaptiveui::MENU_ITEM_GRID
+                           || Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+    const bool PickupGrid = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+    const std::vector<pickupactionbutton> ItemActions = PickupGrid
+      ? PickupItemActions(Hud) : std::vector<pickupactionbutton>();
+
+    std::vector<int> DisplayOrder;
+    if(int(Hud.MenuDisplayOrder.size()) == Count)
+      DisplayOrder = Hud.MenuDisplayOrder;
+    else
+      for(int Index = 0; Index < Count; ++Index)
+        DisplayOrder.push_back(Index);
+
+    int SelectedPosition = 0;
+    for(int Position = 0; Position < Count; ++Position)
+      if(DisplayOrder[Position] == Hud.MenuSelected)
+      {
+        SelectedPosition = Position;
+        break;
+      }
+
+    // Adaptive icon menus occupy the complete five-column controller footprint.
+    // Item-choice grids reserve the final two equal cells for Select and Back;
+    // category grids reserve only the final Back cell.
+    enum { MENU_COLUMNS = 5, MENU_ROWS = 3, MENU_SLOTS = 15 };
+    const int EntriesPerPage = MENU_SLOTS
+      - (PickupGrid ? 5 : (ConfirmGrid ? 2 : 1));
+    const SDL_Rect MenuGridArea = State.Width < State.Height
+      ? SDL_Rect{ State.Safe.x, State.Controls.y,
+                  State.Safe.w, State.Controls.h }
+      : SDL_Rect{ State.Toggle.x, State.Controls.y,
+                  State.Toggle.w, State.Controls.h };
+    SDL_Rect EntriesArea = MenuGridArea;
+    // Landscape row menus are a side rail, not a controller-shaped grid.
+    // Keep icon menus in their deliberate 5x3 button box, but let lists use
+    // every safe pixel below the rail heading. Their viewport also drives
+    // touch hit-testing and kinetic scrolling, so visual and input bounds stay
+    // together.
+    if(TextButtons && State.Width >= State.Height)
+      EntriesArea.h = std::max(1,
+        State.Safe.y + State.Safe.h - EntriesArea.y);
+    int PageStart = 0;
+    int VisibleCount = Count;
+    int RowHeight = 0;
+    if(TextButtons)
+    {
+      State.MenuViewport = EntriesArea;
+      const int ControllerRowHeight = std::max(1, State.Controls.h / 5);
+      const int TotalRows = std::max(1, Count + 1); // Include Back.
+      const int ExpandedRowHeight = EntriesArea.h / TotalRows;
+      const int MaximumRowHeight = std::max(ControllerRowHeight,
+        Clamp(int(36 * State.Density), 70, 120));
+      RowHeight = Clamp(ExpandedRowHeight, ControllerRowHeight,
+                        MaximumRowHeight);
+      State.MenuScrollStep = RowHeight;
+      State.MenuMaxScrollY = std::max(0,
+        (Count + 1) * RowHeight - EntriesArea.h);
+      State.MenuScrollY = Clamp(State.MenuScrollY, 0, State.MenuMaxScrollY);
+      if(Hud.MenuSelected != State.MenuGridSelection && Hud.MenuSelected >= 0)
+      {
+        const int SelectedTop = SelectedPosition * RowHeight;
+        const int SelectedBottom = SelectedTop + RowHeight;
+        if(SelectedTop < State.MenuScrollY)
+          State.MenuScrollY = SelectedTop;
+        else if(SelectedBottom > State.MenuScrollY + EntriesArea.h)
+          State.MenuScrollY = SelectedBottom - EntriesArea.h;
+        State.MenuScrollY = Clamp(State.MenuScrollY, 0, State.MenuMaxScrollY);
+      }
+    }
+    else
+    {
+      State.MenuScrollStep = 0;
+      const int PageCount = std::max(1,
+        (Count + EntriesPerPage - 1) / EntriesPerPage);
+      const int PageStep = std::max(1, MenuGridArea.h / MENU_ROWS);
+      State.MenuViewport = MenuGridArea;
+      State.MenuMaxScrollY = (PageCount - 1) * PageStep;
+      State.MenuScrollY = Clamp(State.MenuScrollY, 0, State.MenuMaxScrollY);
+      int CurrentPage = Clamp((State.MenuScrollY + PageStep / 2) / PageStep,
+                              0, PageCount - 1);
+      const int SelectedPage = SelectedPosition / EntriesPerPage;
+      if(Count > EntriesPerPage
+         && Hud.MenuSelected != State.MenuGridSelection
+         && Hud.MenuSelected >= 0)
+      {
+        CurrentPage = SelectedPage;
+        State.MenuScrollY = CurrentPage * PageStep;
+      }
+      PageStart = CurrentPage * EntriesPerPage;
+      VisibleCount = std::max(0,
+        std::min(EntriesPerPage, Count - PageStart));
+    }
+    State.MenuGridSelection = Hud.MenuSelected;
+    for(int Index = 0; Index < MAX_MENU_OPTIONS; ++Index)
+      State.MenuRows[Index] = { 0, 0, 0, 0 };
+    State.ConditionViewport = { 0, 0, 0, 0 };
+    State.ConditionMaxScrollY = 0;
+
+    const int SummaryInset = Clamp(int(5 * State.Density), 6, 20);
+    SDL_Rect Summary = { State.Game.x + SummaryInset,
+                         State.Game.y + SummaryInset,
+                         std::max(1, State.Game.w - SummaryInset * 2),
+                         std::max(1, State.Game.h - SummaryInset * 2) };
+    SDL_Rect DetailArea = Summary;
+    if(TextButtons)
+    {
+      Fill(Renderer, State.Game, 0, 0, 0, 255);
+      RenderTextureFit(Renderer, GameplaySnapshot, State.MapSource, State.Game);
+      DetailArea = { 0, 0, 0, 0 };
+    }
+    if(ShowDoll)
+    {
+      const int Gap = Clamp(int(4 * State.Density), 6, 18);
+      SDL_Rect DollArea;
+      if(Summary.w > Summary.h * 6 / 5)
+      {
+        const int DollWidth = Summary.w * 42 / 100;
+        DollArea = { Summary.x, Summary.y, DollWidth, Summary.h };
+        DetailArea = { DollArea.x + DollArea.w + Gap, Summary.y,
+                       std::max(1, Summary.w - DollArea.w - Gap), Summary.h };
+      }
+      else
+      {
+        const int DollHeight = Summary.h * 48 / 100;
+        DollArea = { Summary.x, Summary.y, Summary.w, DollHeight };
+        DetailArea = { Summary.x, DollArea.y + DollArea.h + Gap, Summary.w,
+                       std::max(1, Summary.h - DollArea.h - Gap) };
+      }
+      Fill(Renderer, DollArea, 5, 7, 7, 245);
+      Outline(Renderer, DollArea, 126, 102, 57);
+      SDL_Rect Conditions = { DollArea.x, DollArea.y,
+                              std::max(0, DollArea.w * 30 / 100), DollArea.h };
+      SDL_Rect DollImage = DollArea;
+      DollImage.x += Conditions.w + 4;
+      DollImage.w = std::max(1, DollImage.w - Conditions.w - 4);
+      RenderTextureFit(Renderer, GameTexture, Hud.PaperDollSource, DollImage);
+      PaintMobileConditions(Renderer, Conditions, Hud);
+    }
+
+    SDL_RenderSetClipRect(Renderer, &State.MenuViewport);
+    for(int PagePosition = 0; PagePosition < VisibleCount; ++PagePosition)
+    {
+      const int Position = PageStart + PagePosition;
+      const int Index = DisplayOrder[Position];
+      if(Index < 0 || Index >= Count)
+        continue;
+      const SDL_Rect Cell = TextButtons
+        ? SDL_Rect{ EntriesArea.x + 3,
+                    EntriesArea.y + Position * RowHeight
+                      - State.MenuScrollY + 3,
+                    std::max(1, EntriesArea.w - 6),
+                    std::max(1, RowHeight - 6) }
+        : GridCell(MenuGridArea, MENU_COLUMNS, MENU_ROWS, PagePosition, 3);
+      State.MenuRows[Index] = Cell;
+      const bool Selected = Index == Hud.MenuSelected;
+      const bool Available = Index >= int(Hud.MenuAvailability.size())
+                          || Hud.MenuAvailability[Index] != 0;
+      Fill(Renderer, Cell, Selected ? 35 : 14, Selected ? 71 : 18,
+           Selected ? 48 : 24, 250);
+      Outline(Renderer, Cell, Selected ? 145 : (Available ? 91 : 55),
+              Selected ? 190 : (Available ? 78 : 55),
+              Selected ? 115 : (Available ? 59 : 55));
+
+      if(TextButtons)
+        MenuRowText(Renderer, Cell, Hud.MenuOptions[Index], 8, 4,
+                    Available ? 240 : 130, Available ? 230 : 126,
+                    Available ? 202 : 116);
+      else
+      {
+        const int LabelHeight = std::max(28, Cell.h * 30 / 100);
+        SDL_Rect IconArea = { Cell.x + 5, Cell.y + 5,
+          std::max(1, Cell.w - 10), std::max(1, Cell.h - LabelHeight - 8) };
+        if(Index < int(Hud.MenuIconSources.size())
+           && Hud.MenuIconSources[Index].w > 0
+           && Hud.MenuIconSources[Index].h > 0)
+        {
+          if(!Available)
+            SDL_SetTextureColorMod(GameTexture, 100, 100, 96);
+          RenderTextureFit(Renderer, GameTexture, Hud.MenuIconSources[Index],
+                           IconArea);
+          if(!Available)
+            SDL_SetTextureColorMod(GameTexture, 255, 255, 255);
+        }
+        SDL_Rect Label = { Cell.x + 4, Cell.y + Cell.h - LabelHeight,
+                           std::max(1, Cell.w - 8), LabelHeight };
+        MenuRowText(Renderer, Label, Hud.MenuOptions[Index], 4,
+                    Clamp(LabelHeight / 18, 2, 3),
+                    Available ? 240 : 130, Available ? 230 : 126,
+                    Available ? 202 : 116);
+      }
+    }
+    SDL_RenderSetClipRect(Renderer, 0);
+
+    if(ShowDetail && DetailArea.w > 0 && DetailArea.h > 0 && Count > 0)
+    {
+      const int Index = Clamp(Hud.MenuSelected, 0, Count - 1);
+      const std::string ItemTitle = MobileItemTitle(Hud.MenuOptions[Index]);
+      const adaptiveui::ItemMetrics* Candidate =
+        Index < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Index].Present
+        ? &Hud.MenuItemMetrics[Index] : 0;
+      const adaptiveui::ItemMetrics* Current = 0;
+      if(Hud.EquipmentComparisonActive && Hud.EquippedItemMetrics.Present)
+        Current = &Hud.EquippedItemMetrics;
+      else if(Index < int(Hud.MenuComparisonMetrics.size())
+              && Hud.MenuComparisonMetrics[Index].Present)
+        Current = &Hud.MenuComparisonMetrics[Index];
+      const std::string DescriptionText =
+        Index < int(Hud.MenuDetails.size()) ? Hud.MenuDetails[Index] : "";
+      const std::string MetricsText = Candidate
+        ? MobileItemMetrics(*Candidate) : "";
+      PaintMobileItemCard(Renderer, DetailArea, ItemTitle,
+                          DescriptionText, MetricsText, Candidate, Current);
+    }
+
+    State.MenuConfirm = { 0, 0, 0, 0 };
+    State.MenuEquip = { 0, 0, 0, 0 };
+    State.MenuItemActionCount = 0;
+    for(int Index = 0; Index < MAX_PICKUP_ACTIONS; ++Index)
+    {
+      State.MenuItemActions[Index] = { 0, 0, 0, 0 };
+      State.MenuItemActionCodes[Index] = adaptiveui::ITEM_ACTION_NONE;
+    }
+    if(TextButtons)
+      State.MenuBack = { MenuGridArea.x + 3,
+                         EntriesArea.y + Count * RowHeight
+                           - State.MenuScrollY + 3,
+                         std::max(1, MenuGridArea.w - 6),
+                         std::max(1, RowHeight - 6) };
+    else
+    {
+      if(ConfirmGrid)
+      {
+        State.MenuConfirm = GridCell(MenuGridArea, MENU_COLUMNS, MENU_ROWS,
+                                     MENU_SLOTS - 2, 3);
+        if(PickupGrid && !ItemActions.empty())
+        {
+          State.MenuItemActionCount = std::min(
+            int(ItemActions.size()), int(MAX_PICKUP_ACTIONS));
+          const int ActionStart = MENU_SLOTS - 2
+                                - State.MenuItemActionCount;
+          for(int Index = 0; Index < State.MenuItemActionCount; ++Index)
+          {
+            State.MenuItemActions[Index] = GridCell(
+              MenuGridArea, MENU_COLUMNS, MENU_ROWS,
+              ActionStart + Index, 3);
+            State.MenuItemActionCodes[Index] = ItemActions[Index].Code;
+            if(ItemActions[Index].Code == adaptiveui::ITEM_ACTION_NONE)
+              State.MenuEquip = State.MenuItemActions[Index];
+          }
+        }
+        State.MenuBack = GridCell(MenuGridArea, MENU_COLUMNS, MENU_ROWS,
+                                  MENU_SLOTS - 1, 3);
+      }
+      else
+        State.MenuBack = GridCell(MenuGridArea, MENU_COLUMNS, MENU_ROWS,
+                                  MENU_SLOTS - 1, 3);
+    }
+    if(ConfirmGrid)
+    {
+      const bool CanConfirm = Hud.MenuSelected >= 0
+                           && Hud.MenuSelected < Count;
+      Fill(Renderer, State.MenuConfirm, CanConfirm ? 35 : 19,
+           CanConfirm ? 71 : 23, CanConfirm ? 48 : 28, 245);
+      Outline(Renderer, State.MenuConfirm, CanConfirm ? 105 : 70,
+              CanConfirm ? 170 : 70, CanConfirm ? 92 : 70);
+      CenterText(Renderer, State.MenuConfirm,
+                 PickupGrid ? "STASH" : "SELECT", 4,
+                 CanConfirm ? 235 : 130, CanConfirm ? 230 : 125,
+                 CanConfirm ? 202 : 115);
+      if(PickupGrid)
+      {
+        for(int Index = 0; Index < State.MenuItemActionCount; ++Index)
+        {
+          const SDL_Rect& ActionRect = State.MenuItemActions[Index];
+          Fill(Renderer, ActionRect, CanConfirm ? 35 : 19,
+               CanConfirm ? 58 : 23, CanConfirm ? 71 : 28, 245);
+          Outline(Renderer, ActionRect, CanConfirm ? 105 : 70,
+                  CanConfirm ? 145 : 70, CanConfirm ? 190 : 70);
+          CenterText(Renderer, ActionRect, ItemActions[Index].Label, 4,
+                     CanConfirm ? 235 : 130, CanConfirm ? 230 : 125,
+                     CanConfirm ? 202 : 115);
+        }
+      }
+    }
+    if(!TextButtons || (State.MenuBack.y + State.MenuBack.h
+                        > State.MenuViewport.y
+                        && State.MenuBack.y < State.MenuViewport.y
+                                             + State.MenuViewport.h))
+    {
+      if(TextButtons)
+        SDL_RenderSetClipRect(Renderer, &State.MenuViewport);
+      Fill(Renderer, State.MenuBack, 54, 22, 20, 245);
+      Outline(Renderer, State.MenuBack, 190, 76, 61);
+      CenterText(Renderer, State.MenuBack, "BACK", 4, 240, 210, 190);
+      if(TextButtons)
+        SDL_RenderSetClipRect(Renderer, 0);
+    }
+  }
+
+  bool MobileCraftingGuidePage(const adaptiveui::HudModel& Hud)
+  {
+    return Hud.MenuKind == adaptiveui::MENU_GUIDE
+        && State.MenuTitle.find("Crafting guide - ") == 0;
+  }
+
+  void SplitGuideSection(const std::string& Source, std::string& Heading,
+                         std::string& Body)
+  {
+    const size_t Divider = Source.find("::");
+    if(Divider == std::string::npos)
+    {
+      Heading.clear();
+      Body = TrimCardText(Source);
+      return;
+    }
+    Heading = TrimCardText(Source.substr(0, Divider));
+    Body = TrimCardText(Source.substr(Divider + 2));
+  }
+
+  int MobileGuideContentHeight(int Width, int BodyScale, int Gap)
+  {
+    const int HeadingScale = std::min(5, BodyScale + 1);
+    int Height = 0;
+    for(int Index = 0; Index < State.MenuOptionCount; ++Index)
+    {
+      std::string Heading, Body;
+      SplitGuideSection(State.MenuOptions[Index], Heading, Body);
+      if(!Heading.empty())
+        Height += HeadingScale * 8 + BodyScale * 2;
+      Height += WrappedLineCount(Body, Width, BodyScale) * BodyScale * 8;
+      if(Index + 1 < State.MenuOptionCount)
+        Height += Gap;
+    }
+    return Height;
+  }
+
+  void PaintMobileCraftingGuidePage(SDL_Renderer* Renderer)
+  {
+    const int OuterPad = Clamp(int(7 * State.Density), 10, 24);
+    const int InnerPad = Clamp(int(5 * State.Density), 8, 18);
+    const int SectionGap = Clamp(int(7 * State.Density), 14, 28);
+    const int FooterHeight = Clamp(int(18 * State.Density), 38, 62);
+    SDL_Rect Page = { State.Game.x + OuterPad, State.Game.y + OuterPad,
+                      State.Game.w - OuterPad * 2,
+                      State.Game.h - OuterPad * 2 };
+    Fill(Renderer, Page, 7, 10, 8, 248);
+    Outline(Renderer, Page, 126, 102, 57);
+
+    SDL_Rect Footer = { Page.x + 1, Page.y + Page.h - FooterHeight,
+                        Page.w - 2, FooterHeight - 1 };
+    SDL_Rect Content = { Page.x + InnerPad, Page.y + InnerPad,
+                         Page.w - InnerPad * 2,
+                         Page.h - FooterHeight - InnerPad * 2 };
+    State.MenuViewport = Content;
+    State.MenuMaxScrollY = 0;
+    State.MenuScrollY = 0;
+    for(int Index = 0; Index < MAX_MENU_OPTIONS; ++Index)
+      State.MenuRows[Index] = { 0, 0, 0, 0 };
+
+    const int TextIndent = Clamp(int(4 * State.Density), 7, 14);
+    const int TextWidth = std::max(1, Content.w - TextIndent - InnerPad);
+    int BodyScale = 5;
+    while(BodyScale > 2
+          && MobileGuideContentHeight(TextWidth, BodyScale, SectionGap)
+             > Content.h)
+      --BodyScale;
+    const int HeadingScale = std::min(5, BodyScale + 1);
+    int Y = Content.y;
+    for(int Index = 0; Index < State.MenuOptionCount; ++Index)
+    {
+      std::string Heading, Body;
+      SplitGuideSection(State.MenuOptions[Index], Heading, Body);
+      const int HeadingHeight = Heading.empty()
+        ? 0 : HeadingScale * 8 + BodyScale * 2;
+      const int BodyHeight = WrappedLineCount(Body, TextWidth, BodyScale)
+                           * BodyScale * 8;
+      const int SectionHeight = HeadingHeight + BodyHeight;
+
+      SDL_Rect Accent = { Content.x, Y, std::max(2, BodyScale),
+                          std::max(1, SectionHeight) };
+      Fill(Renderer, Accent, 126, 102, 57, 235);
+      if(!Heading.empty())
+      {
+        SDL_Rect HeadingArea = { Content.x + TextIndent, Y, TextWidth,
+                                 HeadingHeight };
+        LeftTextAtScale(Renderer, HeadingArea, Heading.c_str(), HeadingScale,
+                        222, 189, 91);
+        Y += HeadingHeight;
+      }
+      SDL_Rect BodyArea = { Content.x + TextIndent, Y, TextWidth, BodyHeight };
+      PaintCardParagraph(Renderer, BodyArea, Body, BodyScale,
+                         240, 230, 202);
+      Y += BodyHeight;
+      if(Index + 1 < State.MenuOptionCount)
+      {
+        const int DividerY = Y + SectionGap / 2;
+        SDL_SetRenderDrawColor(Renderer, 68, 61, 43, 190);
+        SDL_RenderDrawLine(Renderer, Content.x + TextIndent, DividerY,
+                           Content.x + Content.w, DividerY);
+        Y += SectionGap;
+      }
+    }
+
+    SDL_SetRenderDrawColor(Renderer, 126, 102, 57, 220);
+    SDL_RenderDrawLine(Renderer, Footer.x, Footer.y,
+                       Footer.x + Footer.w, Footer.y);
+    char PageLabel[32];
+    snprintf(PageLabel, sizeof(PageLabel), "PAGE %d OF %d",
+             State.MenuPage, State.MenuPages);
+    CenterText(Renderer, Footer, PageLabel, 4, 222, 189, 91);
+  }
+
+  void PaintMobileMenu(SDL_Renderer* Renderer, SDL_Texture* GameTexture)
+  {
+    const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
+    if(MobileCraftingGuidePage(Hud))
+    {
+      PaintMobileCraftingGuidePage(Renderer);
+      return;
+    }
+    if(Hud.MenuKind == adaptiveui::MENU_CATEGORY_GRID
+       || Hud.MenuKind == adaptiveui::MENU_ITEM_GRID
+       || Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID
+       || Hud.MenuKind == adaptiveui::MENU_BUTTON_ROWS)
+    {
+      PaintAdaptiveGridMenu(Renderer, GameTexture, Hud);
+      return;
+    }
     const bool MainMenu = MainMenuPresentation();
     const bool ScrollableEquipment = State.MenuTitle == "Equipment"
                                   && State.MenuPages == 1;
@@ -1494,6 +2819,16 @@ namespace
       Content.w -= Narrowing * 2;
     }
     const int Count = std::max(1, State.MenuOptionCount);
+    const bool GroupedOptions = State.MenuTitle == "OPTIONS"
+      && int(Hud.MenuGroups.size()) >= State.MenuOptionCount;
+    int GroupHeaderCount = 0;
+    if(GroupedOptions)
+      for(int Index = 0; Index < State.MenuOptionCount; ++Index)
+        if(Index == 0 || Hud.MenuGroups[Index] != Hud.MenuGroups[Index - 1])
+          ++GroupHeaderCount;
+    const int GroupHeaderHeight = GroupedOptions
+      ? Clamp(int(12 * State.Density), 28, 46) : 0;
+    const int GroupHeaderReserve = GroupHeaderCount * GroupHeaderHeight;
     const int MaximumRowHeight = MainMenu
       ? Clamp(int(31 * State.Density), 68, 112)
       : (RoomyWrappedRows
@@ -1501,7 +2836,8 @@ namespace
          : Clamp(int(36 * State.Density), 70, 130));
     const int RowsHeight = ScrollableEquipment
       ? Count * MaximumRowHeight
-      : std::min(Content.h, Count * MaximumRowHeight);
+      : std::min(std::max(1, Content.h - GroupHeaderReserve),
+                 Count * MaximumRowHeight);
     const int ShortestRowHeight = ScrollableEquipment
       ? MaximumRowHeight - 4 : std::max(1, RowsHeight / Count - 4);
     int MenuScale = Clamp(ShortestRowHeight / 11, 1, MainMenu ? 5 : 4);
@@ -1537,18 +2873,39 @@ namespace
     }
     if(ScrollableEquipment)
       SDL_RenderSetClipRect(Renderer, &Content);
+    int HeadersBefore = 0;
     for(int Index = 0; Index < State.MenuOptionCount; ++Index)
     {
       const int ScrollY = ScrollableEquipment ? State.MenuScrollY : 0;
-      const int Y0 = Content.y + RowsHeight * Index / Count - ScrollY;
+      const bool NewGroup = GroupedOptions
+        && (Index == 0 || Hud.MenuGroups[Index] != Hud.MenuGroups[Index - 1]);
+      int Y0 = Content.y + RowsHeight * Index / Count
+             + HeadersBefore * GroupHeaderHeight - ScrollY;
+      if(NewGroup)
+      {
+        SDL_Rect Header = { Content.x, Y0, Content.w, GroupHeaderHeight };
+        Fill(Renderer, Header, 12, 16, 13, 248);
+        SDL_SetRenderDrawColor(Renderer, 126, 102, 57, 220);
+        SDL_RenderDrawLine(Renderer, Header.x,
+                           Header.y + Header.h - 1,
+                           Header.x + Header.w,
+                           Header.y + Header.h - 1);
+        LeftTextAtScale(Renderer,
+          { Header.x + Padding / 2, Header.y,
+            std::max(1, Header.w - Padding), Header.h },
+          Hud.MenuGroups[Index].c_str(), 3, 222, 189, 91);
+        ++HeadersBefore;
+        Y0 += GroupHeaderHeight;
+      }
       const int Y1 = Content.y + RowsHeight * (Index + 1) / Count - ScrollY;
+      const int AdjustedY1 = Y1 + HeadersBefore * GroupHeaderHeight;
       // Verbose mobile rows often wrap to multiple lines. Leave a strong,
       // density-aware section break so adjacent bordered entries do not read
       // as one continuous paragraph (24 px on the Pixel's 3x density).
       const int RowGap = RoomyWrappedRows
         ? Clamp(int(8 * State.Density), 20, 32) : 4;
       SDL_Rect Row = { Content.x, Y0 + RowGap / 2, Content.w,
-                       std::max(1, Y1 - Y0 - RowGap) };
+                       std::max(1, AdjustedY1 - Y0 - RowGap) };
       State.MenuRows[Index] = Row;
       const bool Selected = Index == State.MenuSelected;
       if(MainMenu)
@@ -1872,9 +3229,21 @@ namespace
       }
     }
 
-    Frame(Renderer, State.Controls);
-    Frame(Renderer, State.Toggle);
+    const bool AdaptiveGrid = AdaptiveGridMenuPresentation();
     const bool ShowChoices = State.QuestionChoiceCount > 0;
+    const bool BinaryConfirmation = BinaryConfirmationActive();
+    if(!AdaptiveGrid)
+    {
+      if(BinaryConfirmation && State.Width < State.Height)
+      {
+        SDL_Rect Buttons = BinaryConfirmationButton(0);
+        Buttons.w = State.Controls.w;
+        Frame(Renderer, Buttons);
+      }
+      else
+        Frame(Renderer, State.Controls);
+    }
+    Frame(Renderer, State.Toggle);
     const bool ShowActions = State.Gameplay && !State.PromptActive
                           && State.ControlMode == CONTROL_ACTIONS;
     int CurrentGroup = -1;
@@ -1895,15 +3264,19 @@ namespace
                         && !ShowChoices;
     const char* ToggleLabel = State.PromptNumeric ? PromptValueLabel.c_str()
       : (MapCursor ? "BACK"
-      : (ShowChoices ? (State.MapScreen ? "MAP ACTIONS" : "CHOICES")
-      : (!State.Gameplay ? (MainMenuPresentation() ? "MENU CONTROLS"
-                           : (State.MenuDirectionMode ? "MENU" : "DIRECTIONS"))
-                         : (ShowActions ? ActionGroupName(CurrentGroup)
-                                         : "DIRECTIONS"))));
+      : (ShowChoices ? (BinaryConfirmation ? "CONFIRM"
+                         : (State.MapScreen ? "MAP ACTIONS" : "CHOICES"))
+       : (!State.Gameplay ? (AdaptiveGrid ? "ITEMS"
+                          : (MainMenuPresentation() ? "MENU CONTROLS"
+                            : (State.MenuDirectionMode ? "MENU" : "DIRECTIONS")))
+                          : (ShowActions ? ActionGroupName(CurrentGroup)
+                                          : "DIRECTIONS"))));
     CenterTextAtScale(Renderer, State.Toggle,
                       ToggleLabel, 5, 235, 218, 174);
     if(ShowControlSectionTabs())
       PaintControlSectionTabs(Renderer);
+    if(AdaptiveGrid)
+      return;
 
     const char* Directions[ACTION_COUNT] = {
       "NW", "N", "NE", "W", "WAIT", "E", "SW", "S", "SE"
@@ -1934,14 +3307,20 @@ namespace
     {
       for(int Index = 0; Index < State.QuestionChoiceCount; ++Index)
       {
-        SDL_Rect Button = GridCell(State.Controls, 3, 3, Index, 3);
+        SDL_Rect Button = BinaryConfirmation
+          ? BinaryConfirmationButton(Index)
+          : GridCell(State.Controls, 3, 3, Index, 3);
         const bool Back = State.QuestionChoices[Index] == KEY_ESC
                        || State.QuestionChoices[Index] == KEY_CONTROLLER_B;
         Fill(Renderer, Button, Back ? 54 : 35, Back ? 31 : 71,
              Back ? 29 : 48, 238);
         Outline(Renderer, Button, 156, 137, 100);
         char Label[16];
-        KeyLabel(State.QuestionChoices[Index], Label, sizeof(Label));
+        if(BinaryConfirmation)
+          std::snprintf(Label, sizeof(Label), "%s",
+                        Index == 0 ? "YES" : "NO");
+        else
+          KeyLabel(State.QuestionChoices[Index], Label, sizeof(Label));
         CenterTextAtScale(Renderer, Button, Label, 5);
       }
     }
@@ -2221,6 +3600,33 @@ namespace mobileui
     }
   }
 
+  void SetConfirmationPrompt(const char* Prompt)
+  {
+    adaptiveui::SetConfirmationPrompt(Prompt);
+    const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
+    const bool Changed = !State.PromptActive
+      || State.PromptText != Hud.Prompt
+      || State.PromptDetail != Hud.PromptDetail
+      || State.PromptShowsInput || State.PromptNumeric;
+    if(!State.PromptActive)
+      State.PromptGameplay = State.Gameplay || State.MapScreen;
+    State.PromptActive = true;
+    State.PromptShowsInput = false;
+    State.PromptNumeric = false;
+    State.PromptText = Hud.Prompt;
+    State.PromptDetail = Hud.PromptDetail;
+    State.PromptInput.clear();
+    if(Changed)
+    {
+      ConsoleDirty = true;
+      SDL_Event Event;
+      SDL_zero(Event);
+      Event.type = SDL_USEREVENT;
+      Event.user.code = REDRAW_EVENT_CODE;
+      SDL_PushEvent(&Event);
+    }
+  }
+
   void SetPromptDetail(const char* Detail)
   {
     adaptiveui::SetPromptDetail(Detail);
@@ -2450,7 +3856,12 @@ namespace mobileui
     State.MenuPage = std::max(1, Page);
     State.MenuPages = std::max(1, Pages);
     if(NewMenu)
+    {
+      StopMenuFling();
       State.MenuScrollY = 0;
+      State.ConditionScrollY = 0;
+      State.MenuGridSelection = -1;
+    }
     ConsoleDirty = true;
   }
 
@@ -2478,10 +3889,26 @@ namespace mobileui
     State.MenuActive = false;
     State.MenuOptionCount = 0;
     State.MenuSelected = -1;
+    State.MenuGridSelection = -1;
     State.MenuPressActive = false;
+    State.MenuPressConditions = false;
     State.MenuScrolling = false;
+    State.MenuStoppedFlingOnPress = false;
     State.MenuScrollY = 0;
     State.MenuMaxScrollY = 0;
+    State.MenuScrollStep = 0;
+    StopMenuFling();
+    State.ConditionScrollY = 0;
+    State.ConditionMaxScrollY = 0;
+    State.MenuConfirm = { 0, 0, 0, 0 };
+    State.MenuEquip = { 0, 0, 0, 0 };
+    State.MenuItemActionCount = 0;
+    for(int Index = 0; Index < MAX_PICKUP_ACTIONS; ++Index)
+    {
+      State.MenuItemActions[Index] = { 0, 0, 0, 0 };
+      State.MenuItemActionCodes[Index] = adaptiveui::ITEM_ACTION_NONE;
+    }
+    State.MenuBack = { 0, 0, 0, 0 };
     ConsoleDirty = true;
   }
 
@@ -2583,6 +4010,15 @@ namespace mobileui
                        ToggleTop, ControlsSize, ToggleHeight };
       State.Controls = { State.Safe.x + (State.Safe.w - ControlsSize) / 2,
                          ControlsTop, ControlsSize, ControlsSize };
+      if(BinaryConfirmationActive())
+      {
+        const int ButtonHeight = std::max(1, State.Controls.h / 3);
+        const int ButtonsTop = State.Controls.y + State.Controls.h
+                             - ButtonHeight;
+        State.Toggle.y = ButtonsTop - Gap - ToggleHeight;
+        State.Log.h = std::max(State.Log.h,
+          State.Toggle.y - Gap - State.Log.y);
+      }
     }
     else if(State.Gameplay)
     {
@@ -2712,6 +4148,9 @@ namespace mobileui
 
   void DrawGame(SDL_Renderer* Renderer, SDL_Texture* GameTexture)
   {
+    if(State.Gameplay && !State.PaperDollScreen && !State.MapScreen
+       && !State.PromptActive && !State.ScreenTextActive)
+      CaptureGameplaySnapshot(Renderer, GameTexture);
     if(!State.Gameplay)
     {
       if(State.MenuActive)
@@ -2739,7 +4178,7 @@ namespace mobileui
           Fill(Renderer, State.Game, 0, 0, 0, 72);
           PaintMainMenuMotifs(Renderer);
         }
-        PaintMobileMenu(Renderer);
+        PaintMobileMenu(Renderer, GameTexture);
       }
       else if(!State.ScreenTextActive && !State.PromptActive)
         SDL_RenderCopy(Renderer, GameTexture, 0, &State.Game);
@@ -2968,14 +4407,34 @@ namespace mobileui
   {
     touchresult Result;
     CancelDirectionPress();
+    const bool InterruptedMenuFling = State.MenuFlingTimer != 0;
+    StopMenuFling();
+    State.MenuStoppedFlingOnPress = false;
     const int X = Clamp(int(NormalizedX * State.Width), 0, State.Width - 1);
     const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+    if(!State.Gameplay && State.MenuActive
+       && State.ConditionMaxScrollY > 0
+       && Contains(State.ConditionViewport, X, Y))
+    {
+      State.MenuPressActive = true;
+      State.MenuPressConditions = true;
+      State.MenuScrolling = false;
+      State.MenuStoppedFlingOnPress = InterruptedMenuFling;
+      State.MenuPressY = State.MenuLastY = Y;
+      State.MenuLastMotionTime = SDL_GetTicks();
+      ResetMenuMotionSamples(Y, State.MenuLastMotionTime);
+      return Result;
+    }
     if(!State.Gameplay && State.MenuActive && State.MenuMaxScrollY > 0
        && Contains(State.MenuViewport, X, Y))
     {
       State.MenuPressActive = true;
+      State.MenuPressConditions = false;
       State.MenuScrolling = false;
+      State.MenuStoppedFlingOnPress = InterruptedMenuFling;
       State.MenuPressY = State.MenuLastY = Y;
+      State.MenuLastMotionTime = SDL_GetTicks();
+      ResetMenuMotionSamples(Y, State.MenuLastMotionTime);
       return Result;
     }
     State.LogPressActive = ShowGameplayLog() && !State.PromptActive
@@ -3027,17 +4486,29 @@ namespace mobileui
     if(State.MenuPressActive)
     {
       const int Y = Clamp(int(NormalizedY * State.Height), 0, State.Height - 1);
+      const Uint32 Now = SDL_GetTicks();
+      AddMenuMotionSample(Y, Now);
       if(!State.MenuScrolling
          && std::abs(Y - State.MenuPressY) < CANVAS_PAN_SLOP)
         return false;
       State.MenuScrolling = true;
       const int DeltaY = Y - State.MenuLastY;
       State.MenuLastY = Y;
-      const int OldScrollY = State.MenuScrollY;
-      State.MenuScrollY = Clamp(State.MenuScrollY - DeltaY,
-                                0, State.MenuMaxScrollY);
-      if(State.MenuScrollY == OldScrollY)
+      State.MenuLastMotionTime = Now;
+      int& ScrollY = State.MenuPressConditions
+        ? State.ConditionScrollY : State.MenuScrollY;
+      const int Maximum = State.MenuPressConditions
+        ? State.ConditionMaxScrollY : State.MenuMaxScrollY;
+      const int OldScrollY = ScrollY;
+      ScrollY = Clamp(ScrollY - DeltaY, 0, Maximum);
+      State.MenuScrollVelocity = MenuReleaseVelocity(Now);
+      if(ScrollY == OldScrollY)
+      {
+        // Do not carry an outward drag into a fling when the user releases at
+        // an edge. A reversal starts collecting clean velocity immediately.
+        ResetMenuMotionSamples(Y, Now);
         return false;
+      }
       ConsoleDirty = true;
       return true;
     }
@@ -3158,6 +4629,40 @@ namespace mobileui
     ConsoleDirty = true;
   }
 
+  void HandleMenuFling()
+  {
+    if(!State.MenuFlingTimer || !State.MenuActive)
+    {
+      StopMenuFling();
+      return;
+    }
+
+    const Uint32 Now = SDL_GetTicks();
+    const Uint32 Elapsed = std::max(Uint32(1),
+      std::min(Uint32(64), Now - State.MenuFlingLastTime));
+    State.MenuFlingLastTime = Now;
+    int& ScrollY = State.MenuFlingConditions
+      ? State.ConditionScrollY : State.MenuScrollY;
+    const int Maximum = State.MenuFlingConditions
+      ? State.ConditionMaxScrollY : State.MenuMaxScrollY;
+
+    State.MenuFlingPosition += State.MenuScrollVelocity * float(Elapsed);
+    const float ClampedPosition = std::max(0.f,
+      std::min(State.MenuFlingPosition, float(Maximum)));
+    const bool HitEdge = ClampedPosition != State.MenuFlingPosition;
+    State.MenuFlingPosition = ClampedPosition;
+    ScrollY = int(State.MenuFlingPosition + 0.5f);
+
+    // Time-based exponential friction avoids a visible speed discontinuity
+    // near the end of a fling and behaves consistently across frame rates.
+    State.MenuScrollVelocity *= std::exp(-0.0045f * float(Elapsed));
+
+    ConsoleDirty = true;
+    const float StopVelocity = std::max(0.035f, State.Density * 0.02f);
+    if(HitEdge || std::fabs(State.MenuScrollVelocity) < StopVelocity)
+      StopMenuFling();
+  }
+
   touchresult HandleFinger(float NormalizedX, float NormalizedY)
   {
     touchresult Result;
@@ -3180,11 +4685,28 @@ namespace mobileui
 
     if(State.MenuPressActive)
     {
-      const bool SuppressTap = State.MenuScrolling;
+      const bool SuppressTap = State.MenuScrolling
+                            || State.MenuStoppedFlingOnPress;
+      const bool ScrolledConditions = State.MenuPressConditions;
       State.MenuPressActive = false;
+      State.MenuPressConditions = false;
       State.MenuScrolling = false;
+      State.MenuStoppedFlingOnPress = false;
       if(SuppressTap)
+      {
+        const int Maximum = ScrolledConditions
+          ? State.ConditionMaxScrollY : State.MenuMaxScrollY;
+        const Uint32 ReleaseTime = SDL_GetTicks();
+        State.MenuScrollVelocity = MenuReleaseVelocity(ReleaseTime);
+        const float MinimumFlingVelocity = std::max(0.10f,
+                                                    State.Density * 0.04f);
+        if(Maximum > 0
+           && std::fabs(State.MenuScrollVelocity) >= MinimumFlingVelocity)
+          StartMenuFling(ScrolledConditions);
+        ConsoleDirty = true;
+        Result.Kind = touchresult::TOUCH_REDRAW;
         return Result;
+      }
     }
 
     if(State.CanvasPressActive)
@@ -3290,9 +4812,57 @@ namespace mobileui
            && Contains(State.MenuRows[Index], X, Y))
         {
           Result.Kind = touchresult::TOUCH_KEY;
-          Result.KeyCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
+          const adaptiveui::MenuPresentationKind MenuKind =
+            adaptiveui::GetHudModel().MenuKind;
+          const bool PreviewChoice = MenuKind == adaptiveui::MENU_ITEM_GRID
+                                  || MenuKind == adaptiveui::MENU_PICKUP_GRID;
+          if(PreviewChoice)
+            Result.KeyCode = KEY_MOBILE_MENU_PREVIEW_BASE + Index;
+          else
+            Result.KeyCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
           return Result;
         }
+
+    const adaptiveui::MenuPresentationKind MenuKind =
+      adaptiveui::GetHudModel().MenuKind;
+    if((MenuKind == adaptiveui::MENU_ITEM_GRID
+        || MenuKind == adaptiveui::MENU_PICKUP_GRID)
+       && State.MenuSelected >= 0
+       && Contains(State.MenuConfirm, X, Y))
+    {
+      Result.Kind = touchresult::TOUCH_KEY;
+      Result.KeyCode = KEY_MOBILE_MENU_SELECT_BASE + State.MenuSelected;
+      return Result;
+    }
+
+    if(MenuKind == adaptiveui::MENU_PICKUP_GRID
+       && State.MenuSelected >= 0)
+      for(int Index = 0; Index < State.MenuItemActionCount; ++Index)
+        if(Contains(State.MenuItemActions[Index], X, Y))
+        {
+          Result.Kind = touchresult::TOUCH_KEY;
+          const int Action = State.MenuItemActionCodes[Index];
+          Result.KeyCode = Action == adaptiveui::ITEM_ACTION_NONE
+            ? KEY_MOBILE_MENU_EQUIP_BASE + State.MenuSelected
+            : KEY_MOBILE_MENU_ACTION_BASE
+              + (Action - 1) * KEY_MOBILE_MENU_ACTION_STRIDE
+              + State.MenuSelected;
+          return Result;
+        }
+
+    if(AdaptiveGridMenuPresentation()
+       && Contains(State.MenuViewport, X, Y)
+       && Contains(State.MenuBack, X, Y))
+    {
+      Result.Kind = touchresult::TOUCH_KEY;
+      Result.KeyCode = KEY_CONTROLLER_B;
+      return Result;
+    }
+
+    // The icon grid owns the touch rail while active. Misses must not fall
+    // through to the legacy direction/menu-navigation keypad beneath it.
+    if(AdaptiveGridMenuPresentation())
+      return Result;
 
     if(Contains(State.Toggle, X, Y) && !State.QuestionChoiceCount
        && !State.Gameplay)
@@ -3308,7 +4878,16 @@ namespace mobileui
                                 && !State.QuestionChoiceCount;
     const SDL_Rect ControlGrid = DynamicActionGrid
                                ? ActionGridRect() : State.Controls;
-    const int ControlIndex = GridIndexAt(ControlGrid, 3, 3, X, Y);
+    const bool BinaryConfirmation = BinaryConfirmationActive();
+    const int ControlIndex = BinaryConfirmation
+      ? (Y >= BinaryConfirmationButton(0).y
+         && Y < BinaryConfirmationButton(0).y
+                + BinaryConfirmationButton(0).h
+         && X >= State.Controls.x
+         && X < State.Controls.x + State.Controls.w
+           ? std::min(1, (X - State.Controls.x) * 2
+                         / std::max(1, State.Controls.w)) : -1)
+      : GridIndexAt(ControlGrid, 3, 3, X, Y);
     if(ControlIndex >= 0 && State.QuestionChoiceCount)
     {
       if(ControlIndex < State.QuestionChoiceCount)

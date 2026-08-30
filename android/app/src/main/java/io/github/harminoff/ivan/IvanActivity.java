@@ -66,24 +66,25 @@ public final class IvanActivity extends SDLActivity {
                 }
                 android.graphics.Insets bars = insets.getInsets(barTypes);
                 android.graphics.Insets cutout = insets.getInsets(WindowInsets.Type.displayCutout());
-                left = statusBarHidden ? bars.left : Math.max(bars.left, cutout.left);
-                top = statusBarHidden ? bars.top : Math.max(bars.top, cutout.top);
-                right = statusBarHidden ? bars.right : Math.max(bars.right, cutout.right);
-                bottom = statusBarHidden ? bars.bottom : Math.max(bars.bottom, cutout.bottom);
+                // Hiding the status bar does not remove the physical camera
+                // cutout. Android 15 also lays non-floating targetSdk 35
+                // windows through cutout areas by default, so always combine
+                // the cutout safe area with whichever system bars are active.
+                left = Math.max(bars.left, cutout.left);
+                top = Math.max(bars.top, cutout.top);
+                right = Math.max(bars.right, cutout.right);
+                bottom = Math.max(bars.bottom, cutout.bottom);
                 displayCutouts = findDisplayCutouts(insets.getDisplayCutout());
             } else if (android.os.Build.VERSION.SDK_INT >= 28) {
                 DisplayCutout cutout = insets.getDisplayCutout();
-                left = statusBarHidden ? insets.getSystemWindowInsetLeft()
-                        : Math.max(insets.getSystemWindowInsetLeft(),
-                                   cutout != null ? cutout.getSafeInsetLeft() : 0);
-                top = statusBarHidden ? 0 : Math.max(insets.getSystemWindowInsetTop(),
-                                cutout != null ? cutout.getSafeInsetTop() : 0);
-                right = statusBarHidden ? insets.getSystemWindowInsetRight()
-                        : Math.max(insets.getSystemWindowInsetRight(),
-                                   cutout != null ? cutout.getSafeInsetRight() : 0);
-                bottom = statusBarHidden ? insets.getSystemWindowInsetBottom()
-                        : Math.max(insets.getSystemWindowInsetBottom(),
-                                   cutout != null ? cutout.getSafeInsetBottom() : 0);
+                left = Math.max(insets.getSystemWindowInsetLeft(),
+                        cutout != null ? cutout.getSafeInsetLeft() : 0);
+                top = Math.max(statusBarHidden ? 0 : insets.getSystemWindowInsetTop(),
+                        cutout != null ? cutout.getSafeInsetTop() : 0);
+                right = Math.max(insets.getSystemWindowInsetRight(),
+                        cutout != null ? cutout.getSafeInsetRight() : 0);
+                bottom = Math.max(insets.getSystemWindowInsetBottom(),
+                        cutout != null ? cutout.getSafeInsetBottom() : 0);
                 displayCutouts = findDisplayCutouts(cutout);
             } else {
                 left = insets.getSystemWindowInsetLeft();

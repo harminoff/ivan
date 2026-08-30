@@ -12,6 +12,8 @@
 
 /* compiled thru command.cpp */
 
+#include <algorithm>
+#include <map>
 #include <typeinfo>
 
 #include "hiteffect.h"
@@ -2092,10 +2094,13 @@ struct srpInspect : public recipe{
     material* matS = it0->GetSecondaryMaterial();
     festring fs;
     fs<<it0->GetName(DEFINITE)<<" is made of ";
-    if(matM)fs<<matM->GetName(UNARTICLED);
+    if(matM)
+      fs << matM->GetName(UNARTICLED) << " ("
+         << matM->GetVolume() << "cm3)";
     if(matS){
       if(matM)fs<<" and "; //actually, there is only 2nd material if there is main but anyway...
-      fs<<matS->GetName(UNARTICLED);
+      fs << matS->GetName(UNARTICLED) << " ("
+         << matS->GetVolume() << "cm3)";
     }
     fs<<".";
 
@@ -2364,6 +2369,918 @@ struct srpSplitLump : public recipe{
   }
 };srpSplitLump rpSplitLump;
 
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+namespace
+{
+bool AdaptiveCraftCatalogEnabled()
+{
+#ifdef ANDROID
+  return true;
+#else
+  return graphics::IsEnhancedPresentation();
+#endif
+}
+
+struct adaptivecraftsupplies
+{
+  long IngotVolume;
+  long TailorableVolume;
+  long SilkVolume;
+  long StickVolume;
+  long BoneVolume;
+  long LargestStone;
+  long LargestStick;
+  long LargestBone;
+  bool BluntTool;
+  bool CuttingTool;
+  bool Forge;
+  bool Anvil;
+  bool Workbench;
+  bool TailoringBench;
+  item* IngotIcon;
+  item* StoneIcon;
+  item* StickIcon;
+  item* BoneIcon;
+  item* ClothIcon;
+
+  adaptivecraftsupplies()
+    : IngotVolume(0), TailorableVolume(0), SilkVolume(0),
+      StickVolume(0), BoneVolume(0), LargestStone(0),
+      LargestStick(0), LargestBone(0), BluntTool(false),
+      CuttingTool(false), Forge(false), Anvil(false),
+      Workbench(false), TailoringBench(false), IngotIcon(0), StoneIcon(0),
+      StickIcon(0), BoneIcon(0), ClothIcon(0) { }
+};
+
+enum adaptivecraftroute
+{
+  ADAPTIVE_CRAFT_ROUTE_NONE,
+  ADAPTIVE_CRAFT_ROUTE_INGOT,
+  ADAPTIVE_CRAFT_ROUTE_STONE,
+  ADAPTIVE_CRAFT_ROUTE_STICK,
+  ADAPTIVE_CRAFT_ROUTE_BONE,
+  ADAPTIVE_CRAFT_ROUTE_CLOTH
+};
+
+struct adaptivecraftcandidate
+{
+  item* Preview;
+  festring SearchName;
+  festring DisplayName;
+  festring Requirements;
+  long Category;
+  bool Ready;
+  bool IngotRoute;
+  bool StoneRoute;
+  bool StickRoute;
+  bool BoneRoute;
+  bool ClothRoute;
+  bool IngotReady;
+  bool StoneReady;
+  bool StickReady;
+  bool BoneReady;
+  bool ClothReady;
+  long MainVolume;
+  long StoneVolume;
+  long StickBoneVolume;
+  long StickRouteHave;
+  long BoneRouteHave;
+  long ClothVolume;
+  long ThreadVolume;
+};
+
+void AddAdaptiveCraftVolume(std::map<int, long>& Volumes, item* Item)
+{
+  if(Item && Item->GetMainMaterial())
+    Volumes[Item->GetMainMaterial()->GetConfig()] += Item->GetVolume();
+}
+
+long LargestAdaptiveCraftVolume(const std::map<int, long>& Volumes)
+{
+  long Largest = 0;
+  for(std::map<int, long>::const_iterator i = Volumes.begin();
+      i != Volumes.end(); ++i)
+    Largest = Max(Largest, i->second);
+  return Largest;
+}
+
+bool HasAdaptiveCraftTerrain(humanoid* Crafter, int Config,
+                            bool AnyVisible)
+{
+  if(!Crafter || !game::GetCurrentLevel())
+    return false;
+
+  if(AnyVisible)
+  {
+    for(int Y = 0; Y < game::GetCurrentLevel()->GetYSize(); ++Y)
+      for(int X = 0; X < game::GetCurrentLevel()->GetXSize(); ++X)
+      {
+        lsquare* Square = game::GetCurrentLevel()->GetLSquare(v2(X, Y));
+        olterrain* Terrain = Square->GetOLTerrain();
+        if(Terrain && Terrain->GetConfig() == Config
+           && (Square->GetPos().IsAdjacent(Crafter->GetPos())
+               || Square->CanBeSeenBy(Crafter)))
+          return true;
+      }
+    return false;
+  }
+
+  for(int Direction = 0; Direction < 8; ++Direction)
+  {
+    const v2 Position = Crafter->GetPos() + game::GetMoveVector(Direction);
+    if(!game::GetCurrentLevel()->IsValidPos(Position))
+      continue;
+    olterrain* Terrain = Crafter->GetNearLSquare(Position)->GetOLTerrain();
+    if(Terrain && Terrain->GetConfig() == Config)
+      return true;
+  }
+  return false;
+}
+
+adaptivecraftsupplies GetAdaptiveCraftSupplies(humanoid* Crafter)
+{
+  adaptivecraftsupplies Supplies;
+  std::map<int, long> IngotVolumes;
+  std::map<int, long> TailorableVolumes;
+  std::map<int, long> SilkVolumes;
+  std::map<int, long> StickVolumes;
+  std::map<int, long> BoneVolumes;
+  itemvector Items;
+  if(Crafter->GetRightWielded())
+    Items.push_back(Crafter->GetRightWielded());
+  if(Crafter->GetLeftWielded()
+     && Crafter->GetLeftWielded() != Crafter->GetRightWielded())
+    Items.push_back(Crafter->GetLeftWielded());
+  Crafter->GetStack()->FillItemVector(Items);
+
+  for(size_t Index = 0; Index < Items.size(); ++Index)
+  {
+    item* Item = Items[Index];
+    if(!Item || Item->IsBurning() || craftcore::IsDegraded(Item))
+      continue;
+
+    const int Config = Item->GetConfig();
+    const int WeaponCategory = Item->GetWeaponCategory();
+    if(Config == HAMMER || Config == (HAMMER|BROKEN)
+       || Config == FRYING_PAN || Config == (FRYING_PAN|BROKEN)
+       || Config == WAR_HAMMER || Config == (WAR_HAMMER|BROKEN)
+       || WeaponCategory == BLUNT_WEAPONS)
+      Supplies.BluntTool = true;
+    if(WeaponCategory == SMALL_SWORDS || WeaponCategory == AXES
+       || WeaponCategory == LARGE_SWORDS || WeaponCategory == POLE_ARMS)
+      Supplies.CuttingTool = true;
+
+    if(stone* Stone = dynamic_cast<stone*>(Item))
+    {
+      if(Stone->GetConfig() == INGOT)
+      {
+        AddAdaptiveCraftVolume(IngotVolumes, Stone);
+        if(!Supplies.IngotIcon)
+          Supplies.IngotIcon = Stone;
+      }
+      else
+      {
+        Supplies.LargestStone = Max(Supplies.LargestStone,
+                                    Stone->GetVolume());
+        if(!Supplies.StoneIcon)
+          Supplies.StoneIcon = Stone;
+      }
+    }
+    if(lump* Lump = dynamic_cast<lump*>(Item))
+    {
+      if(Lump->GetMainMaterial()->GetCategoryFlags() & CAN_BE_TAILORED)
+      {
+        AddAdaptiveCraftVolume(TailorableVolumes, Lump);
+        if(!Supplies.ClothIcon)
+          Supplies.ClothIcon = Lump;
+      }
+      if(Lump->GetMainMaterial()->GetConfig() == SPIDER_SILK)
+        AddAdaptiveCraftVolume(SilkVolumes, Lump);
+    }
+    if(stick* Stick = dynamic_cast<stick*>(Item))
+    {
+      AddAdaptiveCraftVolume(StickVolumes, Stick);
+      if(!Supplies.StickIcon)
+        Supplies.StickIcon = Stick;
+      Supplies.LargestStick = Max(Supplies.LargestStick,
+                                  Stick->GetVolume());
+    }
+    if(bone* Bone = dynamic_cast<bone*>(Item))
+    {
+      AddAdaptiveCraftVolume(BoneVolumes, Bone);
+      if(!Supplies.BoneIcon)
+        Supplies.BoneIcon = Bone;
+      Supplies.LargestBone = Max(Supplies.LargestBone,
+                                 Bone->GetVolume());
+    }
+  }
+
+  Supplies.IngotVolume = LargestAdaptiveCraftVolume(IngotVolumes);
+  Supplies.TailorableVolume = LargestAdaptiveCraftVolume(TailorableVolumes);
+  Supplies.SilkVolume = LargestAdaptiveCraftVolume(SilkVolumes);
+  Supplies.StickVolume = LargestAdaptiveCraftVolume(StickVolumes);
+  Supplies.BoneVolume = LargestAdaptiveCraftVolume(BoneVolumes);
+  Supplies.Forge = HasAdaptiveCraftTerrain(Crafter, FORGE, true);
+  Supplies.Anvil = HasAdaptiveCraftTerrain(Crafter, ANVIL, false);
+  Supplies.Workbench = HasAdaptiveCraftTerrain(Crafter, WORK_BENCH, false);
+  Supplies.TailoringBench =
+    HasAdaptiveCraftTerrain(Crafter, TAILORING_BENCH, false);
+  return Supplies;
+}
+
+void AddAdaptiveCraftRoute(festring& Requirements, cchar* Name,
+                          long Have, long Need, bool Ready,
+                          cchar* AlsoNeeded)
+{
+  Requirements << Name << (Ready ? "  READY\n" : "  MISSING\n")
+               << "  Need: " << Need << " cm3\n"
+               << "  Have: " << Have << " cm3\n";
+  if(AlsoNeeded && *AlsoNeeded)
+    Requirements << "  Also: " << AlsoNeeded << "\n";
+}
+
+void SetAdaptiveCraftRequirements(adaptivecraftcandidate& Candidate,
+                                 humanoid* Crafter,
+                                 const adaptivecraftsupplies& Supplies)
+{
+  item* Target = Candidate.Preview;
+  const long MainVolume = Target->GetMainMaterial()->GetVolume();
+  const long SecondaryVolume = Target->GetSecondaryMaterial()
+    ? Target->GetSecondaryMaterial()->GetVolume() : 0;
+  const bool Container = dynamic_cast<itemcontainer*>(Target) != 0;
+  const bool Weapon = Target->IsWeapon(Crafter);
+  const bool MustTailor = dynamic_cast<whip*>(Target)
+    || dynamic_cast<cloak*>(Target);
+  const bool MayTailor = dynamic_cast<armor*>(Target)
+    && !dynamic_cast<helmet*>(Target) && !dynamic_cast<shield*>(Target);
+  const long StoneVolume = long(MainVolume / 0.75);
+  const long StickBoneVolume = Container ? MainVolume : MainVolume * 2;
+  const long ClothVolume = long(MainVolume / 0.85);
+
+  const bool IngotReady = !MustTailor
+    && Supplies.IngotVolume >= MainVolume && Supplies.BluntTool
+    && Supplies.Forge && Supplies.Anvil;
+  const bool StoneReady = !MustTailor
+    && Supplies.LargestStone >= StoneVolume && Supplies.CuttingTool;
+  const bool StickReady = !MustTailor
+    && (Container ? Supplies.StickVolume : Supplies.LargestStick)
+       >= StickBoneVolume && Supplies.CuttingTool;
+  const bool BoneReady = !MustTailor
+    && Supplies.LargestBone >= StickBoneVolume && Supplies.CuttingTool;
+  const bool TailorReady = (MustTailor || MayTailor)
+    && Supplies.TailorableVolume >= ClothVolume
+    && Supplies.CuttingTool && Supplies.TailoringBench;
+  bool SecondaryReady = true;
+  if(Weapon && SecondaryVolume)
+    SecondaryReady =
+      (Supplies.IngotVolume >= SecondaryVolume && Supplies.BluntTool
+       && Supplies.Forge && Supplies.Anvil)
+      || (Supplies.LargestStone >= SecondaryVolume
+          && Supplies.CuttingTool)
+      || (Supplies.BoneVolume >= SecondaryVolume && Supplies.CuttingTool)
+      || (Supplies.StickVolume >= SecondaryVolume && Supplies.CuttingTool);
+
+  Candidate.Ready = (IngotReady || StoneReady || StickReady
+                     || BoneReady || TailorReady) && SecondaryReady;
+  Candidate.IngotRoute = !MustTailor;
+  Candidate.StoneRoute = !MustTailor;
+  Candidate.StickRoute = !MustTailor;
+  Candidate.BoneRoute = !MustTailor;
+  Candidate.ClothRoute = MustTailor || MayTailor;
+  Candidate.IngotReady = IngotReady && SecondaryReady;
+  Candidate.StoneReady = StoneReady && SecondaryReady;
+  Candidate.StickReady = StickReady && SecondaryReady;
+  Candidate.BoneReady = BoneReady && SecondaryReady;
+  Candidate.ClothReady = TailorReady && SecondaryReady;
+  Candidate.MainVolume = MainVolume;
+  Candidate.StoneVolume = StoneVolume;
+  Candidate.StickBoneVolume = StickBoneVolume;
+  Candidate.StickRouteHave = Container
+    ? Supplies.StickVolume : Supplies.LargestStick;
+  Candidate.BoneRouteHave = Supplies.LargestBone;
+  Candidate.ClothVolume = ClothVolume;
+  Candidate.ThreadVolume = 0;
+
+  festring Requirements;
+  Requirements << "STATUS\n"
+    << (Candidate.Ready ? "Ready to choose ingredients"
+                        : "Cannot craft with current supplies")
+    << "\n\nMAIN MATERIAL\n";
+  if(MustTailor)
+  {
+    AddAdaptiveCraftRoute(Requirements, "CLOTH",
+      Supplies.TailorableVolume, ClothVolume, TailorReady,
+      "cutting tool + tailoring bench");
+  }
+  else
+  {
+    Requirements << "Choose one route:\n";
+    AddAdaptiveCraftRoute(Requirements, "INGOTS",
+      Supplies.IngotVolume, MainVolume, IngotReady,
+      "blunt tool + forge + anvil");
+    AddAdaptiveCraftRoute(Requirements, "STONE",
+      Supplies.LargestStone, StoneVolume, StoneReady,
+      "one stone + cutting tool");
+    AddAdaptiveCraftRoute(Requirements, "STICKS",
+      Container ? Supplies.StickVolume : Supplies.LargestStick,
+      StickBoneVolume, StickReady, "cutting tool");
+    AddAdaptiveCraftRoute(Requirements, "BONES",
+      Supplies.LargestBone, StickBoneVolume, BoneReady, "cutting tool");
+    if(MayTailor)
+    {
+      AddAdaptiveCraftRoute(Requirements, "CLOTH",
+        Supplies.TailorableVolume, ClothVolume, TailorReady,
+        "cutting tool + tailoring bench");
+    }
+  }
+  if(Weapon && SecondaryVolume)
+    Requirements << "\nSECONDARY MATERIAL\n"
+                 << (SecondaryReady ? "READY\n" : "MISSING\n")
+                 << "Need: " << SecondaryVolume
+                 << " cm3 of compatible material\n";
+  Requirements << "\nTOOLS\n"
+               << "Cutting tool: "
+               << (Supplies.CuttingTool ? "available" : "missing") << "\n"
+               << "Blunt tool: "
+               << (Supplies.BluntTool ? "available" : "missing") << "\n"
+               << "\nFACILITIES\n"
+               << "Forge: " << (Supplies.Forge ? "nearby" : "missing") << "\n"
+               << "Anvil: " << (Supplies.Anvil ? "nearby" : "missing") << "\n"
+               << "Tailoring bench: "
+               << (Supplies.TailoringBench ? "nearby" : "missing") << "\n"
+               << "Workbench: "
+               << (Supplies.Workbench ? "nearby (faster)"
+                                      : "optional") << "\n";
+  if(!Target->GetDescriptiveInfo().IsEmpty())
+    Requirements << "\nDESCRIPTION\n" << Target->GetDescriptiveInfo();
+  Candidate.Requirements = Requirements;
+}
+
+bool SameAdaptiveCraftName(const std::vector<adaptivecraftcandidate>& Candidates,
+                          cfestring& Name)
+{
+  for(size_t Index = 0; Index < Candidates.size(); ++Index)
+    if(Candidates[Index].SearchName == Name)
+      return true;
+  return false;
+}
+
+struct adaptivecraftrouteoption
+{
+  adaptivecraftroute Route;
+  festring Label;
+  festring Detail;
+  bool Ready;
+  item* Icon;
+  bool OwnIcon;
+};
+
+struct adaptivecraftcategory
+{
+  long Category;
+  std::vector<size_t> CandidateIndices;
+  int Ready;
+};
+
+bool HasAdaptiveCraftRoute(const adaptivecraftcandidate& Candidate,
+                          adaptivecraftroute Route)
+{
+  switch(Route)
+  {
+   case ADAPTIVE_CRAFT_ROUTE_INGOT: return Candidate.IngotRoute;
+   case ADAPTIVE_CRAFT_ROUTE_STONE: return Candidate.StoneRoute;
+   case ADAPTIVE_CRAFT_ROUTE_STICK: return Candidate.StickRoute;
+   case ADAPTIVE_CRAFT_ROUTE_BONE: return Candidate.BoneRoute;
+   case ADAPTIVE_CRAFT_ROUTE_CLOTH: return Candidate.ClothRoute;
+   default: return false;
+  }
+}
+
+bool IsAdaptiveCraftRouteReady(const adaptivecraftcandidate& Candidate,
+                              adaptivecraftroute Route)
+{
+  switch(Route)
+  {
+   case ADAPTIVE_CRAFT_ROUTE_INGOT: return Candidate.IngotReady;
+   case ADAPTIVE_CRAFT_ROUTE_STONE: return Candidate.StoneReady;
+   case ADAPTIVE_CRAFT_ROUTE_STICK: return Candidate.StickReady;
+   case ADAPTIVE_CRAFT_ROUTE_BONE: return Candidate.BoneReady;
+   case ADAPTIVE_CRAFT_ROUTE_CLOTH: return Candidate.ClothReady;
+   default: return false;
+  }
+}
+
+cchar* GetAdaptiveCraftRouteName(adaptivecraftroute Route)
+{
+  switch(Route)
+  {
+   case ADAPTIVE_CRAFT_ROUTE_INGOT: return "Ingots";
+   case ADAPTIVE_CRAFT_ROUTE_STONE: return "Stone";
+   case ADAPTIVE_CRAFT_ROUTE_STICK: return "Sticks";
+   case ADAPTIVE_CRAFT_ROUTE_BONE: return "Bones";
+   case ADAPTIVE_CRAFT_ROUTE_CLOTH: return "Cloth";
+   default: return "Material";
+  }
+}
+
+void AddAdaptiveCraftRouteOption(
+  std::vector<adaptivecraftrouteoption>& Routes,
+  adaptivecraftroute Route, const adaptivecraftcategory& Category,
+  const std::vector<adaptivecraftcandidate>& Candidates,
+  item* ExistingIcon, item* FallbackIcon)
+{
+  int Compatible = 0;
+  int Ready = 0;
+  for(size_t Index = 0; Index < Category.CandidateIndices.size(); ++Index)
+  {
+    const adaptivecraftcandidate& Candidate =
+      Candidates[Category.CandidateIndices[Index]];
+    if(HasAdaptiveCraftRoute(Candidate, Route))
+    {
+      ++Compatible;
+      if(IsAdaptiveCraftRouteReady(Candidate, Route))
+        ++Ready;
+    }
+  }
+  if(!Compatible)
+  {
+    if(FallbackIcon)
+      delete FallbackIcon;
+    return;
+  }
+  if(ExistingIcon && FallbackIcon)
+  {
+    delete FallbackIcon;
+    FallbackIcon = 0;
+  }
+  adaptivecraftrouteoption Option;
+  Option.Route = Route;
+  Option.Label = GetAdaptiveCraftRouteName(Route);
+  Option.Ready = Ready != 0;
+  Option.Icon = ExistingIcon ? ExistingIcon : FallbackIcon;
+  Option.OwnIcon = !ExistingIcon && FallbackIcon;
+  Option.Detail << Ready << " ready now\n"
+                << Compatible << " compatible recipes\n\n"
+                << "Select to view items made from " << Option.Label << ".";
+  Routes.push_back(Option);
+}
+
+void AddAdaptiveCraftRouteRequirement(festring& Detail, cchar* Name,
+                                     long Need, long Have, bool Ready,
+                                     cchar* Extra)
+{
+  Detail << (Ready ? "READY\n\n" : "MISSING REQUIREMENTS\n\n")
+         << "MATERIAL\n"
+         << Name << "\n"
+         << "Need: " << Need << " cm3\n"
+         << "Have: " << Have << " cm3";
+  if(Extra && *Extra)
+    Detail << "\n\nALSO NEEDED\n" << Extra;
+}
+
+festring GetAdaptiveCraftRouteDetail(
+  const adaptivecraftcandidate& Candidate,
+  const adaptivecraftsupplies& Supplies, adaptivecraftroute Route)
+{
+  festring Detail;
+  if(!Candidate.Preview->GetDescriptiveInfo().IsEmpty())
+    Detail << "@ITEM_DESCRIPTION@\n"
+           << Candidate.Preview->GetDescriptiveInfo() << "\n\n";
+  switch(Route)
+  {
+   case ADAPTIVE_CRAFT_ROUTE_INGOT:
+    AddAdaptiveCraftRouteRequirement(Detail, "Ingots", Candidate.MainVolume,
+      Supplies.IngotVolume, Candidate.IngotReady,
+      "Blunt tool, forge, and anvil");
+    break;
+   case ADAPTIVE_CRAFT_ROUTE_STONE:
+    AddAdaptiveCraftRouteRequirement(Detail, "Stone", Candidate.StoneVolume,
+      Supplies.LargestStone, Candidate.StoneReady, "Cutting tool");
+    break;
+   case ADAPTIVE_CRAFT_ROUTE_STICK:
+    AddAdaptiveCraftRouteRequirement(Detail, "Sticks",
+      Candidate.StickBoneVolume, Candidate.StickRouteHave,
+      Candidate.StickReady, "Cutting tool");
+    break;
+   case ADAPTIVE_CRAFT_ROUTE_BONE:
+    AddAdaptiveCraftRouteRequirement(Detail, "Bones",
+      Candidate.StickBoneVolume, Candidate.BoneRouteHave,
+      Candidate.BoneReady, "Cutting tool");
+    break;
+  case ADAPTIVE_CRAFT_ROUTE_CLOTH:
+    AddAdaptiveCraftRouteRequirement(Detail, "Cloth", Candidate.ClothVolume,
+      Supplies.TailorableVolume, Candidate.ClothReady,
+      "Cutting tool and tailoring bench");
+    break;
+   default: break;
+  }
+  Detail << "\n\nExact ingredients are selected after this item.";
+  return Detail;
+}
+
+adaptivecraftroute SelectAdaptiveCraftCategoryRoute(
+  const adaptivecraftcategory& Category,
+  const std::vector<adaptivecraftcandidate>& Candidates,
+  const adaptivecraftsupplies& Supplies, int& Selected)
+{
+  std::vector<adaptivecraftrouteoption> Routes;
+  AddAdaptiveCraftRouteOption(Routes, ADAPTIVE_CRAFT_ROUTE_INGOT,
+    Category, Candidates, Supplies.IngotIcon, stone::Spawn(INGOT));
+  AddAdaptiveCraftRouteOption(Routes, ADAPTIVE_CRAFT_ROUTE_STONE,
+    Category, Candidates, Supplies.StoneIcon, stone::Spawn());
+  AddAdaptiveCraftRouteOption(Routes, ADAPTIVE_CRAFT_ROUTE_STICK,
+    Category, Candidates, Supplies.StickIcon, stick::Spawn());
+  AddAdaptiveCraftRouteOption(Routes, ADAPTIVE_CRAFT_ROUTE_BONE,
+    Category, Candidates, Supplies.BoneIcon, bone::Spawn());
+  AddAdaptiveCraftRouteOption(Routes, ADAPTIVE_CRAFT_ROUTE_CLOTH,
+    Category, Candidates, Supplies.ClothIcon, lump::Spawn());
+
+  festring Topic("Craft an item - ");
+  Topic << item::GetItemCategoryName(Category.Category)
+        << " - material routes";
+  felist List(Topic);
+  List.SetAdaptivePresentationKind(adaptiveui::MENU_CATEGORY_GRID);
+  game::SetStandardListAttributes(List);
+  List.AddFlags(SELECTABLE);
+  List.SetEntryDrawer(game::ItemEntryDrawer);
+  List.SetSelected(Selected);
+  List.AddDescription(CONST_S(
+    "Choose a material, then choose an item. Dim materials have no recipes "
+    "you can make now, but may still be opened to inspect requirements."),
+    LIGHT_GRAY);
+  for(size_t Index = 0; Index < Routes.size(); ++Index)
+  {
+    itemvector IconItems;
+    if(Routes[Index].Icon)
+      IconItems.push_back(Routes[Index].Icon);
+    const int ImageKey = game::AddToItemDrawVector(IconItems);
+    List.AddEntry(Routes[Index].Label,
+      Routes[Index].Ready ? GREEN : DARK_GRAY, 0, ImageKey, true);
+    List.SetLastEntryHelp(Routes[Index].Detail);
+    List.SetLastEntryAdaptiveAvailable(Routes[Index].Ready);
+  }
+  const uint Choice = List.Draw();
+  game::ClearItemDrawVector();
+  const adaptivecraftroute ChoiceRoute =
+    Choice < Routes.size() ? Routes[Choice].Route : ADAPTIVE_CRAFT_ROUTE_NONE;
+  for(size_t Index = 0; Index < Routes.size(); ++Index)
+    if(Routes[Index].OwnIcon)
+      delete Routes[Index].Icon;
+  if(Choice & FELIST_ERROR_BIT || Choice >= Routes.size())
+    return ADAPTIVE_CRAFT_ROUTE_NONE;
+  Selected = int(Choice);
+  return ChoiceRoute;
+}
+
+void ShowAdaptiveCraftingGuide()
+{
+  int Selected = 0;
+  for(;;)
+  {
+    felist Guide(CONST_S("Crafting guide"));
+    Guide.SetAdaptivePresentationKind(adaptiveui::MENU_GUIDE);
+    game::SetStandardListAttributes(Guide);
+    Guide.AddFlags(SELECTABLE);
+    Guide.SetSelected(Selected);
+    Guide.AddDescription(CONST_S(
+      "Choose a topic. The guide follows the same rules and requirements as "
+      "the crafting menus."), LIGHT_GRAY);
+
+    Guide.AddEntry(CONST_S("Crafting flow"), GREEN);
+    Guide.SetLastEntryHelp(CONST_S(
+      "Choose a category, a material route, an item, and finally the exact "
+      "ingredients. Dim choices may be inspected, but cannot advance until "
+      "their listed requirements are met. Back returns to the previous step."));
+
+    Guide.AddEntry(CONST_S("Material routes"), LIGHT_GRAY);
+    Guide.SetLastEntryHelp(CONST_S(
+      "INGOTS\n100% of their volume. Requires a blunt tool, a visible forge, "
+      "and a nearby anvil.\n\nSTONE\n75% of its volume. Requires a cutting "
+      "tool.\n\nSTICKS AND BONES\nUsually 50% of their volume; container "
+      "frames may use 100%. Requires a cutting tool.\n\nCLOTH\n85% of its "
+      "volume. Requires a cutting tool and a nearby tailoring bench."));
+
+    Guide.AddEntry(CONST_S("Tools and facilities"), LIGHT_GRAY);
+    Guide.SetLastEntryHelp(CONST_S(
+      "Carry or equip the required tool. Facilities are checked around the "
+      "crafter. Recipe details show each required tool or facility and what "
+      "you currently have. A workbench speeds ordinary crafting."));
+
+    Guide.AddEntry(CONST_S("Materials and volume"), LIGHT_GRAY);
+    Guide.SetLastEntryHelp(CONST_S(
+      "Recipes consume material volume in cubic centimetres, not item count. "
+      "Raw materials show their volume when inspected. Some recipes also need "
+      "a separate secondary material; its required and available volume appears "
+      "in the recipe details. Unused material becomes a smaller remainder."));
+
+    const uint Choice = Guide.Draw();
+    if(Choice & FELIST_ERROR_BIT || Choice >= 4)
+      break;
+    Selected = int(Choice);
+
+    festring TopicTitle("Crafting guide - ");
+    switch(Choice)
+    {
+     case 0: TopicTitle << "crafting flow"; break;
+     case 1: TopicTitle << "material routes"; break;
+     case 2: TopicTitle << "tools and facilities"; break;
+     case 3: TopicTitle << "materials and volume"; break;
+    }
+    felist Topic(TopicTitle);
+    Topic.SetAdaptivePresentationKind(adaptiveui::MENU_GUIDE);
+    game::SetStandardListAttributes(Topic);
+    Topic.AddFlags(SELECTABLE);
+    Topic.SetPageLength(3);
+    switch(Choice)
+    {
+     case 0:
+      Topic.AddEntry(CONST_S(
+        "CATEGORY :: Choose the kind of item you want to make, such as a "
+        "weapon, helmet, shield, tool, or piece of body armor."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "MATERIAL :: Choose the material route: ingot, stone, sticks, bones, "
+        "or cloth. Routes that cannot produce an item are dimmed."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "ITEM :: Choose the item design. Unavailable designs remain visible "
+        "so you can inspect their missing materials, tools, and facilities."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "EXACT INGREDIENTS :: Choose the specific material pieces the recipe "
+        "will consume. Only then does IVAN begin the crafting action."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      break;
+     case 1:
+      Topic.AddEntry(CONST_S(
+        "INGOTS :: Use 100% of their volume. Metal and glass work requires a "
+        "blunt tool, a visible forge, and a nearby anvil."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "STONE :: Use 75% of its volume. Shaping stone requires a suitable "
+        "cutting tool."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "STICKS AND BONES :: Usually use 50% of their volume. Container frames "
+        "may use 100%. A suitable cutting tool is required."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "CLOTH :: Use 85% of its volume. Tailoring requires a cutting tool, "
+        "spider-silk thread, and a nearby tailoring bench."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      break;
+     case 2:
+      Topic.AddEntry(CONST_S(
+        "TOOLS :: Carry or equip the required tool. Recipes identify whether "
+        "you need a blunt tool, cutting tool, or another implement."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "FACILITIES :: Forges must be visible. Anvils, tailoring benches, and "
+        "other facilities are checked around the crafter."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "RECIPE STATUS :: The item page lists every requirement and shows what "
+        "you have now. Missing requirements prevent advancing."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "WORKBENCH :: A nearby crafting workbench speeds ordinary item "
+        "creation, but does not replace a recipe's required facilities."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      break;
+     case 3:
+      Topic.AddEntry(CONST_S(
+        "VOLUME :: Recipes consume material volume in cubic centimetres, not "
+        "a fixed number of objects."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "AVAILABLE MATERIAL :: Inspect raw materials to see their volume. The "
+        "crafting menu compares available volume with the recipe's need."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "SECONDARY MATERIALS :: Some designs require a separate material, such "
+        "as spider-silk thread. Its need is listed independently."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      Topic.AddEntry(CONST_S(
+        "REMAINDERS :: If an ingredient contains more material than the recipe "
+        "uses, the unused material remains as a smaller piece."),
+        LIGHT_GRAY, 0, NO_IMAGE, true);
+      break;
+    }
+    Topic.Draw();
+  }
+}
+
+item* SelectAdaptiveCraftTarget(humanoid* Crafter, festring& SearchName,
+                               adaptivecraftroute& SelectedRoute)
+{
+  SelectedRoute = ADAPTIVE_CRAFT_ROUTE_NONE;
+  std::vector<adaptivecraftcandidate> Candidates;
+  const adaptivecraftsupplies Supplies = GetAdaptiveCraftSupplies(Crafter);
+
+  for(int Type = 1; Type < protocontainer<item>::GetSize(); ++Type)
+  {
+    const item::prototype* Proto = protocontainer<item>::GetProto(Type);
+    const item::database*const* ConfigData = Proto->GetConfigData();
+    for(int ConfigIndex = 0; ConfigIndex < Proto->GetConfigSize();
+        ++ConfigIndex)
+    {
+      const item::database* Data = ConfigData[ConfigIndex];
+      if(Data->IsAbstract || !Data->IsAutoInitializable)
+        continue;
+      item* Preview = Proto->Spawn(Data->Config);
+      festring Name = Preview->GetName(UNARTICLED|STRIPPED);
+      if(!craftcore::canBeCrafted(Preview)
+         || SameAdaptiveCraftName(Candidates, Name))
+      {
+        craftcore::SendToHellSafely(Preview);
+        continue;
+      }
+
+      adaptivecraftcandidate Candidate;
+      Candidate.Preview = Preview;
+      Candidate.SearchName = Name;
+      Candidate.DisplayName = Name;
+      Candidate.Category = Preview->GetCategory();
+      Candidate.Ready = false;
+      SetAdaptiveCraftRequirements(Candidate, Crafter, Supplies);
+      Candidates.push_back(Candidate);
+    }
+  }
+
+  std::sort(Candidates.begin(), Candidates.end(),
+    [](const adaptivecraftcandidate& Left,
+       const adaptivecraftcandidate& Right)
+    {
+      if(Left.Category != Right.Category)
+        return Left.Category < Right.Category;
+      if(Left.Ready != Right.Ready)
+        return Left.Ready > Right.Ready;
+      return Left.DisplayName < Right.DisplayName;
+    });
+
+  std::vector<adaptivecraftcategory> Categories;
+  for(size_t Index = 0; Index < Candidates.size(); ++Index)
+  {
+    if(Categories.empty() || Categories.back().Category
+                             != Candidates[Index].Category)
+    {
+      adaptivecraftcategory Category;
+      Category.Category = Candidates[Index].Category;
+      Category.Ready = 0;
+      Categories.push_back(Category);
+    }
+    Categories.back().CandidateIndices.push_back(Index);
+    if(Candidates[Index].Ready)
+      ++Categories.back().Ready;
+  }
+
+  item* Result = 0;
+  int SelectedCategory = 0;
+  std::map<long, int> SelectedMaterials;
+  std::map<long, int> SelectedRecipes;
+  while(!Result)
+  {
+    felist CategoryList(CONST_S("Craft an item - categories"));
+    CategoryList.SetAdaptivePresentationKind(
+      adaptiveui::MENU_CATEGORY_GRID);
+    game::SetStandardListAttributes(CategoryList);
+    CategoryList.AddFlags(SELECTABLE);
+    CategoryList.SetEntryDrawer(game::ItemEntryDrawer);
+    CategoryList.SetPageLength(uint(Categories.size()));
+    CategoryList.SetSelected(SelectedCategory);
+    CategoryList.AddDescription(CONST_S(
+      "Choose a category. Dim categories have no recipes available with "
+      "your current materials, tools, and facilities."), LIGHT_GRAY);
+    itemvector CategoryIcons;
+    for(size_t CategoryIndex = 0; CategoryIndex < Categories.size();
+        ++CategoryIndex)
+    {
+      adaptivecraftcategory& Category = Categories[CategoryIndex];
+      item* CategoryIcon = SpawnAdaptiveCategoryIcon(Category.Category);
+      itemvector IconItems;
+      if(CategoryIcon)
+      {
+        CategoryIcons.push_back(CategoryIcon);
+        IconItems.push_back(CategoryIcon);
+      }
+      else
+        IconItems.push_back(Candidates[
+          Category.CandidateIndices.front()].Preview);
+      const int ImageKey = game::AddToItemDrawVector(IconItems);
+      CategoryList.AddEntry(item::GetItemCategoryName(Category.Category),
+        Category.Ready ? GREEN : DARK_GRAY, 0, ImageKey, true);
+      CategoryList.SetLastEntryAdaptiveAvailable(Category.Ready != 0);
+      festring Detail;
+      Detail << Category.Ready << " ready now\n"
+             << Category.CandidateIndices.size() << " total recipes";
+      CategoryList.SetLastEntryHelp(Detail);
+    }
+    const uint CategoryChoice = CategoryList.Draw();
+    game::ClearItemDrawVector();
+    for(size_t IconIndex = 0; IconIndex < CategoryIcons.size(); ++IconIndex)
+      delete CategoryIcons[IconIndex];
+    if(CategoryChoice & FELIST_ERROR_BIT
+       || CategoryChoice >= Categories.size())
+      break;
+    SelectedCategory = int(CategoryChoice);
+    adaptivecraftcategory& Category = Categories[CategoryChoice];
+
+    for(;;)
+    {
+      adaptivecraftroute Route = SelectAdaptiveCraftCategoryRoute(
+        Category, Candidates, Supplies, SelectedMaterials[Category.Category]);
+      if(Route == ADAPTIVE_CRAFT_ROUTE_NONE)
+        break;
+
+      for(;;)
+      {
+        std::vector<size_t> FilteredCandidates;
+        for(size_t Index = 0; Index < Category.CandidateIndices.size(); ++Index)
+        {
+          const size_t CandidateIndex = Category.CandidateIndices[Index];
+          if(HasAdaptiveCraftRoute(Candidates[CandidateIndex], Route))
+            FilteredCandidates.push_back(CandidateIndex);
+        }
+
+        festring Topic("Craft an item - ");
+        Topic << item::GetItemCategoryName(Category.Category) << " - "
+              << GetAdaptiveCraftRouteName(Route);
+        felist List(Topic);
+        List.SetAdaptivePresentationKind(adaptiveui::MENU_ITEM_GRID);
+        game::SetStandardListAttributes(List);
+        List.AddFlags(SELECTABLE);
+        List.SetEntryDrawer(game::ItemEntryDrawer);
+        const long SelectionKey = Category.Category * 10 + long(Route);
+        List.SetSelected(SelectedRecipes[SelectionKey]);
+        List.AddDescription(CONST_S(
+          "Choose an item. Dim recipes show what is missing, but cannot "
+          "advance to exact ingredient selection yet."), LIGHT_GRAY);
+
+        for(size_t FilteredIndex = 0;
+            FilteredIndex < FilteredCandidates.size(); ++FilteredIndex)
+        {
+          adaptivecraftcandidate& Candidate =
+            Candidates[FilteredCandidates[FilteredIndex]];
+          const bool Ready = IsAdaptiveCraftRouteReady(Candidate, Route);
+          itemvector ImageItems(1, Candidate.Preview);
+          const int ImageKey = game::AddToItemDrawVector(ImageItems);
+          List.AddEntry(Candidate.DisplayName, Ready ? GREEN : DARK_GRAY,
+                        0, ImageKey, true);
+          List.SetLastEntryHelp(
+            GetAdaptiveCraftRouteDetail(Candidate, Supplies, Route));
+          List.SetLastEntryAdaptiveGroup(GetAdaptiveCraftRouteName(Route));
+          List.SetLastEntryAdaptiveAvailable(Ready);
+
+          item* Preview = Candidate.Preview;
+          festring ItemLabel = Candidate.DisplayName;
+          List.SetLastEntryItemMetrics(
+            Preview->GetID(), Preview->GetWeight(), Preview->IsArmor(Crafter),
+            Preview->IsWeapon(Crafter), Preview->IsShield(Crafter),
+            false,
+            Preview->GetStrengthValue(), Preview->GetBaseMinDamage(),
+            Preview->GetBaseMaxDamage(), Preview->GetBaseToHitValue(),
+            Preview->GetBaseBlockValue(), Preview->GetEnchantment(),
+            Preview->IsWeapon(Crafter)
+              ? Preview->GetBaseToHitValueDescription() : "",
+            Preview->IsWeapon(Crafter)
+              ? (Preview->IsBroken() ? "broken"
+                                    : Preview->GetStrengthValueDescription()) : "",
+            Preview->IsShield(Crafter)
+              ? Preview->GetBaseBlockValueDescription() : "",
+            0, 0, ItemLabel.CStr());
+          SetAdaptiveComparisonMetrics(List, Crafter, Preview);
+        }
+
+        const uint Selected = List.Draw();
+        game::ClearItemDrawVector();
+        if(Selected & FELIST_ERROR_BIT
+           || Selected >= FilteredCandidates.size())
+          break;
+        SelectedRecipes[SelectionKey] = int(Selected);
+        adaptivecraftcandidate& Candidate =
+          Candidates[FilteredCandidates[Selected]];
+        if(!IsAdaptiveCraftRouteReady(Candidate, Route))
+        {
+          ADD_MESSAGE("You do not currently meet this recipe's requirements.");
+          continue;
+        }
+        SelectedRoute = Route;
+        Result = Candidate.Preview;
+        SearchName = Candidate.SearchName;
+        break;
+      }
+      if(Result)
+        break;
+    }
+  }
+  for(size_t Index = 0; Index < Candidates.size(); ++Index)
+    if(Candidates[Index].Preview != Result)
+      craftcore::SendToHellSafely(Candidates[Index].Preview);
+  return Result;
+}
+}
+#endif
+
 struct srpForgeItem : public recipe{
   virtual void fillInfo(){
     init("create","an item");
@@ -2433,11 +3350,28 @@ struct srpForgeItem : public recipe{
     // let user type the item name
     static festring Default; //static to help on reusing! like creating more of the same
     item* itSpawn = NULL;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    bool UsedAdaptiveCatalog = false;
+    adaptivecraftroute AdaptiveMainRoute = ADAPTIVE_CRAFT_ROUTE_NONE;
+#endif
 
     for(;;){
       festring Temp;
       Temp << Default;DBG4(Default.CStr(),Default.GetSize(),Temp.CStr(),Temp.GetSize()); // to let us fix previous instead of having to fully type it again
 
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      if(AdaptiveCraftCatalogEnabled())
+      {
+        UsedAdaptiveCatalog = true;
+        itSpawn = SelectAdaptiveCraftTarget(
+          rpd.rc.H(), Temp, AdaptiveMainRoute);
+        if(!itSpawn)
+          break;
+        Default = Temp;
+      }
+      else
+#endif
+      {
       if(game::DefaultQuestion(Temp, CONST_S("What do you want to try to create?"), Default, true) == ABORTED){DBGLN;
         /**
          * The wishing system will try to guess what item matches whatever we type,
@@ -2447,6 +3381,7 @@ struct srpForgeItem : public recipe{
       }DBG1(Temp.CStr());
 
       itSpawn = protosystem::CreateItemToCraft(Temp);DBGLN;
+      }
 
       if(itSpawn){DBGLN;
         if(craftcore::canBeCrafted(itSpawn)){DBG4("SendingToHellRejectedCraftItem",itSpawn->GetID(),itSpawn->GetNameSingular().CStr(),itSpawn);
@@ -2469,6 +3404,10 @@ struct srpForgeItem : public recipe{
 
       Default.Empty();DBG1(Default.CStr());
       Default << Temp;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      if(UsedAdaptiveCatalog)
+        break;
+#endif
     }
 
     if(itSpawn==NULL){
@@ -2519,7 +3458,12 @@ struct srpForgeItem : public recipe{
     bool bCanTailor = dynamic_cast<armor*>(itSpawn) &&
       !( dynamic_cast<helmet*>(itSpawn) ||
          dynamic_cast<shield*>(itSpawn)    );
-    if(bMustTailor || bCanTailor){ // tailoring
+    if((bMustTailor || bCanTailor)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+       && (!UsedAdaptiveCatalog
+           || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_CLOTH)
+#endif
+      ){ // tailoring
       festring fsM("as MAIN material (cloth "); // only main can be cloth
       float fPerc = 0.85;
       fsM<<(int)(fPerc*100)<<"%)";
@@ -2527,12 +3471,6 @@ struct srpForgeItem : public recipe{
        * cloth will be cut and sewed
        */
       if(!bMainMatOk){
-        askForEqualLumps(rpd);
-        if(!rpd.ingredientsIDs.empty()){
-          joinLumpsEqualToFirst(rpd);
-          rpd.ingredientsIDs.clear();
-        }
-
         ci CI = CIM;
         CI.fUsablePercVol=fPerc;
         CI.bMustBeTailorable = true;
@@ -2544,14 +3482,24 @@ struct srpForgeItem : public recipe{
     }
     if(!bMustTailor){
       // crafting with stones or ingots
-      if(!bMainMatOk){
+      if(!bMainMatOk
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+         && (!UsedAdaptiveCatalog
+             || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_INGOT)
+#endif
+        ){
         ci CI = CIM;
         CI.iReqCfg=INGOT; //meltables are 100% usable
         festring fsM("as MAIN material (ingots 100%)");
         bMainMatOk = choseIngredients<stone>(fsM,lVolM, rpd, iCfgM, CI);
       }
 
-      if(!bMainMatOk){
+      if(!bMainMatOk
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+         && (!UsedAdaptiveCatalog
+             || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_STONE)
+#endif
+        ){
         ci CI = CIM;
         CI.bFirstItemMustHaveFullVolumeRequired=true; //carving: only one ingredient piece per material allowed, so it must have required volume
         CI.bMultSelect=false;
@@ -2562,7 +3510,13 @@ struct srpForgeItem : public recipe{
       }
 
       // crafting with sticks and bones
-      if(!bMainMatOk){
+      if(!bMainMatOk
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+         && (!UsedAdaptiveCatalog
+             || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_BONE
+             || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_STICK)
+#endif
+        ){
         festring fsM("as MAIN material (sticks/bones ");
         float fPerc = bIsItemContainer ? 1.0 : 0.5;
         fsM<<(int)(fPerc*100)<<"%)";
@@ -2570,13 +3524,23 @@ struct srpForgeItem : public recipe{
          * stick shape can't provide enough to the required dimensions (this is a extremely wild simplification btw :))
          * so, this will require twice as much sticks if not a container, to be crafted ex.: 35/0.5=70
          */
-        if(!bMainMatOk){
+        if(!bMainMatOk
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+           && (!UsedAdaptiveCatalog
+               || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_BONE)
+#endif
+          ){
           ci CI = CIM;
           CI.fUsablePercVol=fPerc;
           CI.bFirstItemMustHaveFullVolumeRequired=true; //carving: only one ingredient piece per material allowed, so it must have required volume
           bMainMatOk = choseIngredients<bone>(fsM,lVolM, rpd, iCfgM, CI);
         }
-        if(!bMainMatOk){
+        if(!bMainMatOk
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+           && (!UsedAdaptiveCatalog
+               || AdaptiveMainRoute == ADAPTIVE_CRAFT_ROUTE_STICK)
+#endif
+          ){
           ci CI = CIM;
           CI.fUsablePercVol=fPerc;
           if(!bIsItemContainer)
@@ -2644,23 +3608,6 @@ struct srpForgeItem : public recipe{
 
     if(bReqS && !bAllowS)
       ABORT("item reqs secondary mat but doesnt allow it??? %s",itSpawn->GetName(DEFINITE).CStr());
-
-    if(rpd.bTailoringMode){
-      long lVolSewing = lVolM/100;
-      if(lVolSewing==0)lVolSewing=1;
-      int iSCfg=-1;
-      ci CISW;
-      CISW.bMainMaterRemainsBecomeLump=true;
-      CISW.bMixRemainingLump = false;
-      CISW.iReqMatCfgMain=SPIDER_SILK;
-      CISW.iIngredientSlot=ingredient_slot_thread;
-      if(!choseIngredients<lump>(cfestring("as sewing material"),lVolSewing,rpd,iSCfg,CISW)){ //TODO instead of <lump> should be <sewingthread> with new graphics
-        ADD_MESSAGE("You don't have enough sewing thread...");
-        rpd.SetAlreadyExplained();
-        craftcore::SendToHellSafely(itSpawn);
-        return false;
-      }
-    }
 
     rpd.bHasAllIngredients=true;
 
@@ -3051,6 +3998,20 @@ struct srpMagic : public srpFluidsBASE{
 felist craftRecipes(CONST_S("What do you want to craft?"));
 std::vector<recipe*> vrpAllRecipes;
 
+bool AdaptiveCraftGuideEnabled()
+{
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  return AdaptiveCraftCatalogEnabled();
+#else
+  return false;
+#endif
+}
+
+uint SuspendedCraftEntryIndex()
+{
+  return AdaptiveCraftGuideEnabled() ? 1 : 0;
+}
+
 void updateCraftDesc(){
   craftRecipes.EmptyDescription();
 
@@ -3068,7 +4029,10 @@ void updateCraftDesc(){
 }
 
 void addRecipe(recipe* prp){
-  prp->iListIndex=vrpAllRecipes.size()+1; //+1 is about the 1st entry related to suspended actions
+  // The suspended-actions row is always present. Adaptive presentation also
+  // puts the crafting guide before it.
+  prp->iListIndex=vrpAllRecipes.size()+1
+    +(AdaptiveCraftGuideEnabled() ? 1 : 0);
 
   if(prp->name.IsEmpty())
     ABORT("empty recipe name '%s' '%s' %d",prp->name.CStr(),prp->desc.CStr(),prp->iListIndex);
@@ -3185,19 +4149,34 @@ truth craftcore::Craft(character* Char) //TODO currently this is an over simplif
   uint sel = FELIST_ERROR_BIT;
   if(vrpAllRecipes.size()>0){
     game::SetStandardListAttributes(craftRecipes);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    craftRecipes.SetAdaptivePresentationKind(adaptiveui::MENU_BUTTON_ROWS);
+#endif
     craftRecipes.AddFlags(SELECTABLE);
     craftRecipes.ClearFilter();
-    updateCraftDesc();
-    sel = craftRecipes.Draw(); DBG1(sel);
+    for(;;)
+    {
+      updateCraftDesc();
+      sel = craftRecipes.Draw(); DBG1(sel);
 
-    if(sel & FELIST_ERROR_BIT)
-      return false;
+      if(sel & FELIST_ERROR_BIT)
+        return false;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      if(AdaptiveCraftGuideEnabled() && sel == 0)
+      {
+        ShowAdaptiveCraftingGuide();
+        continue;
+      }
+#endif
+      break;
+    }
 
-    if(sel==0 && !craftcore::HasSuspended()){
+    const uint SuspendedIndex = SuspendedCraftEntryIndex();
+    if(sel==SuspendedIndex && !craftcore::HasSuspended()){
       ADD_MESSAGE("You were doing nothing special.");
       return false;
     }
-    if(sel==0 && craftcore::HasSuspended()){
+    if(sel==SuspendedIndex && craftcore::HasSuspended()){
       int key = game::KeyQuestion(CONST_S("There are suspended crafting actions: (r)esume/ENTER or (c)ancel?"),
         KEY_ESC, 6, 'r', 'c', KEY_ENTER, KEY_CONTROLLER_A, KEY_CONTROLLER_Y, KEY_CONTROLLER_B);
       if(key==KEY_ESC || key == KEY_CONTROLLER_B)return false;
@@ -3252,6 +4231,13 @@ truth craftcore::Craft(character* Char) //TODO currently this is an over simplif
   bool bInitRecipes = vrpAllRecipes.size()==0;
 
   if(bInitRecipes){
+    if(AdaptiveCraftGuideEnabled())
+    {
+      craftRecipes.AddEntry(CONST_S("Guide"), LIGHT_GRAY);
+      craftRecipes.SetLastEntryHelp(CONST_S(
+        "Learn the crafting flow, material efficiency, and tool and facility "
+        "requirements."));
+    }
     craftRecipes.AddEntry(festring()+"Suspended crafting actions", LIGHT_GRAY, 20, 0, true);
     craftRecipes.SetLastEntryHelp("Resume or remove already started crafting actions.");
   }

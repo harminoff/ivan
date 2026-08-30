@@ -18,6 +18,165 @@
 int stack::Selected;
 uint stack::StandardPageLength = stack::GetDefaultPageLength();
 
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+item* SpawnAdaptiveCategoryIcon(long Category)
+{
+  // These three script configurations are not exported through confdef.h.
+  const int DiseaseImmunityAmuletConfig = 7;
+  const int VialConfig = 1;
+  const int BraveryRingConfig = 17;
+  switch(Category)
+  {
+   case AMULET: return amulet::Spawn(DiseaseImmunityAmuletConfig);
+   case BELT: return belt::Spawn();
+   case BODY_ARMOR: return bodyarmor::Spawn(PLATE_MAIL);
+   case BOOK: return materialmanual::Spawn();
+   case BOOT: return boot::Spawn();
+   case CLOAK: return cloak::Spawn();
+   case FOOD: return banana::Spawn();
+   case GAUNTLET: return gauntlet::Spawn(GAUNTLET_OF_DEXTERITY);
+   case HELMET: return helmet::Spawn(FULL_HELMET);
+   case MISC: return skull::Spawn();
+   case POTION: return potion::Spawn(VialConfig);
+   case RING: return ring::Spawn(BraveryRingConfig);
+   case SCROLL: return encryptedscroll::Spawn();
+   case SHIELD: return shield::Spawn();
+   case TOOL: return pickaxe::Spawn();
+   case VALUABLE: return stone::Spawn(INGOT);
+   case RAW_MATERIAL: return stone::Spawn(INGOT);
+   case WAND: return wand::Spawn(WAND_OF_DOOR_CREATION);
+   case WEAPON: return meleeweapon::Spawn(SHORT_SWORD);
+  }
+  return 0;
+}
+
+namespace
+{
+item* FindAdaptiveComparisonItem(ccharacter* Viewer, citem* Candidate)
+{
+  if(!Viewer || !Candidate)
+    return 0;
+
+  item* Main = Viewer->GetMainWielded();
+  item* Secondary = Viewer->GetSecondaryWielded();
+  if(Candidate->IsShield(Viewer))
+  {
+    if(Main && Main->IsShield(Viewer))
+      return Main;
+    if(Secondary && Secondary->IsShield(Viewer))
+      return Secondary;
+    return 0;
+  }
+  if(Candidate->IsWeapon(Viewer))
+  {
+    if(Main && Main->IsWeapon(Viewer) && !Main->IsShield(Viewer))
+      return Main;
+    if(Secondary && Secondary->IsWeapon(Viewer)
+       && !Secondary->IsShield(Viewer))
+      return Secondary;
+    return 0;
+  }
+  if(Candidate->IsArmor(Viewer))
+    for(int Index = 0; Index < Viewer->GetEquipments(); ++Index)
+      if(Candidate->IsInCorrectSlot(Index))
+      {
+        item* Equipped = Viewer->GetEquipment(Index);
+        if(Equipped && Equipped->IsArmor(Viewer))
+          return Equipped;
+      }
+  if(Candidate->IsRing(Viewer) || Candidate->IsAmulet(Viewer))
+    for(int Index = 0; Index < Viewer->GetEquipments(); ++Index)
+      if(Candidate->IsInCorrectSlot(Index))
+      {
+        item* Equipped = Viewer->GetEquipment(Index);
+        if(Equipped
+           && ((Candidate->IsRing(Viewer) && Equipped->IsRing(Viewer))
+               || (Candidate->IsAmulet(Viewer)
+                   && Equipped->IsAmulet(Viewer))))
+          return Equipped;
+      }
+  return 0;
+}
+
+truth IsAdaptiveComparedItem(citem* Item, ulong ExcludedItemId)
+{
+  return Item && ExcludedItemId && ExcludedItemId == Item->GetID();
+}
+
+void SetAdaptiveEntryMetrics(felist& Contents, ccharacter* Viewer,
+                            citem* Item, truth Comparison)
+{
+  if(!Item)
+    return;
+  const truth Weapon = Item->IsWeapon(Viewer);
+  const truth Shield = Item->IsShield(Viewer);
+  const truth Equippable = Viewer && Viewer->CanUseEquipment()
+    && (Item->IsHelmet(Viewer) || Item->IsCloak(Viewer)
+        || Item->IsAmulet(Viewer) || Item->IsBodyArmor(Viewer)
+        || Item->IsBelt(Viewer) || Item->IsRing(Viewer)
+        || Item->IsGauntlet(Viewer) || Item->IsBoot(Viewer)
+        || Weapon || Shield);
+  const int CategorySkill = Weapon || Shield
+    ? Viewer->GetCWeaponSkillLevel(Item) : 0;
+  const int SpecificSkill = Weapon || Shield
+    ? Viewer->GetSWeaponSkillLevel(Item) : 0;
+  cchar* Accuracy = Weapon ? Item->GetBaseToHitValueDescription() : "";
+  cchar* Durability = Weapon ? (Item->IsBroken()
+    ? "broken" : Item->GetStrengthValueDescription()) : "";
+  cchar* BlockQuality = Shield
+    ? Item->GetBaseBlockValueDescription() : "";
+  festring ItemLabel;
+  Item->AddName(ItemLabel, INDEFINITE);
+
+  if(Comparison)
+    Contents.SetLastEntryComparisonMetrics(
+      Item->GetID(), Item->GetWeight(), Item->IsArmor(Viewer), Weapon,
+      Shield, Equippable, Item->GetStrengthValue(), Item->GetBaseMinDamage(),
+      Item->GetBaseMaxDamage(), Item->GetBaseToHitValue(),
+      Item->GetBaseBlockValue(), Item->GetEnchantment(), Accuracy,
+      Durability, BlockQuality, CategorySkill, SpecificSkill,
+      ItemLabel.CStr());
+  else
+  {
+    Contents.SetLastEntryItemMetrics(
+      Item->GetID(), Item->GetWeight(), Item->IsArmor(Viewer), Weapon,
+      Shield, Equippable, Item->GetStrengthValue(), Item->GetBaseMinDamage(),
+      Item->GetBaseMaxDamage(), Item->GetBaseToHitValue(),
+      Item->GetBaseBlockValue(), Item->GetEnchantment(), Accuracy,
+      Durability, BlockQuality, CategorySkill, SpecificSkill,
+      ItemLabel.CStr());
+
+    unsigned int Actions = 0;
+    if(Viewer)
+    {
+      if(Viewer->UsesNutrition() && Item->IsDrinkable(Viewer))
+      {
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_DRINK);
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_TASTE);
+      }
+      if(Viewer->UsesNutrition() && Item->IsEatable(Viewer))
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_EAT);
+      if((Viewer->CanRead() || game::GetSeeWholeMapCheatMode())
+         && Item->IsReadable(Viewer))
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_READ);
+      if(Item->IsZappable(Viewer))
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_ZAP);
+      if(Item->IsAppliable(Viewer))
+        Actions |= adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_APPLY);
+    }
+    Contents.SetLastEntryItemActions(Actions);
+  }
+}
+}
+
+void SetAdaptiveComparisonMetrics(felist& List, ccharacter* Viewer,
+                                  citem* Candidate)
+{
+  SetAdaptiveEntryMetrics(List, Viewer,
+                          FindAdaptiveComparisonItem(Viewer, Candidate), true);
+}
+#endif
+
 stack::stack(square* MotherSquare, entity* MotherEntity, ulong Flags)
 : Bottom(0), Top(0), MotherSquare(MotherSquare), MotherEntity(MotherEntity),
   Volume(0), Weight(0), Emitation(0), Flags(Flags), Items(0) { }
@@ -426,17 +585,19 @@ item* stack::DrawContents(ccharacter* Viewer, cfestring& Topic,
 {
   itemvector ReturnVector;
   DrawContents(ReturnVector, 0, Viewer, Topic, CONST_S(""), CONST_S(""),
-               CONST_S(""), 0, Flags|NO_MULTI_SELECT, SorterFunction);
+               CONST_S(""), 0, Flags|NO_MULTI_SELECT, SorterFunction,
+               ANY_CATEGORY);
   return ReturnVector.empty() ? 0 : ReturnVector[0];
 }
 
 int stack::DrawContents(itemvector& ReturnVector,
                         ccharacter* Viewer,
                         cfestring& Topic, int Flags,
-                        sorter SorterFunction) const
+                        sorter SorterFunction, long Category) const
 {
   return DrawContents(ReturnVector, 0, Viewer, Topic, CONST_S(""),
-                      CONST_S(""), CONST_S(""), 0, Flags, SorterFunction);
+                      CONST_S(""), CONST_S(""), 0, Flags, SorterFunction,
+                      Category);
 }
 
 /* MergeStack is used for showing two stacks together. Like when eating when
@@ -446,16 +607,154 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
                         ccharacter* Viewer, cfestring& Topic,
                         cfestring& ThisDesc, cfestring& ThatDesc,
                         cfestring& SpecialDesc, col16 SpecialDescColor,
-                        int Flags, sorter SorterFunction) const
+                        int Flags, sorter SorterFunction, long Category) const
 {
   felist Contents(Topic);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  Contents.SetAdaptivePresentationKind(
+    Topic.Find("What do you want to pick up?", 0) == 0
+      ? adaptiveui::MENU_PICKUP_GRID : adaptiveui::MENU_ITEM_GRID);
+#endif
   lsquare* Square = GetLSquareUnder();
   stack* AdjacentStack[4] = { 0, 0, 0, 0 };
   int c;
+  ulong ExcludedItemId = 0;
 
   if(!(this->Flags & HIDDEN))
     for(c = 0; c < 4; ++c)
       AdjacentStack[c] = Square->GetStackOfAdjacentSquare(c);
+
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  const adaptiveui::HudModel& InitialHud = adaptiveui::GetHudModel();
+  const truth RestoreEquipmentComparison =
+    InitialHud.EquipmentComparisonActive;
+  const std::string EquipmentComparisonLabel = InitialHud.EquippedItemLabel;
+  const adaptiveui::ItemMetrics EquipmentComparisonMetrics =
+    InitialHud.EquippedItemMetrics;
+  // Ordinary inventory must not duplicate equipped objects. Slot-specific
+  // equipment choices include the current item so it can be highlighted and
+  // compared first; those lists advertise their explicit "none" choice.
+  ExcludedItemId = RestoreEquipmentComparison && !(Flags & NONE_AS_CHOICE)
+    && EquipmentComparisonMetrics.Present
+    ? EquipmentComparisonMetrics.ItemId : 0;
+
+  if(Category == ANY_CATEGORY && !(Flags & NO_CATEGORY_SELECT))
+  {
+    struct adaptivecategory
+    {
+      long Category;
+      int Piles;
+      int Items;
+      itemvector Representative;
+    };
+
+    std::vector<adaptivecategory> Categories;
+    const auto AddCategories = [&](const stack* Source, int Position)
+    {
+      if(!Source)
+        return;
+      itemvectorvector Piles;
+      Source->Pile(Piles, Viewer, Position, SorterFunction);
+      for(size_t PileIndex = 0; PileIndex < Piles.size(); ++PileIndex)
+      {
+        if(IsAdaptiveComparedItem(Piles[PileIndex].back(), ExcludedItemId))
+          continue;
+        const long PileCategory = Piles[PileIndex].back()->GetCategory();
+        size_t CategoryIndex = 0;
+        while(CategoryIndex < Categories.size()
+              && Categories[CategoryIndex].Category != PileCategory)
+          ++CategoryIndex;
+        if(CategoryIndex == Categories.size())
+        {
+          adaptivecategory NewCategory;
+          NewCategory.Category = PileCategory;
+          NewCategory.Piles = 0;
+          NewCategory.Items = 0;
+          NewCategory.Representative = Piles[PileIndex];
+          Categories.push_back(NewCategory);
+        }
+        ++Categories[CategoryIndex].Piles;
+        Categories[CategoryIndex].Items += int(Piles[PileIndex].size());
+      }
+    };
+
+    AddCategories(MergeStack, CENTER);
+    AddCategories(this, CENTER);
+    for(c = 0; c < 4; ++c)
+      AddCategories(AdjacentStack[c], 3 - c);
+
+    if(Categories.size() > 1)
+    {
+      int SelectedCategory = 0;
+      for(;;)
+      {
+        festring CategoryTopic(Topic);
+        CategoryTopic << " - categories";
+        felist CategoryList(CategoryTopic);
+        CategoryList.SetAdaptivePresentationKind(
+          adaptiveui::MENU_CATEGORY_GRID);
+        game::SetStandardListAttributes(CategoryList);
+        CategoryList.AddFlags(SELECTABLE);
+        CategoryList.SetEntryDrawer(game::ItemEntryDrawer);
+        CategoryList.SetSelected(SelectedCategory);
+        itemvector CategoryIcons;
+        const int ChoiceOffset = Flags & NONE_AS_CHOICE ? 1 : 0;
+        CategoryList.SetPageLength(uint(Categories.size() + ChoiceOffset));
+        if(ChoiceOffset)
+          CategoryList.AddEntry(CONST_S("none"), LIGHT_GRAY, 0,
+                                game::AddToItemDrawVector(itemvector()), true);
+
+        for(size_t CategoryIndex = 0; CategoryIndex < Categories.size();
+            ++CategoryIndex)
+        {
+          adaptivecategory& Current = Categories[CategoryIndex];
+          item* CategoryIcon = SpawnAdaptiveCategoryIcon(Current.Category);
+          itemvector IconItems;
+          if(CategoryIcon)
+          {
+            CategoryIcons.push_back(CategoryIcon);
+            IconItems.push_back(CategoryIcon);
+          }
+          else
+            IconItems = Current.Representative;
+          const int ImageKey = game::AddToItemDrawVector(IconItems);
+          CategoryList.AddEntry(item::GetItemCategoryName(Current.Category),
+                                LIGHT_GRAY, 0, ImageKey, true);
+          festring Detail;
+          Detail << Current.Piles << (Current.Piles == 1
+            ? " item type, " : " item types, ")
+            << Current.Items << (Current.Items == 1 ? " item" : " items");
+          CategoryList.SetLastEntryHelp(Detail);
+        }
+
+        const int CategoryChoice = CategoryList.Draw();
+        game::ClearItemDrawVector();
+        for(size_t IconIndex = 0; IconIndex < CategoryIcons.size(); ++IconIndex)
+          delete CategoryIcons[IconIndex];
+        if(CategoryChoice & FELIST_ERROR_BIT)
+          return CategoryChoice;
+        if(ChoiceOffset && CategoryChoice == 0)
+          return 0;
+
+        SelectedCategory = CategoryChoice;
+        const adaptivecategory& Current =
+          Categories[CategoryChoice - ChoiceOffset];
+        festring FilteredTopic(Topic);
+        FilteredTopic << " - " << item::GetItemCategoryName(Current.Category);
+        ReturnVector.clear();
+        if(RestoreEquipmentComparison)
+          adaptiveui::SetEquipmentComparison(
+            EquipmentComparisonLabel.c_str(), EquipmentComparisonMetrics);
+        const int Result = DrawContents(ReturnVector, MergeStack, Viewer,
+                                        FilteredTopic, ThisDesc, ThatDesc,
+                                        SpecialDesc, SpecialDescColor, Flags,
+                                        SorterFunction, Current.Category);
+        if(Result != ESCAPED)
+          return Result;
+      }
+    }
+  }
+#endif
 
   if(!SpecialDesc.IsEmpty())
   {
@@ -486,9 +785,11 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
 
   if(MergeStack)
     MergeStack->AddContentsToList(Contents, Viewer, ThatDesc,
-                                  Flags, CENTER, SorterFunction);
+                                  Flags, CENTER, SorterFunction, Category,
+                                  ExcludedItemId);
 
-  AddContentsToList(Contents, Viewer, ThisDesc, Flags, CENTER, SorterFunction);
+  AddContentsToList(Contents, Viewer, ThisDesc, Flags, CENTER,
+                    SorterFunction, Category, ExcludedItemId);
   static cchar* WallDescription[] = { "western", "southern",
                                            "northern", "eastern" };
 
@@ -497,7 +798,8 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
       AdjacentStack[c]->AddContentsToList(Contents, Viewer,
                                           CONST_S("Items on the ")
                                           + WallDescription[c] + " wall:",
-                                          Flags, 3 - c, SorterFunction);
+                                          Flags, 3 - c, SorterFunction,
+                                          Category, ExcludedItemId);
 
   game::SetStandardListAttributes(Contents);
   Contents.SetPageLength(stack::GetStandardPageLength());
@@ -513,6 +815,10 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
   game::DrawEverythingNoBlit(); // doesn't prevent mirage puppies
   int Chosen = Contents.Draw();
   game::ClearItemDrawVector();
+
+  const int MobileResultFlags = Chosen
+    & (FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
+  Chosen &= ~(FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
 
   if(Chosen & FELIST_ERROR_BIT)
   {
@@ -535,29 +841,32 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
   if(MergeStack)
   {
     Pos = MergeStack->SearchChosen(ReturnVector, Viewer, Pos, Selected,
-                                   Flags, CENTER, SorterFunction);
+                                   Flags, CENTER, SorterFunction, Category,
+                                   ExcludedItemId);
 
     if(!ReturnVector.empty())
-      return 0;
+      return MobileResultFlags;
   }
 
   Pos = SearchChosen(ReturnVector, Viewer, Pos, Selected,
-                     Flags, CENTER, SorterFunction);
+                     Flags, CENTER, SorterFunction, Category,
+                     ExcludedItemId);
 
   if(!ReturnVector.empty())
-    return 0;
+    return MobileResultFlags;
 
   for(c = 0; c < 4; ++c)
     if(AdjacentStack[c])
     {
       AdjacentStack[c]->SearchChosen(ReturnVector, Viewer, Pos, Selected,
-                                     Flags, 3 - c, SorterFunction);
+                                     Flags, 3 - c, SorterFunction, Category,
+                                     ExcludedItemId);
 
       if(!ReturnVector.empty())
         break;
     }
 
-  return 0;
+  return !ReturnVector.empty() ? MobileResultFlags : 0;
 }
 
 /* Internal function to fill Contents list */
@@ -565,7 +874,8 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
 void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
                               cfestring& Desc, int Flags,
                               int RequiredSquarePosition,
-                              sorter SorterFunction) const
+                              sorter SorterFunction, long Category,
+                              ulong ExcludedItemId) const
 {
   itemvectorvector PileVector;
   Pile(PileVector, Viewer, RequiredSquarePosition, SorterFunction);
@@ -576,6 +886,11 @@ void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
 
   for(uint p = 0; p < PileVector.size(); ++p)
   {
+    item* Item = PileVector[p].back();
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if(IsAdaptiveComparedItem(Item, ExcludedItemId))
+      continue;
+#endif
     if(DrawDesc)
     {
       if(!Contents.IsEmpty())
@@ -586,7 +901,8 @@ void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
       DrawDesc = false;
     }
 
-    item* Item = PileVector[p].back();
+    if(Category != ANY_CATEGORY && Item->GetCategory() != Category)
+      continue;
 
     if(Item->GetCategory() != LastCategory)
     {
@@ -600,14 +916,12 @@ void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
                             !(Flags & NO_SPECIAL_INFO));
     int ImageKey = game::AddToItemDrawVector(PileVector[p]);
     Contents.AddEntry(Entry, LIGHT_GRAY, 0, ImageKey);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
-    Contents.SetLastEntryItemMetrics(
-      Item->GetID(), Item->GetWeight(),
-      Item->IsArmor(Viewer), Item->IsWeapon(Viewer),
-      Item->IsShield(Viewer), Item->GetStrengthValue(),
-      Item->GetBaseMinDamage(), Item->GetBaseMaxDamage(),
-      Item->GetBaseToHitValue(), Item->GetBaseBlockValue(),
-      Item->GetEnchantment());
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    Contents.SetLastEntryAdaptiveGroup(
+      item::GetItemCategoryName(Item->GetCategory()));
+    SetAdaptiveEntryMetrics(Contents, Viewer, Item, false);
+    SetAdaptiveEntryMetrics(Contents, Viewer,
+                            FindAdaptiveComparisonItem(Viewer, Item), true);
 #endif
     if(!Item->GetDescriptiveInfo().IsEmpty())
       Contents.SetLastEntryHelp(festring()<<Entry<<"\n\n"<<Item->GetDescriptiveInfo());
@@ -622,7 +936,8 @@ int stack::SearchChosen(itemvector& ReturnVector,
                         ccharacter* Viewer,
                         int Pos, int Chosen, int Flags,
                         int RequiredSquarePosition,
-                        sorter SorterFunction) const
+                        sorter SorterFunction, long Category,
+                        ulong ExcludedItemId) const
 {
   /* Not really efficient... :( */
 
@@ -630,6 +945,15 @@ int stack::SearchChosen(itemvector& ReturnVector,
   Pile(PileVector, Viewer, RequiredSquarePosition, SorterFunction);
 
   for(uint p = 0; p < PileVector.size(); ++p)
+  {
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if(IsAdaptiveComparedItem(PileVector[p].back(), ExcludedItemId))
+      continue;
+#endif
+    if(Category != ANY_CATEGORY
+       && PileVector[p].back()->GetCategory() != Category)
+      continue;
+
     if(Pos++ == Chosen)
     {
       if(Flags & NO_MULTI_SELECT)
@@ -656,6 +980,7 @@ int stack::SearchChosen(itemvector& ReturnVector,
         return -1;
       }
     }
+  }
 
   return Pos;
 }
