@@ -15,8 +15,8 @@ https://harminoff.itch.io/ivan-android-unofficial
 - Signing certificate SHA-256: `966DB1CE3EC261589D8699192D371A8908A3A31959CB4A65E25ED9F71BA539CB`
 
 The matching Windows desktop package is
-`builds/ivan-windows-0.59-crafting-and-tiles.zip` (ignored by Git), with
-SHA-256 `D91782CFA6231260AA0955DC1C7AFE4049B61058B557F05659FDB41A36B6B417`.
+`builds/ivan-windows-0.59-crafting-and-tiles.1.zip` (ignored by Git), with
+SHA-256 `9CA7E802F07607DDF5DDD3AC996F315D4A59D88FEC11336D18BF9236248D34F2`.
 
 The release keystore and recovery information live in the ignored
 `android/signing` directory. Back up that directory securely before publishing;
