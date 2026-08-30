@@ -643,6 +643,55 @@ namespace
                      ShortInventoryLayout.MenuDetail));
 
     adaptiveui::ClearMenu();
+    adaptiveui::SetMenu("What do you want to pick up?", "",
+                        ShortInventory, 1, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
+                                     1, adaptiveui::MENU_PICKUP_GRID);
+    adaptiveui::ItemMetrics PickupMetrics[1];
+    PickupMetrics[0].Present = true;
+    PickupMetrics[0].Equippable = true;
+    PickupMetrics[0].Actions =
+      adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_EAT)
+      | adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_READ);
+    adaptiveui::SetMenuItemMetrics(PickupMetrics, 1);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout PickupLayout = adaptiveui::GetLayout();
+    assert(PickupLayout.MenuItemActions.size() == 3);
+    assert(PickupLayout.MenuItemActionCodes.size() == 3);
+    assert(PickupLayout.MenuItemActionCodes[0]
+           == adaptiveui::ITEM_ACTION_NONE);
+    assert(PickupLayout.MenuItemActionCodes[1]
+           == adaptiveui::ITEM_ACTION_EAT);
+    assert(PickupLayout.MenuItemActionCodes[2]
+           == adaptiveui::ITEM_ACTION_READ);
+    assert(!Overlaps(PickupLayout.MenuDetail, PickupLayout.MenuConfirm));
+    assert(!Overlaps(PickupLayout.MenuDetail, PickupLayout.MenuBack));
+    adaptiveui::PointerResult PickupEquip = adaptiveui::HandlePointer(
+      PickupLayout.MenuItemActions[0].x
+        + PickupLayout.MenuItemActions[0].w / 2,
+      PickupLayout.MenuItemActions[0].y
+        + PickupLayout.MenuItemActions[0].h / 2,
+      true, 0, false, 1);
+    assert(PickupEquip.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupEquip.CommandCode == KEY_MOBILE_MENU_EQUIP_BASE);
+    adaptiveui::PointerResult PickupEat = adaptiveui::HandlePointer(
+      PickupLayout.MenuItemActions[1].x
+        + PickupLayout.MenuItemActions[1].w / 2,
+      PickupLayout.MenuItemActions[1].y
+        + PickupLayout.MenuItemActions[1].h / 2,
+      true, 0, false, 1);
+    assert(PickupEat.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupEat.CommandCode == KEY_MOBILE_MENU_ACTION_BASE
+      + (adaptiveui::ITEM_ACTION_EAT - 1)
+        * KEY_MOBILE_MENU_ACTION_STRIDE);
+    adaptiveui::PointerResult PickupStash = adaptiveui::HandlePointer(
+      PickupLayout.MenuConfirm.x + PickupLayout.MenuConfirm.w / 2,
+      PickupLayout.MenuConfirm.y + PickupLayout.MenuConfirm.h / 2,
+      true, 0, false, 1);
+    assert(PickupStash.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupStash.CommandCode == KEY_MOBILE_MENU_SELECT_BASE);
+
+    adaptiveui::ClearMenu();
     adaptiveui::SetMenu("Choose helmet:", "", ShortInventory, 5, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
                                      5, adaptiveui::MENU_ITEM_GRID);

@@ -1595,8 +1595,11 @@ std::string DisplayMenuSubtitle()
     int MaximumScroll;
     bool FrontEnd;
     SDL_Rect Back;
+    SDL_Rect Confirm;
     SDL_Rect Previous;
     SDL_Rect Next;
+    std::vector<SDL_Rect> ItemActions;
+    std::vector<int> ItemActionCodes;
     int GridColumns;
     int GridCellWidth;
     int GridCellHeight;
@@ -1647,6 +1650,55 @@ std::string DisplayMenuSubtitle()
          >= int(Hud.MenuOptions.size()))
         return First;
     return std::max(0, int(Hud.MenuOptions.size()) - 1);
+  }
+
+  struct DesktopItemAction
+  {
+    int Code;
+    const char* Label;
+  };
+
+  std::vector<DesktopItemAction> DesktopPickupActions()
+  {
+    std::vector<DesktopItemAction> Result;
+    if(Hud.MenuKind != adaptiveui::MENU_PICKUP_GRID
+       || Hud.MenuSelected < 0
+       || Hud.MenuSelected >= int(Hud.MenuItemMetrics.size()))
+      return Result;
+
+    const adaptiveui::ItemMetrics& Metrics =
+      Hud.MenuItemMetrics[Hud.MenuSelected];
+    if(!Metrics.Present)
+      return Result;
+    if(Metrics.Equippable)
+      Result.push_back({ adaptiveui::ITEM_ACTION_NONE, "EQUIP" });
+
+    const DesktopItemAction Available[] = {
+      { adaptiveui::ITEM_ACTION_DRINK, "DRINK" },
+      { adaptiveui::ITEM_ACTION_TASTE, "TASTE" },
+      { adaptiveui::ITEM_ACTION_EAT, "EAT" },
+      { adaptiveui::ITEM_ACTION_READ, "READ" },
+      { adaptiveui::ITEM_ACTION_ZAP, "ZAP" },
+      { adaptiveui::ITEM_ACTION_APPLY, "APPLY" }
+    };
+    for(size_t Index = 0;
+        Index < sizeof(Available) / sizeof(Available[0]); ++Index)
+      if(Metrics.Actions & adaptiveui::ItemActionMask(
+           adaptiveui::ItemAction(Available[Index].Code)))
+        Result.push_back(Available[Index]);
+    return Result;
+  }
+
+  SDL_Rect DesktopMenuButton(const SDL_Rect& Area, int Index, int Count,
+                             int Top, int RowHeight, int Gap)
+  {
+    const int Columns = std::min(4, std::max(1, Count));
+    const int Column = Index % Columns;
+    const int Row = Index / Columns;
+    const int Width = std::max(1,
+      (Area.w - 20 - Gap * (Columns - 1)) / Columns);
+    return { Area.x + 10 + Column * (Width + Gap),
+             Top + Row * (RowHeight + Gap), Width, RowHeight };
   }
 
   MenuGeometry GetMenuGeometry()
@@ -1702,11 +1754,43 @@ std::string DisplayMenuSubtitle()
                      + 10;
       }
     }
+    Geometry.Confirm = { 0, 0, 0, 0 };
+    Geometry.Previous = { 0, 0, 0, 0 };
+    Geometry.Next = { 0, 0, 0, 0 };
+    Geometry.ItemActions.clear();
+    Geometry.ItemActionCodes.clear();
     Geometry.Back = Geometry.FrontEnd
       ? SDL_Rect{ 0, 0, 0, 0 }
       : SDL_Rect{ Geometry.Area.x + 10,
                   Geometry.Area.y + Geometry.Area.h - 42, 116, 32 };
-    if(Geometry.FrontEnd)
+    const std::vector<DesktopItemAction> PickupActions =
+      DesktopPickupActions();
+    const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+    if(PickupButtons)
+    {
+      const int ButtonCount = int(PickupActions.size()) + 2;
+      const int Columns = std::min(4, std::max(1, ButtonCount));
+      const int Rows = (ButtonCount + Columns - 1) / Columns;
+      const int ButtonHeight = 32;
+      const int ButtonGap = 6;
+      const int ButtonTop = Geometry.Area.y + Geometry.Area.h - 10
+        - Rows * ButtonHeight - (Rows - 1) * ButtonGap;
+      for(size_t Index = 0; Index < PickupActions.size(); ++Index)
+      {
+        Geometry.ItemActions.push_back(DesktopMenuButton(
+          Geometry.Area, int(Index), ButtonCount, ButtonTop,
+          ButtonHeight, ButtonGap));
+        Geometry.ItemActionCodes.push_back(PickupActions[Index].Code);
+      }
+      Geometry.Confirm = DesktopMenuButton(
+        Geometry.Area, int(PickupActions.size()), ButtonCount,
+        ButtonTop, ButtonHeight, ButtonGap);
+      Geometry.Back = DesktopMenuButton(
+        Geometry.Area, int(PickupActions.size()) + 1, ButtonCount,
+        ButtonTop, ButtonHeight, ButtonGap);
+      Geometry.Bottom = ButtonTop - 8;
+    }
+    else if(Geometry.FrontEnd)
     {
       const int PageButtonWidth = 92;
       Geometry.Next = { Geometry.Area.x + Geometry.Area.w - 10
@@ -1871,19 +1955,198 @@ std::string DisplayMenuSubtitle()
     return Result;
   }
 
-  void DrawComparisonMetric(SDL_Renderer* Renderer, int X, int& Y,
-                            const std::string& Label,
-                            const std::string& Equipped,
-                            const std::string& Candidate,
-                            int Difference, bool HigherIsBetter)
+  struct DesktopComparisonRow
   {
-    const bool Better = HigherIsBetter ? Difference > 0 : Difference < 0;
-    const bool Worse = HigherIsBetter ? Difference < 0 : Difference > 0;
-    Text(Renderer, X, Y, Label + " " + Equipped + " > " + Candidate,
-         1, Better ? 137 : Worse ? 226 : 205,
-         Better ? 203 : Worse ? 121 : 195,
-         Better ? 129 : Worse ? 105 : 174);
-    Y += 11;
+    std::string Label;
+    std::string Equipped;
+    std::string Selected;
+    int Advantage;
+  };
+
+  std::string DesktopNumber(int Value)
+  {
+    return std::to_string(Value);
+  }
+
+  std::string DesktopDamage(const adaptiveui::ItemMetrics& Metrics)
+  {
+    return std::to_string(Metrics.MinimumDamage) + "-"
+      + std::to_string(Metrics.MaximumDamage);
+  }
+
+  std::string DesktopSkill(const adaptiveui::ItemMetrics& Metrics)
+  {
+    return std::to_string(Metrics.CategorySkill) + "/"
+      + std::to_string(Metrics.SpecificSkill);
+  }
+
+  void AddDesktopComparison(std::vector<DesktopComparisonRow>& Rows,
+                            const char* Label,
+                            const std::string& Equipped,
+                            const std::string& Selected, int Advantage)
+  {
+    DesktopComparisonRow Row;
+    Row.Label = Label;
+    Row.Equipped = Equipped;
+    Row.Selected = Selected;
+    Row.Advantage = Advantage;
+    Rows.push_back(Row);
+  }
+
+  std::vector<DesktopComparisonRow> DesktopComparisonRows(
+    const adaptiveui::ItemMetrics& Candidate,
+    const adaptiveui::ItemMetrics& Current)
+  {
+    std::vector<DesktopComparisonRow> Rows;
+    if(Candidate.Weapon && Current.Weapon
+       && !Candidate.Shield && !Current.Shield)
+    {
+      AddDesktopComparison(Rows, "DAMAGE", DesktopDamage(Current),
+        DesktopDamage(Candidate), Candidate.MinimumDamage
+          + Candidate.MaximumDamage - Current.MinimumDamage
+          - Current.MaximumDamage);
+      AddDesktopComparison(Rows, "HIT", DesktopNumber(Current.ToHit),
+        DesktopNumber(Candidate.ToHit), Candidate.ToHit - Current.ToHit);
+      if(!Candidate.Accuracy.empty() || !Current.Accuracy.empty())
+        AddDesktopComparison(Rows, "ACCURACY", Current.Accuracy,
+          Candidate.Accuracy, Candidate.ToHit - Current.ToHit);
+      if(!Candidate.Durability.empty() || !Current.Durability.empty())
+        AddDesktopComparison(Rows, "DURABILITY", Current.Durability,
+          Candidate.Durability,
+          Candidate.ArmorValue - Current.ArmorValue);
+      if(Candidate.CategorySkill || Candidate.SpecificSkill
+         || Current.CategorySkill || Current.SpecificSkill)
+        AddDesktopComparison(Rows, "SKILL", DesktopSkill(Current),
+          DesktopSkill(Candidate), Candidate.CategorySkill
+            + Candidate.SpecificSkill - Current.CategorySkill
+            - Current.SpecificSkill);
+    }
+    if(Candidate.Armor && Current.Armor)
+      AddDesktopComparison(Rows, "ARMOR", DesktopNumber(Current.ArmorValue),
+        DesktopNumber(Candidate.ArmorValue),
+        Candidate.ArmorValue - Current.ArmorValue);
+    if(Candidate.Shield && Current.Shield)
+    {
+      AddDesktopComparison(Rows, "BLOCK", DesktopNumber(Current.Block),
+        DesktopNumber(Candidate.Block), Candidate.Block - Current.Block);
+      if(!Candidate.BlockQuality.empty() || !Current.BlockQuality.empty())
+        AddDesktopComparison(Rows, "BLOCK QUALITY", Current.BlockQuality,
+          Candidate.BlockQuality, Candidate.Block - Current.Block);
+    }
+    if(Candidate.Enchantment || Current.Enchantment)
+      AddDesktopComparison(Rows, "ENCHANTMENT",
+        DesktopNumber(Current.Enchantment),
+        DesktopNumber(Candidate.Enchantment),
+        Candidate.Enchantment - Current.Enchantment);
+    AddDesktopComparison(Rows, "WEIGHT", DesktopNumber(int(Current.Weight)),
+      DesktopNumber(int(Candidate.Weight)),
+      int(Current.Weight - Candidate.Weight));
+    return Rows;
+  }
+
+  void DesktopCenteredText(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                           const std::string& Value, int Scale,
+                           Uint8 R, Uint8 G, Uint8 B)
+  {
+    const int X = Area.x + std::max(0,
+      (Area.w - TextWidth(Value, Scale)) / 2);
+    const int Y = Area.y + std::max(0, (Area.h - Scale * 7) / 2);
+    Text(Renderer, X, Y, Elide(Value,
+      std::max(1, Area.w / (Scale * 6))), Scale, R, G, B);
+  }
+
+  void DesktopCenteredWrappedText(SDL_Renderer* Renderer,
+                                  const SDL_Rect& Area,
+                                  const std::string& Value, int Scale,
+                                  Uint8 R, Uint8 G, Uint8 B)
+  {
+    const int LineHeight = Scale * 7 + 3;
+    const int Columns = std::max(1, Area.w / (Scale * 6));
+    std::vector<std::string> Lines = Wrap(Value, Columns);
+    if(Lines.size() > 2)
+    {
+      Lines.resize(2);
+      Lines[1] = Elide(Lines[1], Columns);
+    }
+    int Y = Area.y + std::max(0,
+      (Area.h - int(Lines.size()) * LineHeight) / 2);
+    for(size_t Index = 0; Index < Lines.size(); ++Index, Y += LineHeight)
+    {
+      const int X = Area.x + std::max(0,
+        (Area.w - TextWidth(Lines[Index], Scale)) / 2);
+      Text(Renderer, X, Y, Lines[Index], Scale, R, G, B);
+    }
+  }
+
+  int DesktopComparisonHeight(const adaptiveui::ItemMetrics& Candidate,
+                              const adaptiveui::ItemMetrics& Current)
+  {
+    return 58 + int(DesktopComparisonRows(Candidate, Current).size()) * 18;
+  }
+
+  int DrawDesktopComparison(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                            const adaptiveui::ItemMetrics& Candidate,
+                            const adaptiveui::ItemMetrics& Current,
+                            const std::string& SelectedLabel)
+  {
+    const std::vector<DesktopComparisonRow> Rows =
+      DesktopComparisonRows(Candidate, Current);
+    if(Rows.empty() || Area.h <= 0)
+      return 0;
+
+    const int HeaderHeight = 58;
+    const int RowHeight = 18;
+    const int Height = std::min(Area.h,
+      HeaderHeight + int(Rows.size()) * RowHeight);
+    const SDL_Rect Panel = { Area.x, Area.y, Area.w, Height };
+    Fill(Renderer, Panel, 12, 17, 13, 255);
+    Outline(Renderer, Panel, 74, 61, 41);
+    const int LabelWidth = Clamp(Area.w * 27 / 100, 82, 116);
+    const int ValueWidth = std::max(1, (Area.w - LabelWidth) / 2);
+    const int SelectedX = Area.x + ValueWidth + LabelWidth;
+
+    DesktopCenteredText(Renderer,
+      { Area.x, Area.y + 3, ValueWidth, 14 }, "EQUIPPED", 1,
+      181, 169, 143);
+    DesktopCenteredText(Renderer,
+      { SelectedX, Area.y + 3, ValueWidth, 14 }, "SELECTED", 1,
+      154, 220, 119);
+    DesktopCenteredWrappedText(Renderer,
+      { Area.x + 3, Area.y + 18, ValueWidth - 6, 34 },
+      Current.Label.empty() ? "equipped item" : Current.Label,
+      1, 225, 211, 176);
+    DesktopCenteredWrappedText(Renderer,
+      { SelectedX + 3, Area.y + 18, ValueWidth - 6, 34 },
+      SelectedLabel, 1, 232, 226, 194);
+    Fill(Renderer, { Area.x, Area.y + HeaderHeight - 1,
+                     Area.w, 1 }, 92, 83, 55);
+
+    for(size_t Index = 0; Index < Rows.size(); ++Index)
+    {
+      const int Y = Area.y + HeaderHeight + int(Index) * RowHeight;
+      if(Y + RowHeight > Area.y + Height)
+        break;
+      if(Index % 2)
+        Fill(Renderer, { Area.x + 1, Y, Area.w - 2, RowHeight },
+             15, 21, 17, 255);
+      DesktopCenteredText(Renderer,
+        { Area.x + 3, Y, ValueWidth - 6, RowHeight },
+        Rows[Index].Equipped, 1, 224, 216, 190);
+      DesktopCenteredText(Renderer,
+        { Area.x + ValueWidth, Y, LabelWidth, RowHeight },
+        Rows[Index].Label, 1, 222, 189, 91);
+      const bool Better = Rows[Index].Advantage > 0;
+      const bool Worse = Rows[Index].Advantage < 0;
+      DesktopCenteredText(Renderer,
+        { SelectedX + 3, Y, ValueWidth - 6, RowHeight },
+        Rows[Index].Selected, 1,
+        Better ? 154 : Worse ? 239 : 224,
+        Better ? 220 : Worse ? 109 : 216,
+        Better ? 119 : Worse ? 91 : 190);
+      Fill(Renderer, { Area.x, Y + RowHeight - 1, Area.w, 1 },
+           43, 38, 31);
+    }
+    return Height;
   }
 
   void DrawItemMetric(SDL_Renderer* Renderer, int X, int& Y,
@@ -1929,6 +2192,34 @@ std::string DisplayMenuSubtitle()
           + std::to_string(Metrics.SpecificSkill));
     DrawItemMetric(Renderer, X, Y, "WEIGHT",
                    std::to_string(Metrics.Weight) + "G");
+  }
+
+  void DrawDesktopDetailText(SDL_Renderer* Renderer, const SDL_Rect& Area,
+                             const std::string& Detail)
+  {
+    if(Area.w <= 0 || Area.h <= 0)
+      return;
+    SDL_RenderSetClipRect(Renderer, &Area);
+    const std::vector<std::string> Lines = Wrap(
+      Detail.empty() ? "NO DESCRIPTION AVAILABLE" : Detail,
+      std::max(1, Area.w / 6));
+    int Y = Area.y;
+    for(size_t Line = 0; Line < Lines.size(); ++Line, Y += 11)
+    {
+      const std::string& Value = Lines[Line];
+      const bool Heading = Value == "STATUS" || Value == "MAIN MATERIAL"
+        || Value == "SECONDARY MATERIAL" || Value == "TOOLS"
+        || Value == "FACILITIES" || Value == "DESCRIPTION";
+      const bool Ready = Value.find("READY") != std::string::npos
+        || Value == "Ready to choose ingredients";
+      const bool Missing = Value.find("MISSING") != std::string::npos
+        || Value == "Cannot craft with current supplies";
+      Text(Renderer, Area.x, Y, Value, 1,
+           Heading ? 236 : Ready ? 137 : Missing ? 214 : 224,
+           Heading ? 204 : Ready ? 186 : Missing ? 112 : 216,
+           Heading ? 126 : Ready ? 106 : Missing ? 92 : 190);
+    }
+    SDL_RenderSetClipRect(Renderer, 0);
   }
 
   void DrawInventoryGrid(SDL_Renderer* Renderer,
@@ -2055,56 +2346,27 @@ std::string DisplayMenuSubtitle()
       else if(Index < int(Hud.MenuComparisonMetrics.size())
               && Hud.MenuComparisonMetrics[Index].Present)
         Current = &Hud.MenuComparisonMetrics[Index];
+      bool DetailDrawn = false;
       if(Candidate)
       {
         if(Current && Current->Present)
         {
-          const std::string CurrentLabel = Current->Label.empty()
-            ? ParseInventoryLabel(Hud.EquippedItemLabel).Name
-            : Current->Label;
-          Text(Renderer, Left, Y, CurrentLabel.empty()
-            ? "EQUIPPED > SELECTED" : "EQUIPPED: " + CurrentLabel,
-               1, 181, 169, 143);
-          Y += 11;
-          if(Current->Armor && Candidate->Armor)
-            DrawComparisonMetric(Renderer, Left, Y, "ARMOR",
-              std::to_string(Current->ArmorValue),
-              std::to_string(Candidate->ArmorValue),
-              Candidate->ArmorValue - Current->ArmorValue, true);
-          if(Current->Weapon && Candidate->Weapon
-             && !Current->Shield && !Candidate->Shield)
-          {
-            DrawComparisonMetric(Renderer, Left, Y, "DAMAGE",
-              std::to_string(Current->MinimumDamage) + "-"
-                + std::to_string(Current->MaximumDamage),
-              std::to_string(Candidate->MinimumDamage) + "-"
-                + std::to_string(Candidate->MaximumDamage),
-              Candidate->MinimumDamage + Candidate->MaximumDamage
-                - Current->MinimumDamage - Current->MaximumDamage, true);
-            DrawComparisonMetric(Renderer, Left, Y, "HIT",
-              Current->Accuracy, Candidate->Accuracy,
-              Candidate->ToHit - Current->ToHit, true);
-            DrawComparisonMetric(Renderer, Left, Y, "DURABILITY",
-              Current->Durability, Candidate->Durability,
-              Candidate->ArmorValue - Current->ArmorValue, true);
-          }
-          if(Current->Shield && Candidate->Shield)
-            DrawComparisonMetric(Renderer, Left, Y, "BLOCK",
-              Current->BlockQuality, Candidate->BlockQuality,
-              Candidate->Block - Current->Block, true);
-          if(Current->Enchantment || Candidate->Enchantment)
-            DrawComparisonMetric(Renderer, Left, Y, "ENCHANT",
-              std::to_string(Current->Enchantment),
-              std::to_string(Candidate->Enchantment),
-              Candidate->Enchantment - Current->Enchantment, true);
-          DrawComparisonMetric(Renderer, Left, Y, "WEIGHT",
-            std::to_string(Current->Weight) + "G",
-            std::to_string(Candidate->Weight) + "G",
-            int(Candidate->Weight - Current->Weight), false);
-          if(Candidate->CategorySkill || Candidate->SpecificSkill)
-            DrawItemMetric(Renderer, Left, Y, "SELECTED SKILL C/S",
-              std::to_string(Candidate->CategorySkill) + "/"
-                + std::to_string(Candidate->SpecificSkill));
+          const int DetailBottom = Geometry.Detail.y + Geometry.Detail.h - 6;
+          const int DesiredComparisonHeight = DesktopComparisonHeight(
+            *Candidate, *Current);
+          const int ReservedComparisonHeight = std::min(
+            std::max(1, DetailBottom - Y), DesiredComparisonHeight);
+          const int ComparisonY = DetailBottom - ReservedComparisonHeight;
+          const SDL_Rect DescriptionArea = { Left, Y,
+            std::max(1, Right - Left),
+            std::max(0, ComparisonY - Y - 7) };
+          DrawDesktopDetailText(Renderer, DescriptionArea, Detail);
+          DetailDrawn = true;
+          const int PaintedComparisonHeight = DrawDesktopComparison(
+            Renderer, { Left, ComparisonY, std::max(1, Right - Left),
+                        ReservedComparisonHeight },
+            *Candidate, *Current, Label.Name);
+          Y = ComparisonY + PaintedComparisonHeight;
         }
         else
         {
@@ -2140,33 +2402,11 @@ std::string DisplayMenuSubtitle()
       Fill(Renderer, { Left, Y, std::max(1, Right - Left), 1 },
            67, 53, 38);
       Y += 7;
-      SDL_Rect DetailText = { Left, Y, std::max(1, Right - Left),
-                              std::max(1, Geometry.Detail.y
-                                + Geometry.Detail.h - Y - 6) };
-      SDL_RenderSetClipRect(Renderer, &DetailText);
-      const int DescriptionScale = 1;
-      const std::vector<std::string> DescriptionLines = Wrap(
-        Detail.empty() ? "NO DESCRIPTION AVAILABLE" : Detail,
-        std::max(1, DetailText.w / (DescriptionScale * 6)));
-      const int Advance = 11;
-      int DescriptionY = DetailText.y;
-      for(size_t Line = 0; Line < DescriptionLines.size(); ++Line,
-          DescriptionY += Advance)
-      {
-        const std::string& Value = DescriptionLines[Line];
-        const bool Heading = Value == "STATUS" || Value == "MAIN MATERIAL"
-          || Value == "SECONDARY MATERIAL" || Value == "TOOLS"
-          || Value == "FACILITIES" || Value == "DESCRIPTION";
-        const bool Ready = Value.find("READY") != std::string::npos
-          || Value == "Ready to choose ingredients";
-        const bool Missing = Value.find("MISSING") != std::string::npos
-          || Value == "Cannot craft with current supplies";
-        Text(Renderer, DetailText.x, DescriptionY, Value, DescriptionScale,
-             Heading ? 236 : Ready ? 137 : Missing ? 214 : 224,
-             Heading ? 204 : Ready ? 186 : Missing ? 112 : 216,
-             Heading ? 126 : Ready ? 106 : Missing ? 92 : 190);
-      }
-      SDL_RenderSetClipRect(Renderer, 0);
+      if(!DetailDrawn)
+        DrawDesktopDetailText(Renderer,
+          { Left, Y, std::max(1, Right - Left),
+            std::max(1, Geometry.Detail.y + Geometry.Detail.h - Y - 6) },
+          Detail);
     }
     else
       Centered(Renderer, Geometry.Detail, "HIGHLIGHT AN ITEM", 1,
@@ -2432,10 +2672,43 @@ std::string DisplayMenuSubtitle()
            "SELECT AN OPTION", 1, 125, 153, 105);
     else
     {
+      const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+      const bool CanConfirm = Hud.MenuSelected >= 0
+                           && Hud.MenuSelected < int(Hud.MenuOptions.size());
+      if(PickupButtons)
+      {
+        const std::vector<DesktopItemAction> Actions =
+          DesktopPickupActions();
+        for(size_t Index = 0;
+            Index < Actions.size() && Index < Geometry.ItemActions.size();
+            ++Index)
+        {
+          Fill(Renderer, Geometry.ItemActions[Index],
+               CanConfirm ? 25 : 19, CanConfirm ? 43 : 23,
+               CanConfirm ? 58 : 28, 255);
+          Outline(Renderer, Geometry.ItemActions[Index],
+                  CanConfirm ? 86 : 70, CanConfirm ? 126 : 70,
+                  CanConfirm ? 169 : 70);
+          Centered(Renderer, Geometry.ItemActions[Index],
+                   Actions[Index].Label, 2,
+                   CanConfirm ? 224 : 130, CanConfirm ? 216 : 125,
+                   CanConfirm ? 190 : 115);
+        }
+        Fill(Renderer, Geometry.Confirm,
+             CanConfirm ? 24 : 19, CanConfirm ? 55 : 23,
+             CanConfirm ? 35 : 28, 255);
+        Outline(Renderer, Geometry.Confirm,
+                CanConfirm ? 102 : 70, CanConfirm ? 169 : 70,
+                CanConfirm ? 92 : 70);
+        Centered(Renderer, Geometry.Confirm, "STASH", 2,
+                 CanConfirm ? 190 : 130, CanConfirm ? 226 : 125,
+                 CanConfirm ? 157 : 115);
+      }
       Fill(Renderer, Geometry.Back, 49, 20, 18, 255);
       Outline(Renderer, Geometry.Back, 168, 71, 58);
       Centered(Renderer, Geometry.Back, "BACK", 2, 228, 168, 139);
       if(IsInventoryGridMenu()
+         && !PickupButtons
          && Hud.InventoryCurrentWeight >= 0
          && Hud.InventoryMaximumWeight >= 0)
       {
@@ -2447,7 +2720,8 @@ std::string DisplayMenuSubtitle()
              WeightY, Weight, 1, 224, 216, 190);
       }
     }
-    if(Hud.MenuPages > 1)
+    if(Hud.MenuPages > 1
+       && Hud.MenuKind != adaptiveui::MENU_PICKUP_GRID)
     {
       const std::string Page = std::string("PAGE ")
         + std::to_string(Hud.MenuPage) + "/" + std::to_string(Hud.MenuPages);
@@ -2652,6 +2926,7 @@ adaptiveui::Layout::Layout()
     PromptContinue({ 0, 0, 1, 1 }), PromptDecline({ 0, 0, 0, 0 }),
     PromptCancel({ 0, 0, 1, 1 }),
     MenuBack({ 0, 0, 0, 0 }),
+    MenuConfirm({ 0, 0, 0, 0 }),
     MenuPrevious({ 0, 0, 0, 0 }), MenuNext({ 0, 0, 0, 0 }),
     MenuDetail({ 0, 0, 0, 0 }),
     ActionArea({ 0, 0, 1, 1 }), MapNotesArea({ 0, 0, 0, 0 }),
@@ -3544,6 +3819,7 @@ namespace adaptiveui
     CurrentLayout.Menu = MenuRects.Area;
     CurrentLayout.MenuDetail = MenuRects.Detail;
     CurrentLayout.MenuBack = MenuRects.Back;
+    CurrentLayout.MenuConfirm = MenuRects.Confirm;
     CurrentLayout.MenuCells.clear();
     if(IsInventoryGridMenu())
       for(int Index = 0; Index < std::min(MenuRects.VisibleCount,
@@ -3551,6 +3827,8 @@ namespace adaptiveui
         CurrentLayout.MenuCells.push_back(InventoryCell(MenuRects, Index));
     CurrentLayout.MenuPrevious = MenuRects.Previous;
     CurrentLayout.MenuNext = MenuRects.Next;
+    CurrentLayout.MenuItemActions = MenuRects.ItemActions;
+    CurrentLayout.MenuItemActionCodes = MenuRects.ItemActionCodes;
     RebuildMapRects();
     Dirty = false;
   }
@@ -3811,6 +4089,37 @@ namespace adaptiveui
         Result.Type = PointerResult::COMMAND_KEY;
         Result.CommandCode = KEY_ESC;
         return Result;
+      }
+
+      if(Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID && Pressed)
+      {
+        const bool HasSelection = Hud.MenuSelected >= 0
+          && Hud.MenuSelected < int(Hud.MenuOptions.size());
+        for(size_t Index = 0; Index < Geometry.ItemActions.size()
+            && Index < Geometry.ItemActionCodes.size(); ++Index)
+          if(Contains(Geometry.ItemActions[Index], OutputX, OutputY))
+          {
+            Result.Type = HasSelection ? PointerResult::COMMAND_KEY
+                                       : PointerResult::CONSUMED;
+            if(HasSelection)
+            {
+              const int Action = Geometry.ItemActionCodes[Index];
+              Result.CommandCode = Action == adaptiveui::ITEM_ACTION_NONE
+                ? KEY_MOBILE_MENU_EQUIP_BASE + Hud.MenuSelected
+                : KEY_MOBILE_MENU_ACTION_BASE
+                  + (Action - 1) * KEY_MOBILE_MENU_ACTION_STRIDE
+                  + Hud.MenuSelected;
+            }
+            return Result;
+          }
+        if(Contains(Geometry.Confirm, OutputX, OutputY))
+        {
+          Result.Type = HasSelection ? PointerResult::COMMAND_KEY
+                                     : PointerResult::CONSUMED;
+          Result.CommandCode = HasSelection
+            ? KEY_MOBILE_MENU_SELECT_BASE + Hud.MenuSelected : 0;
+          return Result;
+        }
       }
 
       if(!Geometry.FrontEnd && Pressed

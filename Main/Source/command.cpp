@@ -917,18 +917,8 @@ truth commandsystem::PickUp(character* Char)
   }
 
   truth PreviewSingleItem = false;
-#ifdef ANDROID
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
   PreviewSingleItem = PileVector.size() == 1 && !PileVector[0].empty();
-#elif defined(ADAPTIVE_UI)
-  if(PileVector.size() == 1 && !PileVector[0].empty())
-  {
-    item* GroundItem = PileVector[0][0];
-    PreviewSingleItem = GroundItem->IsWeapon(Char)
-      || GroundItem->IsArmor(Char)
-      || GroundItem->IsShield(Char)
-      || GroundItem->IsRing(Char)
-      || GroundItem->IsAmulet(Char);
-  }
 #endif
 
   if(PileVector.size() == 1 && !PreviewSingleItem)

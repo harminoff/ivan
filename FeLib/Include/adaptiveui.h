@@ -218,10 +218,13 @@ namespace adaptiveui
     SDL_Rect PromptDecline;
     SDL_Rect PromptCancel;
     SDL_Rect MenuBack;
+    SDL_Rect MenuConfirm;
     SDL_Rect MenuPrevious;
     SDL_Rect MenuNext;
     SDL_Rect MenuDetail;
     std::vector<SDL_Rect> MenuCells;
+    std::vector<SDL_Rect> MenuItemActions;
+    std::vector<int> MenuItemActionCodes;
     SDL_Rect ActionArea;
     SDL_Rect ActionTabs[ACTION_GROUPS];
     std::vector<SDL_Rect> ActionButtons;
