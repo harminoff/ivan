@@ -18,6 +18,26 @@
 int stack::Selected;
 uint stack::StandardPageLength = stack::GetDefaultPageLength();
 
+namespace
+{
+  constexpr int GetFelistMobileResultFlags(int Result)
+  {
+    return Result & FELIST_ERROR_BIT ? 0
+      : Result & (FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
+  }
+
+  constexpr int GetFelistSelectionResult(int Result)
+  {
+    return Result & FELIST_ERROR_BIT ? Result
+      : Result & ~(FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
+  }
+
+  static_assert(GetFelistSelectionResult(ESCAPED) == ESCAPED,
+                "Back must remain a nested-menu escape result");
+  static_assert(GetFelistMobileResultFlags(ESCAPED) == 0,
+                "Felist errors must not decode as mobile item actions");
+}
+
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
 item* SpawnAdaptiveCategoryIcon(long Category)
 {
@@ -816,9 +836,10 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
   int Chosen = Contents.Draw();
   game::ClearItemDrawVector();
 
-  const int MobileResultFlags = Chosen
-    & (FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
-  Chosen &= ~(FELIST_MOBILE_EQUIP_BIT | FELIST_MOBILE_ACTION_MASK);
+  // Felist errors occupy the same high-bit range as the mobile action payload.
+  // Preserve errors so nested menus can recognize ESCAPED and return one level.
+  const int MobileResultFlags = GetFelistMobileResultFlags(Chosen);
+  Chosen = GetFelistSelectionResult(Chosen);
 
   if(Chosen & FELIST_ERROR_BIT)
   {
