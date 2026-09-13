@@ -61,15 +61,15 @@ tasks.register("prepareIvanResources", Sync) {
 
 android {
     namespace "io.github.harminoff.ivan"
-    compileSdk 35
+    compileSdk 36
     ndkVersion "28.2.13676358"
 
     defaultConfig {
         applicationId "io.github.harminoff.ivan"
         minSdk 26
-        targetSdk 35
-        versionCode 6
-        versionName "0.59-android.6"
+        targetSdk 36
+        versionCode 7
+        versionName "0.59-android.7"
 
         externalNativeBuild {
             cmake {
@@ -96,8 +96,11 @@ android {
             debuggable true
         }
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro",
+                    "../vendor/SDL/android-project/app/proguard-rules.pro"
             if (releaseKeystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
             }
@@ -142,4 +145,5 @@ tasks.named("preBuild").configure {
 }
 
 dependencies {
+    implementation "androidx.core:core:1.17.0"
 }
