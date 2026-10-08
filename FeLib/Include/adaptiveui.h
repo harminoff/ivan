@@ -34,7 +34,9 @@ namespace adaptiveui
     MENU_PICKUP_GRID,
     MENU_BUTTON_ROWS,
     MENU_GUIDE,
-    MENU_DETAIL
+    MENU_DETAIL,
+    MENU_ATTRIBUTE_ALLOCATOR,
+    MENU_CHARACTER_SHEET
   };
 
   struct StatusIndicator
@@ -282,6 +284,25 @@ namespace adaptiveui
                                                int ScrollY = 0);
   int MobileMenuIndexAt(const MobileMenuLayout& Current, int X, int Y);
 
+  // Card measurements and drawing must wrap at the same padded text width.
+  std::string FormatCardParagraphs(const std::string& Text);
+  std::vector<std::string> WrapCardText(const std::string& Text, int Columns);
+  int MeasureCardParagraph(const std::string& Text, int Width, int Scale);
+  struct MobileItemCardLayout
+  {
+    int Scale;
+    int DescriptionScale;
+    int DescriptionHeight;
+    int MetricsHeight;
+    int RequirementsHeight;
+    int ContentHeight;
+    int MaximumScrollY;
+  };
+  MobileItemCardLayout CalculateMobileItemCardLayout(
+    const std::string& Description,
+    const std::vector<std::string>& Requirements,
+    int MetricCount, int ComparisonRows, int Width, int Height, int Gap);
+
   void SetPlatformMode(PlatformMode Mode);
   PlatformMode GetPlatformMode();
   bool IsDesktopPresentationEnabled();
@@ -336,6 +357,7 @@ namespace adaptiveui
   bool AdjustMapZoom(int Steps);
 
 #ifdef USE_SDL
+  void DeInit();
   int TranslateDesktopShortcut(SDL_Keycode Key, SDL_Keymod Modifiers);
   bool SelectActionCategory(int Category);
   void UpdateLayout(SDL_Renderer* Renderer, int CanvasWidth, int CanvasHeight,
@@ -348,7 +370,7 @@ namespace adaptiveui
   void Draw(SDL_Renderer* Renderer);
   PointerResult HandlePointer(int OutputX, int OutputY, bool Pressed,
                               int WheelY = 0, bool Motion = false,
-                              int Button = 1);
+                              int Button = 1, int Clicks = 1);
 #endif
 }
 

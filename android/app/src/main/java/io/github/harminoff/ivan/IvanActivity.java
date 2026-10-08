@@ -1,6 +1,7 @@
 package io.github.harminoff.ivan;
 
 import android.annotation.TargetApi;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -8,9 +9,12 @@ import android.system.Os;
 import android.util.Log;
 import android.graphics.Rect;
 import android.view.DisplayCutout;
+import android.view.KeyEvent;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 
 import org.libsdl.app.SDLActivity;
 
@@ -24,6 +28,7 @@ public final class IvanActivity extends SDLActivity {
     private static final String CONTENT_VERSION = "0.59-de528ac-android-5";
     private boolean statusBarHidden;
     private Vibrator vibrator;
+    private OnBackInvokedCallback backCallback;
 
     private static native void nativeSetSafeInsets(int left, int top, int right, int bottom,
                                                    int[] cutoutRects,
@@ -48,9 +53,13 @@ public final class IvanActivity extends SDLActivity {
         }
 
         super.onCreate(savedInstanceState);
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !mBrokenLibraries) {
+            registerGameBackCallback();
+        }
         vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
 
         getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            if (mSingleton != this) return insets;
             int left = 0;
             int top = 0;
             int right = 0;
@@ -101,6 +110,37 @@ public final class IvanActivity extends SDLActivity {
             }
             return insets;
         });
+        getWindow().getDecorView().requestApplyInsets();
+    }
+
+    @TargetApi(33)
+    private void registerGameBackCallback() {
+        backCallback = this::sendGameBack;
+        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+    }
+
+    private void sendGameBack() {
+        if (!mBrokenLibraries && !isFinishing()) {
+            // Use the same cancel/back command as the in-game controls. Finishing
+            // the Activity here can strand a native menu waiting for input.
+            onNativeKeyDown(KeyEvent.KEYCODE_BACK);
+            onNativeKeyUp(KeyEvent.KEYCODE_BACK);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        // Pre-Android 13 system navigation; SDL already handles physical keys.
+        sendGameBack();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        if (mSingleton != this) return;
+        // SDL resizes its surface; refresh density and safe areas as well.
         getWindow().getDecorView().requestApplyInsets();
     }
 
@@ -192,6 +232,10 @@ public final class IvanActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = null;
+        }
         if (vibrator != null) {
             vibrator.cancel();
         }

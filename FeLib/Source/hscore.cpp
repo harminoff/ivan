@@ -16,8 +16,57 @@
 #include "feio.h"
 #include "femath.h"
 
+#include <string>
+
 /* Increment this if changes make highscores incompatible */
 #define HIGH_SCORE_VERSION 129
+
+namespace
+{
+enum scorefilter
+{
+  SCORE_ALL = 0,
+  SCORE_CLASSIC,
+  SCORE_PRESET,
+  SCORE_CUSTOM,
+  SCORE_CHALLENGE
+};
+
+int CurrentScoreFilter = SCORE_ALL;
+
+int ScoreMode(cfestring& Entry, festring& Display)
+{
+  const std::string Raw = Entry.CStr();
+  const std::string Prefix = "{IVANSTART:";
+  if(Raw.find(Prefix) != 0)
+  {
+    Display = Entry;
+    Display << " [Classic]";
+    return SCORE_CLASSIC;
+  }
+
+  const std::string::size_type End = Raw.find('}');
+  const std::string::size_type Split = Raw.find('|', Prefix.size());
+  if(End == std::string::npos || Split == std::string::npos || Split > End)
+  {
+    Display = Entry;
+    return SCORE_CLASSIC;
+  }
+
+  const std::string Mode = Raw.substr(Prefix.size(), Split - Prefix.size());
+  const std::string Origin = Raw.substr(Split + 1, End - Split - 1);
+  Display = Raw.substr(End + 1).c_str();
+  Display << " [" << Mode.c_str();
+  if(Origin != Mode && Origin != "Classic")
+    Display << ": " << Origin.c_str();
+  Display << ']';
+
+  if(Mode == "Preset") return SCORE_PRESET;
+  if(Mode == "Custom") return SCORE_CUSTOM;
+  if(Mode == "Challenge") return SCORE_CHALLENGE;
+  return SCORE_CLASSIC;
+}
+}
 
 cfestring& highscore::GetEntry(int I) const { return Entry[I]; }
 long highscore::GetScore(int I) const { return Score[I]; }
@@ -79,19 +128,44 @@ void highscore::Draw() const
     return;
   }
 
+  felist Filters(CONST_S("Adventurers' Hall of Fame - Filter"));
+  Filters.AddDescription(CONST_S("Scores are calculated and ordered normally. Character mode only labels and filters the entries."));
+  Filters.AddEntry(CONST_S("All"), LIGHT_GRAY);
+  Filters.AddEntry(CONST_S("Classic"), LIGHT_GRAY);
+  Filters.AddEntry(CONST_S("Preset"), LIGHT_GRAY);
+  Filters.AddEntry(CONST_S("Custom"), LIGHT_GRAY);
+  Filters.AddEntry(CONST_S("Challenge"), LIGHT_GRAY);
+  Filters.SetSelected(CurrentScoreFilter);
+  const uint Filter = Filters.Draw();
+  if(Filter == ESCAPED || Filter > SCORE_CHALLENGE)
+    return;
+  CurrentScoreFilter = int(Filter);
+
   felist List(CONST_S("Adventurers' Hall of Fame"));
   festring Desc;
+  int Visible = 0;
 
   for(uint c = 0; c < Score.size(); ++c)
   {
+    festring DisplayEntry;
+    const int Mode = ScoreMode(Entry[c], DisplayEntry);
+    if(CurrentScoreFilter != SCORE_ALL && CurrentScoreFilter != Mode)
+      continue;
     Desc.Empty();
     Desc << c + 1;
     Desc.Resize(5, ' ');
     Desc << Score[c];
     Desc.Resize(13, ' ');
-    Desc << Entry[c];
+    Desc << DisplayEntry;
     List.AddEntry(Desc, c == uint(LastAdd) ? WHITE : LIGHT_GRAY, 13);
     List.SetLastEntryHelp(festring() << "The brave, foolish souls who ventured into the world of IVAN.");
+    ++Visible;
+  }
+
+  if(!Visible)
+  {
+    iosystem::TextScreen(CONST_S("There are no scores for this character mode yet."));
+    return;
   }
 
   List.SetFlags(FADE);

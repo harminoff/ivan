@@ -52,6 +52,7 @@ class god
   cchar* GetObjectPronoun() const;
   virtual int GetAlignment() const = 0;
   festring GetCompleteDescription() const;
+  festring GetPrayerInfo(truth ShowExtraInfo) const;
   void ApplyDivineTick();
   void AdjustRelation(god*, int, truth);
   void AdjustRelation(int);
@@ -84,6 +85,7 @@ class god
   void SignalRandomAltarGeneration(const std::vector<v2>&);
   virtual truth LikesVomit() const { return false; }
  protected:
+  festring GetPrayerHistory() const;
   virtual void PrayGoodEffect() = 0;
   virtual void PrayBadEffect() = 0;
   int Relation, LastPray;

@@ -69,7 +69,6 @@ void audio::Init(cfestring& MusicDirectory)
   else
     isInit = true;
   SetVolumeLevel(MasterVolume);
-  atexit(audio::DeInit);
 }
 
 void audio::DeInit()

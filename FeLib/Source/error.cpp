@@ -15,6 +15,10 @@
 #include <cstdlib>
 #include <cstdio>
 
+#ifdef ANDROID
+#include <android/log.h>
+#endif
+
 #ifdef __DJGPP__
 #include <conio.h>
 #include <csignal>
@@ -127,6 +131,10 @@ void globalerrorhandler::Abort(cchar* Format, ...)
   va_end(AP);
 
   strcat(Buffer, BugMsg);
+
+#ifdef ANDROID
+  __android_log_print(ANDROID_LOG_ERROR, "IVAN", "%s", Buffer);
+#endif
 
 #ifdef WIN32
   ShowWindow(GetActiveWindow(), SW_HIDE);

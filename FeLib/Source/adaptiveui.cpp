@@ -1588,6 +1588,7 @@ std::string DisplayMenuSubtitle()
   struct MenuGeometry
   {
     SDL_Rect Area;
+    SDL_Rect Rows;
     int Top;
     int Bottom;
     int RowHeight;
@@ -1689,6 +1690,19 @@ std::string DisplayMenuSubtitle()
     return Result;
   }
 
+  bool IsFrontEndDetailSelector()
+  {
+    return !HasGameplayContext()
+        && Hud.MenuKind == adaptiveui::MENU_DETAIL;
+  }
+
+  bool IsFrontEndSupplyPicker()
+  {
+    return !HasGameplayContext()
+        && Hud.MenuKind == adaptiveui::MENU_CHARACTER_SHEET
+        && Hud.MenuTitle.find("Choose starting supplies") == 0;
+  }
+
   SDL_Rect DesktopMenuButton(const SDL_Rect& Area, int Index, int Count,
                              int Top, int RowHeight, int Gap)
   {
@@ -1705,6 +1719,8 @@ std::string DisplayMenuSubtitle()
   {
     MenuGeometry Geometry;
     Geometry.FrontEnd = !HasGameplayContext() && !IsOptionsMenu();
+    const bool DetailSelector = IsFrontEndDetailSelector();
+    const bool SupplyPicker = IsFrontEndSupplyPicker();
     if(IsOptionsMenu() && !HasGameplayContext())
     {
       const int Gutter = CurrentLayout.Gutter;
@@ -1714,11 +1730,17 @@ std::string DisplayMenuSubtitle()
     }
     else if(Geometry.FrontEnd)
     {
-      const int Width = Clamp(CurrentLayout.OutputWidth * 9 / 20, 460, 620);
+      const int Width = DetailSelector || SupplyPicker
+        ? Clamp(CurrentLayout.OutputWidth - 80, 760, 1120)
+        : Clamp(CurrentLayout.OutputWidth * 9 / 20, 460, 620);
       const int RowCount = Clamp(int(Hud.MenuOptions.size()), 1, 11);
-      const int Height = std::min(CurrentLayout.OutputHeight
-                                  - CurrentLayout.Gutter * 2,
-                                  100 + RowCount * 34);
+      const bool CharacterSheet =
+        Hud.MenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+        || Hud.MenuKind == adaptiveui::MENU_CHARACTER_SHEET;
+      const int Height = CharacterSheet || DetailSelector
+        ? CurrentLayout.OutputHeight - CurrentLayout.Gutter * 2
+        : std::min(CurrentLayout.OutputHeight - CurrentLayout.Gutter * 2,
+                   100 + RowCount * 34);
       Geometry.Area = { (CurrentLayout.OutputWidth - Width) / 2,
                         (CurrentLayout.OutputHeight - Height) / 2,
                         Width, Height };
@@ -1727,7 +1749,8 @@ std::string DisplayMenuSubtitle()
       Geometry.Area = CurrentLayout.MapPanel;
     else
       Geometry.Area = CurrentLayout.RailContent;
-    Geometry.RowHeight = Geometry.FrontEnd ? 34
+    Geometry.RowHeight = Geometry.FrontEnd
+      ? (DetailSelector ? 46 : 34)
       : (IsOptionsMenu() ? 34 : (IsHelpMenu() ? 34
                                                : DesktopSidebarRowHeight));
     if(Geometry.FrontEnd)
@@ -1792,14 +1815,29 @@ std::string DisplayMenuSubtitle()
     }
     else if(Geometry.FrontEnd)
     {
-      const int PageButtonWidth = 92;
-      Geometry.Next = { Geometry.Area.x + Geometry.Area.w - 10
-                          - PageButtonWidth,
-                        Geometry.Area.y + Geometry.Area.h - 30,
-                        PageButtonWidth, 22 };
-      Geometry.Previous = { Geometry.Next.x - 6 - PageButtonWidth,
-                            Geometry.Next.y, PageButtonWidth, 22 };
-      Geometry.Bottom = Geometry.Area.y + Geometry.Area.h - 22;
+      if(DetailSelector)
+      {
+        Geometry.Bottom = Geometry.Area.y + Geometry.Area.h - 10;
+      }
+      else if(Hud.MenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+         || Hud.MenuKind == adaptiveui::MENU_CHARACTER_SHEET)
+      {
+        Geometry.Back = { Geometry.Area.x + 10,
+          Geometry.Area.y + Geometry.Area.h - 38,
+          Geometry.Area.w - 20, 28 };
+        Geometry.Bottom = Geometry.Back.y - 8;
+      }
+      else
+      {
+        const int PageButtonWidth = 92;
+        Geometry.Next = { Geometry.Area.x + Geometry.Area.w - 10
+                            - PageButtonWidth,
+                          Geometry.Area.y + Geometry.Area.h - 30,
+                          PageButtonWidth, 22 };
+        Geometry.Previous = { Geometry.Next.x - 6 - PageButtonWidth,
+                              Geometry.Next.y, PageButtonWidth, 22 };
+        Geometry.Bottom = Geometry.Area.y + Geometry.Area.h - 22;
+      }
     }
     else
     {
@@ -1825,6 +1863,36 @@ std::string DisplayMenuSubtitle()
     Geometry.GridCellHeight = 0;
     Geometry.GridGap = 5;
     Geometry.Detail = { 0, 0, 0, 0 };
+    Geometry.Rows = { Geometry.Area.x + (Geometry.FrontEnd ? 22 : 10),
+                      Geometry.Top,
+                      std::max(1, Geometry.Area.w
+                        - (Geometry.FrontEnd ? 44 : 20)),
+                      std::max(1, Geometry.Bottom - Geometry.Top) };
+    if(DetailSelector || SupplyPicker)
+    {
+      const int Gap = 12;
+      const int ContentX = Geometry.Area.x + 18;
+      const int ContentWidth = Geometry.Area.w - 36;
+      const int DetailWidth = ContentWidth * 62 / 100;
+      Geometry.Detail = { ContentX, Geometry.Top, DetailWidth,
+                          std::max(1, Geometry.Bottom - Geometry.Top) };
+      Geometry.Rows = { Geometry.Detail.x + Geometry.Detail.w + Gap,
+                        Geometry.Top,
+                        std::max(1, ContentX + ContentWidth
+                          - (Geometry.Detail.x + Geometry.Detail.w + Gap)),
+                        std::max(1, Geometry.Bottom - Geometry.Top) };
+      if(DetailSelector)
+      {
+        const int RowCount = std::min(11, std::max(1,
+          int(Hud.MenuOptions.size())));
+        Geometry.Back = { Geometry.Rows.x,
+                          std::min(Geometry.Top
+                                     + RowCount * Geometry.RowHeight + 6,
+                                   Geometry.Area.y + Geometry.Area.h - 42),
+                          Geometry.Rows.w, 32 };
+        Geometry.Rows.h = std::max(1, Geometry.Back.y - Geometry.Top - 6);
+      }
+    }
     if(IsOptionsMenu())
     {
       const int DetailX = Geometry.Area.x + Geometry.Area.w * 61 / 100;
@@ -1875,7 +1943,7 @@ std::string DisplayMenuSubtitle()
         Geometry.RowHeight = std::min(DesktopSidebarRowHeight,
           std::max(1, (Geometry.Bottom - Geometry.Top) / PageSize));
       }
-      Geometry.VisibleCount = std::max(1, (Geometry.Bottom - Geometry.Top)
+      Geometry.VisibleCount = std::max(1, Geometry.Rows.h
                                         / Geometry.RowHeight);
       if(IsEquipmentMenu())
         Geometry.VisibleCount = std::min(
@@ -2200,8 +2268,8 @@ std::string DisplayMenuSubtitle()
     if(Area.w <= 0 || Area.h <= 0)
       return;
     SDL_RenderSetClipRect(Renderer, &Area);
-    const std::vector<std::string> Lines = Wrap(
-      Detail.empty() ? "NO DESCRIPTION AVAILABLE" : Detail,
+    const std::vector<std::string> Lines = adaptiveui::WrapCardText(
+      Detail.empty() ? "NO DESCRIPTION AVAILABLE" : adaptiveui::FormatCardParagraphs(Detail),
       std::max(1, Area.w / 6));
     int Y = Area.y;
     for(size_t Line = 0; Line < Lines.size(); ++Line, Y += 11)
@@ -2325,8 +2393,8 @@ std::string DisplayMenuSubtitle()
       if(!ItemDescription.empty())
       {
         Y += 2;
-        const std::vector<std::string> DescriptionLines = Wrap(
-          ItemDescription, std::max(1, (Right - Left) / 6));
+        const std::vector<std::string> DescriptionLines = adaptiveui::WrapCardText(
+          adaptiveui::FormatCardParagraphs(ItemDescription), std::max(1, (Right - Left) / 6));
         for(size_t Line = 0; Line < DescriptionLines.size(); ++Line,
             Y += 11)
           Text(Renderer, Left, Y, DescriptionLines[Line],
@@ -2411,6 +2479,186 @@ std::string DisplayMenuSubtitle()
     else
       Centered(Renderer, Geometry.Detail, "HIGHLIGHT AN ITEM", 1,
                181, 169, 143);
+  }
+
+  struct DesktopDetailSection
+  {
+    std::string Heading;
+    std::string Body;
+  };
+
+  std::vector<DesktopDetailSection> DesktopDetailSections(
+    const std::string& Source)
+  {
+    std::vector<DesktopDetailSection> Result;
+    size_t Start = 0;
+    while(Start <= Source.size())
+    {
+      const size_t End = Source.find("\n\n", Start);
+      const std::string Block = Source.substr(Start,
+        End == std::string::npos ? std::string::npos : End - Start);
+      const size_t Divider = Block.find(" :: ");
+      DesktopDetailSection Section;
+      if(Divider == std::string::npos)
+      {
+        Section.Heading = Result.empty() ? "OVERVIEW" : "DETAILS";
+        Section.Body = Block;
+      }
+      else
+      {
+        Section.Heading = Block.substr(0, Divider);
+        Section.Body = Block.substr(Divider + 4);
+      }
+      if(!Section.Body.empty())
+        Result.push_back(Section);
+      if(End == std::string::npos)
+        break;
+      Start = End + 2;
+    }
+    return Result;
+  }
+
+  void DrawFrontEndDetail(SDL_Renderer* Renderer,
+                          const MenuGeometry& Geometry)
+  {
+    if(Geometry.Detail.w <= 0 || Geometry.Detail.h <= 0)
+      return;
+    Fill(Renderer, Geometry.Detail, 10, 13, 11, 255);
+    Outline(Renderer, Geometry.Detail, 83, 68, 42);
+    if(Hud.MenuSelected < 0
+       || Hud.MenuSelected >= int(Hud.MenuOptions.size()))
+    {
+      Centered(Renderer, Geometry.Detail, "HIGHLIGHT AN OPTION", 2,
+               181, 169, 143);
+      return;
+    }
+
+    const int Index = Hud.MenuSelected;
+    const std::string Title = Hud.MenuOptions[Index];
+    const std::string Detail = Index < int(Hud.MenuDetails.size())
+      ? Hud.MenuDetails[Index] : "";
+    const int Pad = 14;
+    const int Left = Geometry.Detail.x + Pad;
+    const int Right = Geometry.Detail.x + Geometry.Detail.w - Pad;
+    const int ContentWidth = std::max(1, Right - Left);
+    int Y = Geometry.Detail.y + 12;
+
+    Fill(Renderer, { Geometry.Detail.x + 1, Geometry.Detail.y + 1,
+                     std::max(1, Geometry.Detail.w - 2), 34 },
+         24, 55, 35, 255);
+    DesktopCenteredText(Renderer,
+      { Left, Geometry.Detail.y + 4, ContentWidth, 27 },
+      Title, 3, 248, 224, 154);
+    Y += 36;
+
+    const SDL_Rect Clip = { Left, Y, ContentWidth,
+      std::max(1, Geometry.Detail.y + Geometry.Detail.h - Pad - Y) };
+    SDL_RenderSetClipRect(Renderer, &Clip);
+    const std::vector<DesktopDetailSection> Sections =
+      DesktopDetailSections(Detail.empty()
+        ? "No additional information." : Detail);
+    for(size_t SectionIndex = 0; SectionIndex < Sections.size();
+        ++SectionIndex)
+    {
+      const DesktopDetailSection& Section = Sections[SectionIndex];
+      Text(Renderer, Left, Y, Section.Heading, 2, 236, 204, 126);
+      Y += 18;
+      Fill(Renderer, { Left, Y, ContentWidth, 1 }, 67, 53, 38);
+      Y += 7;
+
+      if(Section.Heading == "ATTRIBUTES")
+      {
+        std::vector<std::string> Lines;
+        size_t LineStart = 0;
+        while(LineStart <= Section.Body.size())
+        {
+          const size_t LineEnd = Section.Body.find('\n', LineStart);
+          Lines.push_back(Section.Body.substr(LineStart,
+            LineEnd == std::string::npos ? std::string::npos
+                                         : LineEnd - LineStart));
+          if(LineEnd == std::string::npos)
+            break;
+          LineStart = LineEnd + 1;
+        }
+        const int Rows = std::max(1, (int(Lines.size()) + 1) / 2);
+        const int ColumnWidth = ContentWidth / 2;
+        for(size_t Line = 0; Line < Lines.size(); ++Line)
+        {
+          const int Column = int(Line) / Rows;
+          const int Row = int(Line) % Rows;
+          const size_t Split = Lines[Line].find_last_of(' ');
+          const int Value = Split == std::string::npos ? 10
+            : std::atoi(Lines[Line].substr(Split + 1).c_str());
+          Text(Renderer, Left + Column * ColumnWidth,
+               Y + Row * 16, Lines[Line], 2,
+               Value > 10 ? 154 : Value < 10 ? 239 : 224,
+               Value > 10 ? 220 : Value < 10 ? 109 : 216,
+               Value > 10 ? 119 : Value < 10 ? 91 : 190);
+        }
+        Y += Rows * 16;
+      }
+      else if(Section.Heading == "STARTING KIT")
+      {
+        size_t LineStart = 0;
+        while(LineStart <= Section.Body.size())
+        {
+          const size_t LineEnd = Section.Body.find('\n', LineStart);
+          const std::string Line = Section.Body.substr(LineStart,
+            LineEnd == std::string::npos ? std::string::npos
+                                         : LineEnd - LineStart);
+          const size_t Divider = Line.find(':');
+          const std::string Label = Divider == std::string::npos
+            ? "DETAIL" : Line.substr(0, Divider);
+          size_t ValueStart = Divider == std::string::npos
+            ? 0 : Divider + 1;
+          while(ValueStart < Line.size()
+                && std::isspace((unsigned char)Line[ValueStart]))
+            ++ValueStart;
+          const std::string Value = Line.substr(ValueStart);
+          const int LabelWidth = std::min(126, ContentWidth / 3);
+          Text(Renderer, Left, Y, Label, 1, 222, 189, 91);
+          const std::vector<std::string> ValueLines = Wrap(Value,
+            std::max(1, (ContentWidth - LabelWidth) / 12));
+          const int LineCount = std::max(1, int(ValueLines.size()));
+          for(int LineIndex = 0; LineIndex < LineCount; ++LineIndex)
+            Text(Renderer, Left + LabelWidth, Y + LineIndex * 15,
+                 ValueLines.empty() ? "" : ValueLines[LineIndex],
+                 2, 224, 216, 190);
+          Y += LineCount * 15 + 4;
+          if(LineEnd == std::string::npos)
+            break;
+          LineStart = LineEnd + 1;
+        }
+      }
+      else if(Section.Heading == "RECORD")
+      {
+        const size_t Split = Section.Body.find('\n');
+        const std::string Runs = Section.Body.substr(0, Split);
+        const std::string Wins = Split == std::string::npos
+          ? "" : Section.Body.substr(Split + 1);
+        const int Gap = 8;
+        const int Width = (ContentWidth - Gap) / 2;
+        const SDL_Rect RunsArea = { Left, Y, Width, 30 };
+        const SDL_Rect WinsArea = { Left + Width + Gap, Y,
+                                    ContentWidth - Width - Gap, 30 };
+        Fill(Renderer, RunsArea, 19, 31, 22, 255);
+        Fill(Renderer, WinsArea, 19, 31, 22, 255);
+        Outline(Renderer, RunsArea, 67, 83, 52);
+        Outline(Renderer, WinsArea, 67, 83, 52);
+        DesktopCenteredText(Renderer, RunsArea, Runs, 2, 224, 216, 190);
+        DesktopCenteredText(Renderer, WinsArea, Wins, 2, 154, 220, 119);
+        Y += 30;
+      }
+      else
+      {
+        const std::vector<std::string> Lines = Wrap(
+          Section.Body, std::max(1, ContentWidth / 12));
+        for(size_t Line = 0; Line < Lines.size(); ++Line, Y += 16)
+          Text(Renderer, Left, Y, Lines[Line], 2, 224, 216, 190);
+      }
+      Y += 12;
+    }
+    SDL_RenderSetClipRect(Renderer, 0);
   }
 
   void DrawMenu(SDL_Renderer* Renderer)
@@ -2513,11 +2761,11 @@ std::string DisplayMenuSubtitle()
         const int Y = IsOptionsMenu()
           ? OptionRowRect(Geometry, Index, First).y
           : Geometry.Top + (Index - First) * Geometry.RowHeight;
-        SDL_Rect Row = { Area.x + Padding, Y,
+        SDL_Rect Row = { Geometry.Rows.x, Y,
                          IsOptionsMenu()
                            ? std::max(1, Geometry.Detail.x
-                               - (Area.x + Padding) - 8)
-                           : std::max(1, Area.w - Padding * 2),
+                               - Geometry.Rows.x - 8)
+                           : Geometry.Rows.w,
                          Geometry.RowHeight - 3 };
         const bool Selected = Index == Hud.MenuSelected;
         Fill(Renderer, Row, Selected ? 31 : 19, Selected ? 62 : 23,
@@ -2527,7 +2775,29 @@ std::string DisplayMenuSubtitle()
         else
           Fill(Renderer, { Row.x, Row.y + Row.h - 1, Row.w, 1 },
                43, 38, 31);
-        if(Geometry.FrontEnd)
+        if(Hud.MenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+           && Hud.MenuOptions[Index].find('|') != std::string::npos)
+        {
+          const size_t Divider = Hud.MenuOptions[Index].find('|');
+          const std::string Name = Hud.MenuOptions[Index].substr(0, Divider);
+          const std::string Value = Hud.MenuOptions[Index].substr(Divider + 1);
+          const int AdjustWidth = Clamp(Row.w * 16 / 100, 52, 84);
+          const SDL_Rect Minus = { Row.x, Row.y, AdjustWidth, Row.h };
+          const SDL_Rect Plus = { Row.x + Row.w - AdjustWidth, Row.y,
+                                  AdjustWidth, Row.h };
+          Fill(Renderer, Minus, 31, 35, 31, 255);
+          Fill(Renderer, Plus, 24, 55, 35, 255);
+          Outline(Renderer, Minus, 93, 84, 63);
+          Outline(Renderer, Plus, 88, 137, 81);
+          Centered(Renderer, Minus, "-", 3, 240, 230, 202);
+          Centered(Renderer, Plus, "+", 3, 190, 226, 157);
+          const SDL_Rect Label = { Minus.x + Minus.w + 4, Row.y,
+            std::max(1, Row.w - AdjustWidth * 2 - 8), Row.h };
+          Centered(Renderer, Label, Name + "  " + Value, 2,
+                   Selected ? 244 : 224, Selected ? 236 : 216,
+                   Selected ? 206 : 190);
+        }
+        else if(Geometry.FrontEnd)
         {
           const std::string Value = Elide(Hud.MenuOptions[Index],
             std::max(1, (Row.w - 12) / (RowScale * 6)));
@@ -2615,6 +2885,8 @@ std::string DisplayMenuSubtitle()
         }
       }
     }
+    if(IsFrontEndDetailSelector() || IsFrontEndSupplyPicker())
+      DrawFrontEndDetail(Renderer, Geometry);
     if(IsOptionsMenu())
     {
       Fill(Renderer, Geometry.Detail, 12, 14, 13, 255);
@@ -2667,9 +2939,23 @@ std::string DisplayMenuSubtitle()
         SDL_RenderSetClipRect(Renderer, 0);
       }
     }
-    if(Geometry.FrontEnd)
+    if(IsFrontEndDetailSelector())
+    {
+      Fill(Renderer, Geometry.Back, 49, 20, 18, 255);
+      Outline(Renderer, Geometry.Back, 168, 71, 58);
+      Centered(Renderer, Geometry.Back, "BACK", 2, 228, 168, 139);
+    }
+    else if(Geometry.FrontEnd
+       && Hud.MenuKind != adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+       && Hud.MenuKind != adaptiveui::MENU_CHARACTER_SHEET)
       Text(Renderer, Area.x + Padding, Area.y + Area.h - 15,
            "SELECT AN OPTION", 1, 125, 153, 105);
+    else if(Geometry.FrontEnd)
+    {
+      Fill(Renderer, Geometry.Back, 49, 20, 18, 255);
+      Outline(Renderer, Geometry.Back, 168, 71, 58);
+      Centered(Renderer, Geometry.Back, "BACK", 2, 228, 168, 139);
+    }
     else
     {
       const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
@@ -2938,6 +3224,205 @@ adaptiveui::Layout::Layout()
 
 namespace adaptiveui
 {
+  std::string FormatCardParagraphs(const std::string& Text)
+  {
+    std::string Result;
+    size_t Start = 0;
+    while(Start < Text.size())
+    {
+      const size_t Newline = Text.find('\n', Start);
+      const size_t End = Newline == std::string::npos ? Text.size() : Newline;
+      size_t ParagraphStart = Start;
+      // Preserve authored breaks and short labels. Divide only long prose,
+      // at sentence boundaries, without changing any words.
+      for(size_t Pos = Start; End - Start > 180 && Pos < End; ++Pos)
+      {
+        if(Text[Pos] != '.' && Text[Pos] != '!' && Text[Pos] != '?')
+          continue;
+        size_t SentenceEnd = Pos + 1;
+        while(SentenceEnd < End && (Text[SentenceEnd] == '"'
+              || Text[SentenceEnd] == '\'' || Text[SentenceEnd] == ')'))
+          ++SentenceEnd;
+        if(SentenceEnd == End || !std::isspace((unsigned char)Text[SentenceEnd]))
+          continue; // Includes decimal points and dots within abbreviations.
+        size_t Next = SentenceEnd;
+        while(Next < End && std::isspace((unsigned char)Text[Next]))
+          ++Next;
+        size_t NextLetter = Next;
+        while(NextLetter < End && (Text[NextLetter] == '"'
+              || Text[NextLetter] == '\'' || Text[NextLetter] == '('))
+          ++NextLetter;
+        if(NextLetter == End || !std::isupper((unsigned char)Text[NextLetter]))
+          continue;
+        if(Text[Pos] == '.')
+        {
+          size_t WordStart = Pos;
+          while(WordStart > Start && !std::isspace((unsigned char)Text[WordStart - 1]))
+            --WordStart;
+          std::string Word = Text.substr(WordStart, Pos - WordStart);
+          std::transform(Word.begin(), Word.end(), Word.begin(),
+            [](unsigned char C) { return char(std::tolower(C)); });
+          if(Word.size() == 1 || Word.find('.') != std::string::npos
+             || Word == "mr" || Word == "mrs" || Word == "ms" || Word == "dr"
+             || Word == "st" || Word == "prof" || Word == "vs" || Word == "etc")
+            continue;
+        }
+        if(SentenceEnd - ParagraphStart < 64)
+          continue; // Keep adjacent short sentences together.
+        Result.append(Text, ParagraphStart, SentenceEnd - ParagraphStart);
+        Result += "\n\n";
+        ParagraphStart = Next;
+        Pos = Next - 1;
+      }
+      Result.append(Text, ParagraphStart, End - ParagraphStart);
+      if(Newline == std::string::npos)
+        break;
+      Result += '\n';
+      Start = Newline + 1;
+    }
+    return Result;
+  }
+
+  std::vector<std::string> WrapCardText(const std::string& Value, int Columns)
+  {
+    std::vector<std::string> Lines;
+    std::string Line;
+    size_t Position = 0;
+    Columns = std::max(1, Columns);
+    while(Position < Value.size())
+    {
+      if(Value[Position] == '\n')
+      {
+        if(!Line.empty())
+        {
+          Lines.push_back(Line);
+          Line.clear();
+        }
+        else if(Lines.empty() || !Lines.back().empty())
+          Lines.push_back("");
+        ++Position;
+        continue;
+      }
+      while(Position < Value.size() && Value[Position] != '\n'
+            && std::isspace((unsigned char)Value[Position]))
+        ++Position;
+      if(Position >= Value.size())
+        break;
+      if(Value[Position] == '\n')
+        continue;
+      size_t End = Position;
+      while(End < Value.size() && !std::isspace((unsigned char)Value[End]))
+        ++End;
+      std::string Word = Value.substr(Position, End - Position);
+      Position = End;
+      while((int)Word.size() > Columns)
+      {
+        if(!Line.empty())
+        {
+          Lines.push_back(Line);
+          Line.clear();
+        }
+        Lines.push_back(Word.substr(0, Columns));
+        Word.erase(0, Columns);
+      }
+      if(Word.empty())
+        continue;
+      if(Line.empty())
+        Line = Word;
+      else if((int)(Line.size() + 1 + Word.size()) <= Columns)
+        Line += " " + Word;
+      else
+      {
+        Lines.push_back(Line);
+        Line = Word;
+      }
+    }
+    if(!Line.empty())
+      Lines.push_back(Line);
+    return Lines;
+  }
+
+  int MeasureCardParagraph(const std::string& Text, int Width, int Scale)
+  {
+    if(Text.empty())
+      return 0;
+    Scale = std::max(1, Scale);
+    const int Columns = std::max(1, (Width - Scale * 6) / (Scale * 6));
+    return int(WrapCardText(Text, Columns).size()) * Scale * 8 + Scale * 4;
+  }
+
+  MobileItemCardLayout CalculateMobileItemCardLayout(
+    const std::string& Description,
+    const std::vector<std::string>& Requirements,
+    int MetricCount, int ComparisonRows, int Width, int Height, int Gap)
+  {
+    MobileItemCardLayout Result = {};
+    // Keep long cards readable; overflow scrolls instead of shrinking to 1x.
+    for(int Scale = 5; Scale >= 2; --Scale)
+    {
+      Result.Scale = Scale;
+      Result.DescriptionScale = std::min(5, Scale + 1);
+      Result.DescriptionHeight = MeasureCardParagraph(
+        Description, Width, Result.DescriptionScale);
+      Result.MetricsHeight = ComparisonRows > 0
+        ? Scale * 31 + ComparisonRows * Scale * 11
+        : ((std::max(0, MetricCount) + 1) / 2) * Scale * 10;
+      Result.RequirementsHeight = 0;
+      for(size_t Index = 0; Index < Requirements.size(); ++Index)
+      {
+        const std::string& Line = Requirements[Index];
+        if(Line.empty())
+          continue;
+        bool Heading = false;
+        bool LowerOrSymbol = false;
+        for(size_t C = 0; C < Line.size(); ++C)
+        {
+          const unsigned char Character = (unsigned char)Line[C];
+          if(std::isalpha(Character))
+          {
+            Heading = true;
+            LowerOrSymbol |= std::islower(Character) != 0;
+          }
+          else if(!std::isspace(Character))
+            LowerOrSymbol = true;
+        }
+        if(Index > 0 && ((Heading && !LowerOrSymbol)
+                        || Line.compare(0, 6, "Exact ") == 0))
+          Result.RequirementsHeight += Scale * 4;
+        Result.RequirementsHeight += MeasureCardParagraph(Line, Width, Scale)
+                                  - Scale * 4;
+      }
+      if(Result.RequirementsHeight)
+        Result.RequirementsHeight += Scale * 4;
+      Result.ContentHeight = Result.DescriptionHeight + Result.MetricsHeight
+                           + Result.RequirementsHeight;
+      const int Sections = (Result.DescriptionHeight > 0 ? 1 : 0)
+                         + (Result.MetricsHeight > 0 ? 1 : 0)
+                         + (Result.RequirementsHeight > 0 ? 1 : 0);
+      Result.ContentHeight += std::max(0, Sections - 1) * std::max(0, Gap);
+      Result.MaximumScrollY = std::max(0, Result.ContentHeight - Height);
+      if(!Result.MaximumScrollY)
+        break;
+    }
+    return Result;
+  }
+
+#ifdef USE_SDL
+  void DeInit()
+  {
+    if(GameplaySnapshot)
+      SDL_DestroyTexture(GameplaySnapshot);
+    GameplaySnapshot = 0;
+    SnapshotRenderer = 0;
+    CurrentMenuTexture = 0;
+    SnapshotWidth = SnapshotHeight = 0;
+    SnapshotValid = false;
+    Hud = HudModel();
+    CurrentLayout = Layout();
+    Dirty = true;
+  }
+#endif
+
   Layout CalculateLayout(int OutputWidth, int OutputHeight,
                          int CanvasWidth, int CanvasHeight,
                          bool Fullscreen)
@@ -3940,7 +4425,7 @@ namespace adaptiveui
   }
 
   PointerResult HandlePointer(int OutputX, int OutputY, bool Pressed,
-                              int WheelY, bool Motion, int Button)
+                              int WheelY, bool Motion, int Button, int Clicks)
   {
     PointerResult Result;
     if(CurrentPlatform != Desktop)
@@ -4122,7 +4607,10 @@ namespace adaptiveui
         }
       }
 
-      if(!Geometry.FrontEnd && Pressed
+      if((!Geometry.FrontEnd
+          || Hud.MenuKind == adaptiveui::MENU_DETAIL
+          || Hud.MenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+          || Hud.MenuKind == adaptiveui::MENU_CHARACTER_SHEET) && Pressed
          && Contains(Geometry.Back, OutputX, OutputY))
       {
         Result.Type = PointerResult::COMMAND_KEY;
@@ -4182,6 +4670,33 @@ namespace adaptiveui
         return Result;
       }
 
+      if(Hud.MenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+         && Contains(Geometry.Rows, OutputX, OutputY))
+      {
+        const int Index = Hud.MenuScroll
+          + (OutputY - Geometry.Top) / Geometry.RowHeight;
+        if(Index >= 0 && Index < int(Hud.MenuOptions.size()))
+        {
+          const SDL_Rect Row = { Geometry.Rows.x,
+            Geometry.Top + (Index - Hud.MenuScroll) * Geometry.RowHeight,
+            Geometry.Rows.w,
+            Geometry.RowHeight - 3 };
+          const int AdjustWidth = Clamp(Row.w * 16 / 100, 52, 84);
+          if(Pressed && OutputX < Row.x + AdjustWidth)
+          {
+            Result.Type = PointerResult::COMMAND_KEY;
+            Result.CommandCode = KEY_MENU_ADJUST_DECREASE_BASE + Index;
+            return Result;
+          }
+          if(Pressed && OutputX >= Row.x + Row.w - AdjustWidth)
+          {
+            Result.Type = PointerResult::COMMAND_KEY;
+            Result.CommandCode = KEY_MENU_ADJUST_INCREASE_BASE + Index;
+            return Result;
+          }
+        }
+      }
+
       if(IsInventoryGridMenu() && InMenu
          && OutputY >= Geometry.Top && OutputY < Geometry.Detail.y)
       {
@@ -4225,8 +4740,7 @@ namespace adaptiveui
         Result.Type = PointerResult::CONSUMED;
         return Result;
       }
-      else if(InMenu && OutputY >= Geometry.Top
-              && OutputY < Geometry.Bottom
+      else if(Contains(Geometry.Rows, OutputX, OutputY)
               && (!IsOptionsMenu() || OutputX < Geometry.Detail.x - 4))
       {
         int Index = -1;
@@ -4265,8 +4779,22 @@ namespace adaptiveui
           }
           if(Pressed)
           {
-            Result.Type = PointerResult::COMMAND_KEY;
-            Result.CommandCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
+            if(Hud.MenuKind == adaptiveui::MENU_DETAIL)
+            {
+              Hud.MenuSelected = Index;
+              if(Clicks >= 2 && Button == 1)
+              {
+                Result.Type = PointerResult::COMMAND_KEY;
+                Result.CommandCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
+              }
+              else
+                Result.Type = PointerResult::REDRAW;
+            }
+            else
+            {
+              Result.Type = PointerResult::COMMAND_KEY;
+              Result.CommandCode = KEY_MOBILE_MENU_SELECT_BASE + Index;
+            }
             return Result;
           }
         }

@@ -40,6 +40,7 @@ class command
 
 class commandsystem
 {
+  friend struct EquipmentCrashTestAccess;
  public:
   static command* GetCommand(int I) { return Command[I]; }
   static truth IsForRegionListItem(int iIndex);
@@ -80,6 +81,7 @@ class commandsystem
   static truth Open(character*);
   static truth PickUp(character*);
   static truth EquipPickedItem(character*, item*);
+  static truth EquipItemInSlot(character*, item*, int);
   static truth Pray(character*);
   static truth Craft(character*);
   static truth Quit(character*);

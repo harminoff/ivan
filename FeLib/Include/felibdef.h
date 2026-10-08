@@ -224,6 +224,10 @@ inline int GetMinColor24(col24 Color)
 #define KEY_MOBILE_MENU_ACTION_BASE  0xB00 /* action blocks contain visible row */
 #define KEY_MOBILE_MENU_ACTION_STRIDE 0x200
 #define KEY_MOBILE_MENU_ACTION_MAX   0x18FF
+#define KEY_MENU_ADJUST_DECREASE_BASE 0x1900 /* attribute row is added */
+#define KEY_MENU_ADJUST_DECREASE_MAX  0x1AFF
+#define KEY_MENU_ADJUST_INCREASE_BASE 0x1B00 /* attribute row is added */
+#define KEY_MENU_ADJUST_INCREASE_MAX  0x1CFF
 
 #define NO_FLAME 0xFFFF
 

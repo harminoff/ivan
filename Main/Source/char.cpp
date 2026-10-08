@@ -27,6 +27,7 @@
 #include "lterras.h"
 #include "gods.h"
 #include "specialkeys.h"
+#include "startmode.h"
 
 //#define DBGMSG_V2
 #include "dbgmsgproj.h"
@@ -2598,7 +2599,8 @@ void character::AddScoreEntry(cfestring& Description, double Multiplier, truth A
       HScore.Clear();
     }
 
-    festring Desc = game::GetPlayerName();
+    festring Desc = startmode::GetScoreMarker();
+    Desc << game::GetPlayerName();
     Desc << ", " << Description;
 
     if(AddEndLevel)

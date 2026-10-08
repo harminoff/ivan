@@ -12,6 +12,9 @@
 
 #include <iostream>
 #include <cstdlib>
+#ifdef ANDROID
+#include <android/log.h>
+#endif
 
 #ifdef __DJGPP__
 #include <go32.h>
@@ -34,6 +37,7 @@
 #include "definesvalidator.h"
 #include "devcons.h"
 #include "feio.h"
+#include "felist.h"
 #include "igraph.h"
 #include "iconf.h"
 #include "whandler.h"
@@ -45,10 +49,15 @@
 #include "proto.h"
 #include "audio.h"
 #include "sfx.h"
+#include "startmode.h"
 
 #include "dbgmsgproj.h"
 
 #include "bugworkaround.h"
+
+#ifdef IVAN_CRASH_REGRESSION_TESTS
+int RunCrashRegressionTests();
+#endif
 
 #ifdef BACKTRACE
 void CrashHandler(int Signal)
@@ -80,9 +89,27 @@ int main(int argc, char** argv)
 
   GetUserDataDir(); //just to properly initialize as soon as possible DBGMSG correct path b4 everywhere it may be used.
 
+#ifdef IVAN_CRASH_REGRESSION_TESTS
+  if(argc > 1 && festring(argv[1]) == "--crash-regression-test")
+    return RunCrashRegressionTests();
+#endif
+
   if(argc > 1 && festring(argv[1]) == "--version")
   {
     std::cout << "Iter Vehemens ad Necem version " << IVAN_VERSION << std::endl;
+    return 0;
+  }
+
+  if(argc > 1 && festring(argv[1]) == "--startmode-test")
+  {
+    femath::SetSeed(1);
+    festring Failure;
+    if(!startmode::RunSelfTests(Failure))
+    {
+      std::cerr << "Character start tests failed: " << Failure.CStr() << std::endl;
+      return 1;
+    }
+    std::cout << "Character start tests passed." << std::endl;
     return 0;
   }
 
@@ -137,21 +164,41 @@ int main(int argc, char** argv)
   audio::Init(game::GetMusicDir());
 
   femath::SetSeed(time(0));
-  game::InitGlobalValueMap();
-  scriptsystem::Initialize();
-  databasesystem::Initialize();
-  game::InitLuxTable();
+  // SDL_main can run again in the same Android process. Prototype tables and
+  // scripts are process resources; rebuilding them accumulates stale entries.
+  static truth ProcessInitialized = false;
+  if(!ProcessInitialized)
+  {
+    game::InitGlobalValueMap();
+    scriptsystem::Initialize();
+    databasesystem::Initialize();
+    game::InitLuxTable();
+  }
   ivanconfig::Initialize();
+#ifdef ANDROID
+  __android_log_print(ANDROID_LOG_INFO, "IVAN", "Configuration initialized");
+#endif
+#ifdef ANDROID
+  try
+  {
+#endif
   igraph::Init();
-  game::CreateBusyAnimationCache();
+#ifdef ANDROID
+  __android_log_print(ANDROID_LOG_INFO, "IVAN", "Graphics initialized");
+#endif
   globalwindowhandler::SetQuitMessageHandler(game::HandleQuitMessage);
   globalwindowhandler::SetScrshotDirectory(game::GetScrshotDir());
-  specialkeys::init();
-  bugfixdp::init();
-  devcons::Init();
-  definesvalidator::init();
+  if(!ProcessInitialized)
+  {
+    game::CreateBusyAnimationCache();
+    specialkeys::init();
+    bugfixdp::init();
+    devcons::Init();
+    definesvalidator::init();
+    protosystem::Initialize();
+    ProcessInitialized = true;
+  }
   msgsystem::Init();
-  protosystem::Initialize();
   igraph::LoadMenu();
   game::PrepareStretchRegionsLazy();
 
@@ -160,6 +207,9 @@ int main(int argc, char** argv)
   audio::ClearMIDIPlaylist();
   audio::LoadMIDIFile("mainmenu.mid", 0, 100);
   audio::SetPlaybackStatus(audio::PLAYING);
+#ifdef ANDROID
+  __android_log_print(ANDROID_LOG_INFO, "IVAN", "Opening main menu");
+#endif
 
   for(int running = 1; running;)
   {
@@ -237,7 +287,26 @@ int main(int argc, char** argv)
     }
   }
 
+#ifdef ANDROID
+  }
+  catch(const globalwindowhandler::activityshutdown&)
+  {
+    // OS teardown cannot wait for a save/quit modal. Leave checkpoints intact,
+    // release the session, and return from SDL_main so Java's join completes.
+    iosystem::ResetInputState();
+    felist::ResetDrawState();
+    game::DeInit();
+    __android_log_print(ANDROID_LOG_INFO, "IVAN", "Activity shutdown completed");
+  }
+  audio::DeInit();
+  igraph::UnLoadMenu();
+#endif
   msgsystem::DeInit();
+#ifdef ANDROID
+  // Finish on the SDL thread while the Activity still owns its EGL surface.
+  // atexit runs at process exit, which can be much later than Activity.finish.
+  graphics::DeInit();
+#endif
 
   return 0;
 }

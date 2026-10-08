@@ -728,30 +728,14 @@ truth commandsystem::ShowInventory(character* Char)
 
   /* note: this has to be outside of Char->CanUseEquipment() to make '&' captures work */
   auto equipper = [&] (int Chosen) {
-    item* OldEquipment = Char->GetEquipment(Chosen);
-    if(OldEquipment) {
-      if(!OldEquipment->CanBeUnEquipped(Chosen))
-      {
-        ADD_MESSAGE("You fail to unequip %s.", OldEquipment->CHAR_NAME(DEFINITE));
-        return false;
-      }
-      ADD_MESSAGE("You unequip %s.", OldEquipment->CHAR_NAME(DEFINITE));
-      OldEquipment->MoveTo(Char->GetStack());
-    }
-    if(!Item->CanBeEquipped(Chosen))
-    {
-      ADD_MESSAGE("You fail to equip %s.", Item->CHAR_NAME(DEFINITE));
-      return false;
-    }
-    Item->RemoveFromSlot();
-    Char->SetEquipment(Chosen, Item);
-    if(Char->CheckIfEquipmentIsNotUsable(Chosen))
-      Item->MoveTo(Char->GetStack()); // small bug?
-    ADD_MESSAGE("You equip %s.", Item->CHAR_NAME(DEFINITE));
-    return true;
+    return EquipItemInSlot(Char, Item, Chosen);
   };
 
   auto equipper2 = [&] (int Right, int Left) {
+    if(!Char->CanUseEquipment(Right))
+      return equipper(Left);
+    if(!Char->CanUseEquipment(Left))
+      return equipper(Right);
     if(WhichItem.size() >= 2) {
       truth right = equipper(Right);
       if(right) {
@@ -821,6 +805,53 @@ truth commandsystem::ShowInventory(character* Char)
   return false;
 }
 
+truth commandsystem::EquipItemInSlot(character* Char, item* Item, int Chosen)
+{
+  if(!Char || !Item || Chosen < 0 || Chosen >= Char->GetEquipments()
+     || !Char->CanUseEquipment())
+    return false;
+
+  // An empty slot and a missing body part both return no equipment. Validate
+  // the body part before unequipping anything or detaching the incoming item.
+  if(!Char->GetBodyPartOfEquipment(Chosen))
+  {
+    ADD_MESSAGE("Bodypart missing!");
+    return false;
+  }
+  if(!Char->EquipmentIsAllowed(Chosen))
+  {
+    ADD_MESSAGE("You cannot use that equipment slot.");
+    return false;
+  }
+  if(!Item->CanBeEquipped(Chosen))
+  {
+    ADD_MESSAGE("You fail to equip %s.", Item->CHAR_NAME(DEFINITE));
+    return false;
+  }
+
+  item* OldEquipment = Char->GetEquipment(Chosen);
+  if(OldEquipment)
+  {
+    if(!OldEquipment->CanBeUnEquipped(Chosen))
+    {
+      ADD_MESSAGE("You fail to unequip %s.",
+                  OldEquipment->CHAR_NAME(DEFINITE));
+      return false;
+    }
+    ADD_MESSAGE("You unequip %s.", OldEquipment->CHAR_NAME(DEFINITE));
+    OldEquipment->MoveTo(Char->GetStack());
+  }
+  Item->RemoveFromSlot();
+  Char->SetEquipment(Chosen, Item);
+  if(Char->CheckIfEquipmentIsNotUsable(Chosen))
+  {
+    Item->MoveTo(Char->GetStack());
+    return false;
+  }
+  ADD_MESSAGE("You equip %s.", Item->CHAR_NAME(DEFINITE));
+  return true;
+}
+
 truth commandsystem::EquipPickedItem(character* Char, item* Item)
 {
   if(!Char || !Item || !Char->CanUseEquipment())
@@ -828,36 +859,15 @@ truth commandsystem::EquipPickedItem(character* Char, item* Item)
 
   const auto EquipInSlot = [&](int Chosen) -> truth
   {
-    item* OldEquipment = Char->GetEquipment(Chosen);
-    if(OldEquipment)
-    {
-      if(!OldEquipment->CanBeUnEquipped(Chosen))
-      {
-        ADD_MESSAGE("You fail to unequip %s.",
-                    OldEquipment->CHAR_NAME(DEFINITE));
-        return false;
-      }
-      ADD_MESSAGE("You unequip %s.", OldEquipment->CHAR_NAME(DEFINITE));
-      OldEquipment->MoveTo(Char->GetStack());
-    }
-    if(!Item->CanBeEquipped(Chosen))
-    {
-      ADD_MESSAGE("You fail to equip %s.", Item->CHAR_NAME(DEFINITE));
-      return false;
-    }
-    Item->RemoveFromSlot();
-    Char->SetEquipment(Chosen, Item);
-    if(Char->CheckIfEquipmentIsNotUsable(Chosen))
-    {
-      Item->MoveTo(Char->GetStack());
-      return false;
-    }
-    ADD_MESSAGE("You equip %s.", Item->CHAR_NAME(DEFINITE));
-    return true;
+    return EquipItemInSlot(Char, Item, Chosen);
   };
 
   const auto EquipInEither = [&](int Right, int Left) -> truth
   {
+    if(!Char->CanUseEquipment(Right))
+      return EquipInSlot(Left);
+    if(!Char->CanUseEquipment(Left))
+      return EquipInSlot(Right);
     if(!Char->GetEquipment(Right))
       return EquipInSlot(Right);
     if(!Char->GetEquipment(Left))
@@ -1537,6 +1547,20 @@ truth commandsystem::Pray(character* Char)
   int Known[GODS];
   int Index = 0;
   int DivineMaster = Char->GetLSquareUnder()->GetDivineMaster();
+  const bool AdaptivePrayer = graphics::IsEnhancedPresentation();
+  if(AdaptivePrayer)
+    Panthenon.SetAdaptivePresentationKind(adaptiveui::MENU_ITEM_GRID);
+  const auto AddGod = [&](int GodIndex)
+  {
+    const god* God = game::GetGod(GodIndex);
+    festring Label = God->GetCompleteDescription();
+    if(ivanconfig::IsShowGodInfo())
+      Label << " " << God->GetLastKnownRelation();
+    Panthenon.AddEntry(AdaptivePrayer ? festring(God->GetName()) : Label,
+                      LIGHT_GRAY, 20, GodIndex);
+    Panthenon.SetLastEntryHelp(God->GetPrayerInfo(ivanconfig::IsShowGodInfo()));
+    Known[Index++] = GodIndex;
+  };
 
   if(DivineMaster == ATHEIST)
   {
@@ -1546,24 +1570,14 @@ truth commandsystem::Pray(character* Char)
 
   if(!DivineMaster)
   {
-    festring desc;
     for(int c = 1; c <= GODS; ++c)
       if(game::GetGod(c)->IsKnown())
-      {
-        desc.Empty();
-        desc << game::GetGod(c)->GetCompleteDescription();
-        if(ivanconfig::IsShowGodInfo())desc << " " << game::GetGod(c)->GetLastKnownRelation();
-        Panthenon.AddEntry(desc, LIGHT_GRAY, 20, c);
-        Panthenon.SetLastEntryHelp(festring() << game::GetGod(c)->GetName() << ", the " << game::GetGod(c)->GetDescription());
-        Known[Index++] = c;
-      }
+        AddGod(c);
   }
   else
     if(game::GetGod(DivineMaster)->IsKnown())
     {
-      Panthenon.AddEntry(game::GetGod(DivineMaster)->GetCompleteDescription(), LIGHT_GRAY, 20, DivineMaster);
-      Panthenon.SetLastEntryHelp(festring() << game::GetGod(DivineMaster)->GetName() << ", the " << game::GetGod(DivineMaster)->GetDescription());
-      Known[0] = DivineMaster;
+      AddGod(DivineMaster);
     }
     else
     {

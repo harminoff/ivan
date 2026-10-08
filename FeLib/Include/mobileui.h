@@ -74,6 +74,7 @@ namespace mobileui
                int Page, int Pages);
   int PageMenu(int Selected, int Direction, int Count);
   void ClearMenu();
+  void DeInit();
   void UpdateLayout(SDL_Renderer* Renderer, int GameWidth, int GameHeight);
   const SDL_Rect& GetGameRect();
   void DrawBackground(SDL_Renderer* Renderer);

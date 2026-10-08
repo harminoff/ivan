@@ -1,6 +1,8 @@
 #define SDL_MAIN_HANDLED
 
 #include <cassert>
+#include <cctype>
+#include <algorithm>
 #include <cmath>
 
 #include "adaptiveui.h"
@@ -946,6 +948,98 @@ namespace
     adaptiveui::SetActions(0, 0, 0, 0);
     adaptiveui::SetStats("", "", "", "");
     adaptiveui::SetLocationTime("", "");
+
+    const char* OriginOptions[] = {
+      "Plantation Porter", "Canopy Scout", "Viceroy's Scribe"
+    };
+    const char* OriginDetails[] = {
+      "OVERVIEW :: A powerful carrier.\n\nATTRIBUTES :: Endurance 11\nPerception 10\nIntelligence 9\nWisdom 9\nWillpower 10\nCharisma 10\nMana 9\nArm strength 12\nLeg strength 12\nDexterity 9\nAgility 9\n\nSTARTING KIT :: Quest item: encrypted scroll\nEquipment: Pickaxe and belt\nMoney: 30 gold\nTraining: Modest tool training\nPet: Respects the pet setting\n\nRECORD :: Runs: 2\nWins: 1",
+      "OVERVIEW :: A quick-eyed canopy climber.",
+      "OVERVIEW :: A literate colonial assistant."
+    };
+    adaptiveui::SetMenu("Balanced Origins",
+                        "Choose a balanced banana-colony background.",
+                        OriginOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(OriginDetails, 0, 3,
+                                    adaptiveui::MENU_DETAIL);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout OriginLayout = adaptiveui::GetLayout();
+    assert(OriginLayout.MenuDetail.w > 0);
+    assert(OriginLayout.MenuConfirm.w == 0);
+    assert(OriginLayout.MenuBack.w > 0);
+    assert(OriginLayout.MenuBack.x > OriginLayout.MenuDetail.x
+           + OriginLayout.MenuDetail.w);
+    assert(OriginLayout.MenuBack.y > OriginLayout.MenuDetail.y);
+    adaptiveui::PointerResult PreviewOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuDetail.x + OriginLayout.MenuDetail.w + 30,
+      OriginLayout.MenuDetail.y + 50, true, 0, false, 1);
+    assert(PreviewOrigin.Type == adaptiveui::PointerResult::REDRAW);
+    assert(adaptiveui::GetHudModel().MenuSelected == 1);
+    adaptiveui::PointerResult BeginOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuDetail.x + OriginLayout.MenuDetail.w + 30,
+      OriginLayout.MenuDetail.y + 50, true, 0, false, 1, 2);
+    assert(BeginOrigin.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BeginOrigin.CommandCode == KEY_MOBILE_MENU_SELECT_BASE + 1);
+    adaptiveui::PointerResult BackOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuBack.x + OriginLayout.MenuBack.w / 2,
+      OriginLayout.MenuBack.y + OriginLayout.MenuBack.h / 2,
+      true, 0, false, 1);
+    assert(BackOrigin.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BackOrigin.CommandCode == KEY_ESC);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
+    const char* AttributeOptions[] = {
+      "Endurance|10", "Perception|10", "Continue"
+    };
+    adaptiveui::SetMenu("Custom Colonist - 0 points remaining",
+                        "Adjust every attribute directly.",
+                        AttributeOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(0, 0, 3,
+                                    adaptiveui::MENU_ATTRIBUTE_ALLOCATOR);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout AttributeLayout = adaptiveui::GetLayout();
+    adaptiveui::PointerResult DecreaseAttribute = adaptiveui::HandlePointer(
+      AttributeLayout.Menu.x + 27,
+      AttributeLayout.Menu.y + 82, true, 0, false, 1);
+    assert(DecreaseAttribute.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(DecreaseAttribute.CommandCode == KEY_MENU_ADJUST_DECREASE_BASE);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
+    const char* SupplyOptions[] = {
+      "[x] Two bananas (1 point)", "[ ] Pickaxe (2 points)", "Continue"
+    };
+    const char* SupplyDetails[] = {
+      "A small food reserve for the road to Attnam.",
+      "A mining tool that can also serve as a weapon.", "Review the build."
+    };
+    adaptiveui::SetMenu("Choose starting supplies - 5 points remaining",
+                        "Build your own starting loadout.",
+                        SupplyOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(SupplyDetails, 0, 3,
+                                    adaptiveui::MENU_CHARACTER_SHEET);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout SupplyLayout = adaptiveui::GetLayout();
+    assert(SupplyLayout.MenuDetail.w > 0);
+    assert(SupplyLayout.MenuBack.y > SupplyLayout.MenuDetail.y);
+    adaptiveui::PointerResult ToggleSupply = adaptiveui::HandlePointer(
+      SupplyLayout.MenuDetail.x + SupplyLayout.MenuDetail.w + 30,
+      SupplyLayout.MenuDetail.y + 16, true, 0, false, 1);
+    assert(ToggleSupply.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(ToggleSupply.CommandCode == KEY_MOBILE_MENU_SELECT_BASE);
+    adaptiveui::PointerResult BackSupply = adaptiveui::HandlePointer(
+      SupplyLayout.MenuBack.x + SupplyLayout.MenuBack.w / 2,
+      SupplyLayout.MenuBack.y + SupplyLayout.MenuBack.h / 2,
+      true, 0, false, 1);
+    assert(BackSupply.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BackSupply.CommandCode == KEY_ESC);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
     const char* ConfigurationOptions[] = {
       "Player's default name  -",
       "Autosave interval  100 turns",
@@ -1071,6 +1165,95 @@ namespace
     assert(NarrowLandscape.PaperDoll.w > 0);
   }
 
+  void CheckLongCardText()
+  {
+    const std::string Text = "A description with narrow wrapping and many words "
+      "whose final line must remain visible after the panel padding is applied.";
+    // Both portrait and landscape widths; the old measurement used Width,
+    // although the actual text was drawn inside another four-scale inset.
+    const int Widths[] = { 180, 320, 680, 1200 };
+    for(int W : Widths)
+      for(int Scale = 2; Scale <= 5; ++Scale)
+      {
+        const int InnerWidth = W - Scale * 4;
+        const int Columns = std::max(1, (InnerWidth - Scale * 2) / (Scale * 6));
+        const auto Lines = adaptiveui::WrapCardText(Text, Columns);
+        const int Height = adaptiveui::MeasureCardParagraph(Text, W, Scale);
+        assert(Height == int(Lines.size()) * Scale * 8 + Scale * 4);
+        for(const auto& Line : Lines)
+          assert(int(Line.size()) <= Columns);
+        assert(Scale * 2 + (int(Lines.size()) - 1) * Scale * 8 + Scale * 7
+               <= Height - Scale * 2);
+      }
+    assert(adaptiveui::MeasureCardParagraph("", 300, 3) == 0);
+    assert(adaptiveui::WrapCardText("abcdefghijkl", 6)
+           == std::vector<std::string>({ "abcdef", "ghijkl" }));
+
+    std::string LongText;
+    for(int I = 0; I < 100; ++I)
+      LongText += Text + "\n\n";
+    LongText += "FINAL DESCRIPTION LINE";
+    const std::vector<std::string> Requirements = {
+      "MISSING REQUIREMENTS", "A very long material requirement to be wrapped",
+      "Have: 3 units", "Exact measurements remain visible at the end"
+    };
+    for(int W : Widths)
+      for(int H : { 180, 420, 900 })
+      {
+        const auto Layout = adaptiveui::CalculateMobileItemCardLayout(
+          LongText, Requirements, 6, 5, W, H, 8);
+        assert(Layout.Scale == 2);
+        assert(Layout.DescriptionScale == 3);
+        assert(Layout.DescriptionHeight
+               == adaptiveui::MeasureCardParagraph(LongText, W, 3));
+        assert(Layout.MetricsHeight == 2 * 31 + 5 * 2 * 11);
+        assert(Layout.RequirementsHeight > 0);
+        assert(Layout.ContentHeight == Layout.DescriptionHeight
+          + Layout.MetricsHeight + Layout.RequirementsHeight + 16);
+        assert(Layout.MaximumScrollY == Layout.ContentHeight - H);
+        // At the final offset the last requirement is fully within the body.
+        assert(Layout.ContentHeight - Layout.MaximumScrollY == H);
+      }
+    const auto Short = adaptiveui::CalculateMobileItemCardLayout(
+      "Short description.", {}, 0, 0, 680, 900, 8);
+    assert(Short.Scale == 5 && Short.MaximumScrollY == 0);
+    const auto Empty = adaptiveui::CalculateMobileItemCardLayout(
+      "", {}, 0, 0, 320, 180, 8);
+    assert(Empty.ContentHeight == 0 && Empty.MaximumScrollY == 0);
+  }
+
+  void CheckCardParagraphs()
+  {
+    const std::string Scroll = "This scroll contains a coded message for the eyes of the high priest Petrus only. "
+      "Given to you by Richel Decos, the viceroy of New Attnam, it should be delivered posthaste to the Cathedral of Attnam.";
+    const std::string Formatted = adaptiveui::FormatCardParagraphs(Scroll);
+    assert(Formatted.find("only.\n\nGiven") != std::string::npos);
+    assert(adaptiveui::FormatCardParagraphs(Formatted) == Formatted);
+    assert(adaptiveui::FormatCardParagraphs("Short description. Another sentence.")
+           == "Short description. Another sentence.");
+    const std::string Authored = "DESCRIPTION\nA short sentence.\n\nREQUIREMENTS\nHave: 3 units\n";
+    assert(adaptiveui::FormatCardParagraphs(Authored) == Authored);
+    const std::string Prose = "A long description that has enough words to make a paragraph and mentions Dr. Petrus, "
+      "Mr. Decos and the initials A. B. without breaking their names apart. \"The price is 1.25 coins.\" "
+      "Another sentence ends here! This final sentence stays available.";
+    const auto Result = adaptiveui::FormatCardParagraphs(Prose);
+    assert(Result.find("Dr. Petrus") != std::string::npos);
+    assert(Result.find("Mr. Decos") != std::string::npos);
+    assert(Result.find("A. B.") != std::string::npos);
+    assert(Result.find("1.25 coins.\"") != std::string::npos);
+    assert(Result.find("apart.\n\n\"The") != std::string::npos);
+    const auto WithoutWhitespace = [](const std::string& Text)
+    {
+      std::string Result;
+      for(unsigned char C : Text)
+        if(!std::isspace(C)) Result += C;
+      return Result;
+    };
+    assert(WithoutWhitespace(Result) == WithoutWhitespace(Prose));
+    const auto Lines = adaptiveui::WrapCardText(Formatted, 22);
+    assert(std::find(Lines.begin(), Lines.end(), "") != Lines.end());
+  }
+
   void CheckConfirmationContext()
   {
     adaptiveui::SetLog("The weapon is much too heavy for you to use safely.");
@@ -1101,6 +1284,8 @@ int main()
   CheckSize(2560, 1440);
   CheckDynamicEquipmentPaging();
   CheckMobileMenuLayouts();
+  CheckLongCardText();
+  CheckCardParagraphs();
   CheckConfirmationContext();
   assert(adaptiveui::CalculateLayout(1280, 720, 800, 600, true).Fullscreen);
   CheckFeeds();

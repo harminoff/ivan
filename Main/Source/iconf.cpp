@@ -1611,6 +1611,7 @@ int  ivanconfig::iStartingDungeonGfxScale=-1;
 int  ivanconfig::iStartingFontGfx=-1;
 void ivanconfig::Initialize()
 {
+  configsystem::ResetOptions();
   festring fsCategory;
 
   fsCategory="General Setup";

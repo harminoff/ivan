@@ -45,6 +45,13 @@ truth felist::isAnyFelistCurrentlyDrawn(){
   return FelistCurrentlyDrawn!=NULL;
 }
 
+void felist::ResetDrawState()
+{
+  // A lifecycle shutdown can unwind DrawFiltered before its normal epilogue.
+  FelistCurrentlyDrawn = 0;
+  v2SelectedPos = v2();
+}
+
 int ListItemAltPosBackgroundMinY=0;
 void felist::SetListItemAltPosMinY(int iY)
 {
@@ -353,9 +360,12 @@ uint felist::Draw()
   bool AdaptiveGrid = false;
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
   AdaptiveGrid = PresentationKind == adaptiveui::MENU_CATEGORY_GRID
-              || PresentationKind == adaptiveui::MENU_ITEM_GRID
-              || PresentationKind == adaptiveui::MENU_PICKUP_GRID
-              || PresentationKind == adaptiveui::MENU_BUTTON_ROWS;
+               || PresentationKind == adaptiveui::MENU_ITEM_GRID
+               || PresentationKind == adaptiveui::MENU_PICKUP_GRID
+               || PresentationKind == adaptiveui::MENU_BUTTON_ROWS
+               || PresentationKind == adaptiveui::MENU_DETAIL
+               || PresentationKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+               || PresentationKind == adaptiveui::MENU_CHARACTER_SHEET;
 #endif
   const std::string AdaptiveTitle = Description.empty() ? ""
     : Description[0]->String.CStr();
@@ -812,6 +822,23 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
     DBGLN;
 
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if(AdaptiveMenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+       && ((Pressed >= KEY_MENU_ADJUST_DECREASE_BASE
+            && Pressed <= KEY_MENU_ADJUST_DECREASE_MAX)
+           || (Pressed >= KEY_MENU_ADJUST_INCREASE_BASE
+               && Pressed <= KEY_MENU_ADJUST_INCREASE_MAX)))
+    {
+      const int Base = Pressed >= KEY_MENU_ADJUST_INCREASE_BASE
+        ? KEY_MENU_ADJUST_INCREASE_BASE : KEY_MENU_ADJUST_DECREASE_BASE;
+      const uint Target = PageBegin + uint(Pressed - Base);
+      if(Target < Selectables)
+      {
+        Selected = Target;
+        Return = uint(Base) + Target;
+        break;
+      }
+    }
+
     if(Pressed >= KEY_MOBILE_MENU_PREVIEW_BASE
        && Pressed <= KEY_MOBILE_MENU_PREVIEW_MAX)
     {
@@ -933,6 +960,15 @@ uint felist::DrawFiltered(bool& bJustExitTheList)
 #endif
 
 #if defined(ANDROID) || defined(ADAPTIVE_UI)
+    if(AdaptiveMenuKind == adaptiveui::MENU_ATTRIBUTE_ALLOCATOR
+       && (Pressed == KEY_LEFT || Pressed == KEY_RIGHT))
+    {
+      Return = uint(Pressed == KEY_LEFT ? KEY_MENU_ADJUST_DECREASE_BASE
+                                       : KEY_MENU_ADJUST_INCREASE_BASE)
+             + Selected;
+      break;
+    }
+
     if((AdaptiveMenuKind == adaptiveui::MENU_CATEGORY_GRID
         || AdaptiveMenuKind == adaptiveui::MENU_ITEM_GRID
         || AdaptiveMenuKind == adaptiveui::MENU_PICKUP_GRID)
