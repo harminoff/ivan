@@ -61,9 +61,21 @@ Open testing (beta), without changing production or existing closed testers.
   once those checks complete successfully. Managed publishing remains off.
   This is submitted, not approved/live. Production and Alpha/Layout Review were
   not changed, nor were tester membership or country settings.
-- itch downloads/devlogs are still pending its separate browser sign-in. The
-  ready files and player-facing notes are retained locally; do not claim that
-  public pages have been updated before upload and public-page confirmation.
+- itch downloads and player-facing devlogs published on 2026-10-08:
+  - Android: `ivan-android-0.59-android.8.apk`, marked Android and publicly
+    visible at https://harminoff.itch.io/ivan-android-unofficial.
+  - Windows: `ivan-windows-0.59-readability-stability.zip`, marked Windows and
+    publicly visible at https://harminoff.itch.io/ivan-desktop-enhanced.
+  - Previous downloads remain retained but hidden; no files were deleted and
+    project pricing, screenshots, and other listing settings were preserved.
+  - Both public download sections show only the new package and link to the
+    published Readability and Stability Update. Each devlog attaches its new
+    package and includes the player-facing fixes, Windows Origins, and update
+    instructions:
+    - https://harminoff.itch.io/ivan-android-unofficial/devlog/1697902/readability-and-stability-update
+    - https://harminoff.itch.io/ivan-desktop-enhanced/devlog/1697905/readability-and-stability-update
+  - Public-page screenshots retained alongside the release artifacts as
+    `itch-android-published.jpg` and `itch-windows-published.jpg`.
 
 Player notes: `release/itch/devlog-readability-and-stability.md`.
 Play notes: `release/itch/play-beta-release-notes.txt`.
