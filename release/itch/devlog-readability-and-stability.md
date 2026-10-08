@@ -38,6 +38,13 @@ The refreshed Windows download includes the description paragraph improvements,
 clearer god previews, equipment fixes, and the Origins character starts in the
 enhanced interface. The classic interface remains available.
 
+Choose from six balanced Banana Origins, from the strong Plantation Porter
+to the quick Canopy Scout or the dog-accompanied Kennel Keeper. For a harder
+start, try the Barefoot Courier or Overworked Picker challenges. Prefer to
+build your own adventurer? Custom Colonist lets you allocate your attributes
+and choose a starting supply loadout. Classic still offers the original
+randomized start, and the Hall of Fame can filter scores by character mode.
+
 ## Updating
 
 Android: install the new APK over your existing installation to keep your saves.

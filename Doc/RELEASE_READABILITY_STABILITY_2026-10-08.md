@@ -50,9 +50,20 @@ Alpha/Layout Review closed tracks were `.7`. Open testing had a paused `.7`
 release and its existing country availability. The requested destination is
 Open testing (beta), without changing production or existing closed testers.
 
-Uploads, review submission, and public devlogs are pending until confirmed on
-their respective service pages. A submitted Play release must not be described
-as approved or live until the Console confirms that state.
+- GitHub commit `da5a0df` pushed; PR #1 is open at
+  https://github.com/harminoff/ivan/pull/1, with the verified fork head/base.
+- Play accepted the signed `.8` bundle and confirmed that its ReTrace mapping
+  file and native debug symbols are attached. Supported-device counts are
+  unchanged from `.7`.
+- Saved a 100% Open testing rollout and the resumption of the paused beta track;
+  submitted exactly these two changes. Publishing overview shows **Changes in
+  review**. Quick checks are still running and the page states that review starts
+  once those checks complete successfully. Managed publishing remains off.
+  This is submitted, not approved/live. Production and Alpha/Layout Review were
+  not changed, nor were tester membership or country settings.
+- itch downloads/devlogs are still pending its separate browser sign-in. The
+  ready files and player-facing notes are retained locally; do not claim that
+  public pages have been updated before upload and public-page confirmation.
 
 Player notes: `release/itch/devlog-readability-and-stability.md`.
 Play notes: `release/itch/play-beta-release-notes.txt`.
