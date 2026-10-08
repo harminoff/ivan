@@ -117,6 +117,13 @@ festring god::GetCompleteDescription() const
   Desc.Resize(4);
   Desc << GetName();
   Desc.Resize(20);
+  Desc << GetPrayerHistory();
+  return Desc;
+}
+
+festring god::GetPrayerHistory() const
+{
+  festring Desc;
 
   if(game::WizardModeIsActive())
   {
@@ -153,6 +160,24 @@ festring god::GetCompleteDescription() const
   else
     Desc << "never prayed to this god.";
   return Desc;
+}
+
+festring god::GetPrayerInfo(truth ShowExtraInfo) const
+{
+  festring Info;
+  Info << GetName() << ", the " << GetDescription()
+       << "\n\nAlignment: " << game::GetAlignment(GetAlignment())
+       << "\n\nPrayer history:\n" << GetPrayerHistory();
+  if(ShowExtraInfo)
+  {
+    Info << "\n\nLast known response:\n";
+    // This is remembered feedback, not the god's hidden current relation.
+    if(fsLastKnownRelation.IsEmpty())
+      Info << "No response remembered yet.";
+    else
+      Info << fsLastKnownRelation;
+  }
+  return Info;
 }
 
 void god::AdjustRelation(god* Competitor, int Multiplier, truth Good)

@@ -38,6 +38,8 @@ import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
@@ -50,7 +52,10 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.view.WindowCompat;
+
 import java.util.Hashtable;
+import java.lang.ref.WeakReference;
 import java.util.Locale;
 
 
@@ -221,6 +226,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
     // This is what SDL runs in. It invokes SDL_main(), eventually
     protected static Thread mSDLThread;
+    private boolean mNativeSessionDestroyed;
 
     protected static SDLGenericMotionListener_API12 getMotionListener() {
         if (mMotionListener == null) {
@@ -323,6 +329,21 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Log.v(TAG, "Model: " + Build.MODEL);
         Log.v(TAG, "onCreate()");
         super.onCreate(savedInstanceState);
+
+        // Android may create the replacement before destroying the old
+        // Activity. Retire its native session before SDL.initialize resets
+        // the shared thread/surface references used by both instances.
+        if (mSingleton != null && mSingleton != this) {
+            mSingleton.shutdownNativeSession();
+        }
+
+        WindowCompat.enableEdgeToEdge(getWindow());
+        if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            getWindow().setAttributes(attributes);
+        }
 
         try {
             Thread.currentThread().setName("SDLActivity");
@@ -430,6 +451,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     }
 
     protected void pauseNativeThread() {
+        if (mSingleton != this || mNativeSessionDestroyed) return;
         mNextNativeState = NativeState.PAUSED;
         mIsResumedCalled = false;
 
@@ -441,6 +463,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     }
 
     protected void resumeNativeThread() {
+        if (mSingleton != this || mNativeSessionDestroyed) return;
         mNextNativeState = NativeState.RESUMED;
         mIsResumedCalled = true;
 
@@ -456,6 +479,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     protected void onPause() {
         Log.v(TAG, "onPause()");
         super.onPause();
+        if (mSingleton != this || mNativeSessionDestroyed) return;
 
         if (mHIDDeviceManager != null) {
             mHIDDeviceManager.setFrozen(true);
@@ -469,6 +493,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     protected void onResume() {
         Log.v(TAG, "onResume()");
         super.onResume();
+        if (mSingleton != this || mNativeSessionDestroyed) return;
 
         if (mHIDDeviceManager != null) {
             mHIDDeviceManager.setFrozen(false);
@@ -530,6 +555,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         Log.v(TAG, "onWindowFocusChanged(): " + hasFocus);
+        if (mSingleton != this || mNativeSessionDestroyed) return;
 
         if (SDLActivity.mBrokenLibraries) {
            return;
@@ -556,6 +582,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public void onLowMemory() {
         Log.v(TAG, "onLowMemory()");
         super.onLowMemory();
+        if (mSingleton != this || mNativeSessionDestroyed) return;
 
         if (SDLActivity.mBrokenLibraries) {
            return;
@@ -568,6 +595,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public void onConfigurationChanged(Configuration newConfig) {
         Log.v(TAG, "onConfigurationChanged()");
         super.onConfigurationChanged(newConfig);
+        if (mSingleton != this || mNativeSessionDestroyed) return;
 
         if (SDLActivity.mBrokenLibraries) {
            return;
@@ -582,6 +610,18 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     @Override
     protected void onDestroy() {
         Log.v(TAG, "onDestroy()");
+        shutdownNativeSession();
+        super.onDestroy();
+    }
+
+    private void shutdownNativeSession() {
+        // An obsolete Activity must never destroy a replacement's SDL state.
+        if (mNativeSessionDestroyed || mSingleton != this) return;
+        mNativeSessionDestroyed = true;
+
+        getWindow().getDecorView().removeCallbacks(rehideSystemUi);
+
+        if (mSurface != null) mSurface.handlePause();
 
         if (mHIDDeviceManager != null) {
             HIDDeviceManager.release(mHIDDeviceManager);
@@ -591,26 +631,29 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         SDLAudioManager.release(this);
 
         if (SDLActivity.mBrokenLibraries) {
-           super.onDestroy();
            return;
         }
 
-        if (SDLActivity.mSDLThread != null) {
+        final Thread nativeThread = SDLActivity.mSDLThread;
+        if (nativeThread != null) {
 
             // Send Quit event to "SDLThread" thread
             SDLActivity.nativeSendQuit();
 
             // Wait for "SDLThread" thread to end
-            try {
-                SDLActivity.mSDLThread.join();
-            } catch(Exception e) {
-                Log.v(TAG, "Problem stopping SDLThread: " + e);
+            boolean interrupted = false;
+            while (nativeThread.isAlive()) {
+                try {
+                    nativeThread.join();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
+            if (interrupted) Thread.currentThread().interrupt();
+            if (SDLActivity.mSDLThread == nativeThread) SDLActivity.mSDLThread = null;
         }
 
         SDLActivity.nativeQuit();
-
-        super.onDestroy();
     }
 
     @Override
@@ -752,8 +795,16 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      * static to prevent implicit references to enclosing object.
      */
     protected static class SDLCommandHandler extends Handler {
+        private final WeakReference<SDLActivity> owner;
+
+        SDLCommandHandler(SDLActivity activity) {
+            owner = new WeakReference<>(activity);
+        }
+
         @Override
         public void handleMessage(Message msg) {
+            final SDLActivity activity = owner.get();
+            if (activity == null || mSingleton != activity || activity.mNativeSessionDestroyed) return;
             Context context = SDL.getContext();
             if (context == null) {
                 Log.e(TAG, "error handling message, getContext() returned null");
@@ -768,11 +819,24 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                 }
                 break;
             case COMMAND_CHANGE_WINDOW_STYLE:
-                if (Build.VERSION.SDK_INT >= 19 /* Android 4.4 (KITKAT) */) {
-                    if (context instanceof Activity) {
-                        Window window = ((Activity) context).getWindow();
-                        if (window != null) {
-                            if ((msg.obj instanceof Integer) && ((Integer) msg.obj != 0)) {
+                if (context instanceof Activity) {
+                    Window window = ((Activity) context).getWindow();
+                    if (window != null) {
+                        boolean fullscreen = (msg.obj instanceof Integer)
+                                && ((Integer) msg.obj != 0);
+                        if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+                            WindowInsetsController controller = window.getInsetsController();
+                            if (controller != null) {
+                                if (fullscreen) {
+                                    controller.setSystemBarsBehavior(
+                                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                                    controller.hide(WindowInsets.Type.systemBars());
+                                } else {
+                                    controller.show(WindowInsets.Type.systemBars());
+                                }
+                            }
+                        } else if (Build.VERSION.SDK_INT >= 19 /* Android 4.4 (KITKAT) */) {
+                            if (fullscreen) {
                                 int flags = View.SYSTEM_UI_FLAG_FULLSCREEN |
                                         View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
                                         View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
@@ -784,19 +848,25 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                                 window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                                 SDLActivity.mFullscreenModeActive = true;
                             } else {
-                                int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_VISIBLE;
+                                int flags = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_VISIBLE;
                                 window.getDecorView().setSystemUiVisibility(flags);
                                 window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                                 window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                                 SDLActivity.mFullscreenModeActive = false;
                             }
-                            if (Build.VERSION.SDK_INT >= 28 /* Android 9 (Pie) */) {
-                                window.getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-                            }
                         }
-                    } else {
-                        Log.e(TAG, "error handling message, getContext() returned no Activity");
+                        SDLActivity.mFullscreenModeActive = fullscreen;
+                        if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+                            WindowManager.LayoutParams attributes = window.getAttributes();
+                            attributes.layoutInDisplayCutoutMode =
+                                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+                            window.setAttributes(attributes);
+                        }
                     }
+                } else {
+                    Log.e(TAG, "error handling message, getContext() returned no Activity");
                 }
                 break;
             case COMMAND_TEXTEDIT_HIDE:
@@ -837,7 +907,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     }
 
     // Handler for the messages
-    Handler commandHandler = new SDLCommandHandler();
+    Handler commandHandler = new SDLCommandHandler(this);
 
     // Send a message from the SDLMain thread
     boolean sendCommand(int command, Object data) {
@@ -1623,7 +1693,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     private final Runnable rehideSystemUi = new Runnable() {
         @Override
         public void run() {
-            if (Build.VERSION.SDK_INT >= 19 /* Android 4.4 (KITKAT) */) {
+            if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+                WindowInsetsController controller = SDLActivity.this.getWindow().getInsetsController();
+                if (controller != null) {
+                    controller.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    controller.hide(WindowInsets.Type.systemBars());
+                }
+            } else if (Build.VERSION.SDK_INT >= 19 /* Android 4.4 (KITKAT) */) {
                 int flags = View.SYSTEM_UI_FLAG_FULLSCREEN |
                         View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
                         View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
@@ -1637,6 +1714,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     };
 
     public void onSystemUiVisibilityChange(int visibility) {
+        if (mSingleton != this || mNativeSessionDestroyed) return;
         if (SDLActivity.mFullscreenModeActive && ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0 || (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0)) {
 
             Handler handler = getWindow().getDecorView().getHandler();
@@ -1872,9 +1950,10 @@ class SDLMain implements Runnable {
     @Override
     public void run() {
         // Runs SDL_main()
-        String library = SDLActivity.mSingleton.getMainSharedObject();
-        String function = SDLActivity.mSingleton.getMainFunction();
-        String[] arguments = SDLActivity.mSingleton.getArguments();
+        final SDLActivity owner = SDLActivity.mSingleton;
+        String library = owner.getMainSharedObject();
+        String function = owner.getMainFunction();
+        String[] arguments = owner.getArguments();
 
         try {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DISPLAY);
@@ -1888,10 +1967,10 @@ class SDLMain implements Runnable {
 
         Log.v("SDL", "Finished main function");
 
-        if (SDLActivity.mSingleton != null && !SDLActivity.mSingleton.isFinishing()) {
+        if (!owner.isFinishing()) {
             // Let's finish the Activity
-            SDLActivity.mSDLThread = null;
-            SDLActivity.mSingleton.finish();
+            if (SDLActivity.mSDLThread == Thread.currentThread()) SDLActivity.mSDLThread = null;
+            owner.finish();
         }  // else: Activity is already being destroyed
 
     }

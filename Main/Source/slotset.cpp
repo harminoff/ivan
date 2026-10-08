@@ -24,6 +24,12 @@
 #include "action.h"
 #include "save.h"
 #include "materias.h"
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+#include "adaptiveui.h"
+#include "confdef.h"
+#include "gear.h"
+#include "miscitem.h"
+#endif
 
 #include "slot.cpp"
 #include "stack.cpp"

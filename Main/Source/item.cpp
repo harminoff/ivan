@@ -647,6 +647,7 @@ cchar* item::GetItemCategoryName(long Category) // convert to array
    case TOOL: return "Tools";
    case VALUABLE: return "Valuables";
    case MISC: return "Miscellaneous items";
+   case RAW_MATERIAL: return "Raw materials";
   }
 
   return "Warezzz";
@@ -864,7 +865,7 @@ void item::AddInventoryEntry(ccharacter*, festring& Entry, int Amount, truth Sho
 
   if(ShowSpecialInfo){
     Entry << " [" << GetWeight() * Amount << "g"; //TODO if the 1st and 2nd of 3 items have 100g and the last has 2000g, the weight shown would be 300g ... now that lumps, stones and sticks are useful, this may not be that good...
-    if(ivanconfig::IsShowVolume()){
+    if(ivanconfig::IsShowVolume() || GetCategory() == RAW_MATERIAL){
       Entry << " " << GetVolume() * Amount << "cm3"; //the item can be seen therefore it's volume guessed already
       if(GetSecondaryMaterial()==NULL){ //simple items like ingots sticks etc
         static char density[20];

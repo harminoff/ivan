@@ -58,6 +58,7 @@ Thumbs.db
 ~$*.ppt*
 
 # Local Codex, build, packaging, and research artifacts
+/.codex-tools/
 /.codex-remote-attachments/
 /build-*/
 /playable/

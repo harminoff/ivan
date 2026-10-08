@@ -65,22 +65,27 @@ void igraph::Init()
 {
   static truth AlreadyInstalled = false;
 
-  if(!AlreadyInstalled)
+  if(AlreadyInstalled)
   {
-    AlreadyInstalled = true;
-    graphics::Init();
-    const v2 CanvasSize(ivanconfig::GetStartingWindowWidth(),
-                        ivanconfig::GetStartingWindowHeight());
-#ifdef ADAPTIVE_UI
-    const graphics::presentationmode Presentation =
-      ivanconfig::IsEnhancedDesktopUI()
-        ? graphics::PRESENTATION_ENHANCED
-        : graphics::PRESENTATION_CLASSIC;
-    const v2 OutputSize = Presentation == graphics::PRESENTATION_ENHANCED
-      ? v2(ivanconfig::GetStartingEnhancedWindowWidth(),
-           ivanconfig::GetStartingEnhancedWindowHeight()) : CanvasSize;
+#if defined(USE_SDL) && SDL_MAJOR_VERSION == 2
+    if(graphics::GetWindow())
 #endif
-    graphics::SetMode("IVAN " IVAN_VERSION,
+      return;
+  }
+
+  graphics::Init();
+  const v2 CanvasSize(ivanconfig::GetStartingWindowWidth(),
+                      ivanconfig::GetStartingWindowHeight());
+#ifdef ADAPTIVE_UI
+  const graphics::presentationmode Presentation =
+    ivanconfig::IsEnhancedDesktopUI()
+      ? graphics::PRESENTATION_ENHANCED
+      : graphics::PRESENTATION_CLASSIC;
+  const v2 OutputSize = Presentation == graphics::PRESENTATION_ENHANCED
+    ? v2(ivanconfig::GetStartingEnhancedWindowWidth(),
+         ivanconfig::GetStartingEnhancedWindowHeight()) : CanvasSize;
+#endif
+  graphics::SetMode("IVAN " IVAN_VERSION,
 #ifndef MAC_APP
                       festring(game::GetDataDir() + "Graphics/Icon.bmp").CStr(),
 #else
@@ -99,25 +104,28 @@ void igraph::Init()
                       , Presentation
 #endif
                       );
-    DOUBLE_BUFFER->ClearToColor(0);
-    graphics::BlitDBToScreen();
+  DOUBLE_BUFFER->ClearToColor(0);
+  graphics::BlitDBToScreen();
 #ifndef __DJGPP__
-    graphics::SetSwitchModeHandler(ivanconfig::SwitchModeHandler);
+  graphics::SetSwitchModeHandler(ivanconfig::SwitchModeHandler);
 #endif
-      if(ivanconfig::GetStartingFontGfx()==1){
+  if(ivanconfig::GetStartingFontGfx()==1)
     graphics::LoadDefaultFont(game::GetDataDir() + "Graphics/Font.png");
-    }
-      if(ivanconfig::GetStartingFontGfx()==2){
+  if(ivanconfig::GetStartingFontGfx()==2)
     graphics::LoadDefaultFont(game::GetDataDir() + "Graphics/Font2.png");
-    }
-      if(ivanconfig::GetStartingFontGfx()==3){
+  if(ivanconfig::GetStartingFontGfx()==3)
     graphics::LoadDefaultFont(game::GetDataDir() + "Graphics/Font3.png");
-    }
-    FONT->CreateFontCache(WHITE);
-    FONT->CreateFontCache(LIGHT_GRAY);
-    felist::SetDefaultEntryImageSize(TILE_V2);
-    felist::CreateQuickDrawFontCaches(FONT, WHITE, 8);
-    felist::CreateQuickDrawFontCaches(FONT, LIGHT_GRAY, 8);
+  FONT->CreateFontCache(WHITE);
+  FONT->CreateFontCache(LIGHT_GRAY);
+  felist::SetDefaultEntryImageSize(TILE_V2);
+  felist::CreateQuickDrawFontCaches(FONT, WHITE, 8);
+  felist::CreateQuickDrawFontCaches(FONT, LIGHT_GRAY, 8);
+
+  // CPU-side sprites and prototype graphics live for the process. SDL's
+  // window, renderer and font are recreated after an Android session ends.
+  if(!AlreadyInstalled)
+  {
+    AlreadyInstalled = true;
     object::InitSparkleValidityArrays();
     int c;
 

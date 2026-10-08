@@ -100,6 +100,40 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME adaptiveui_layout_test COMMAND adaptiveui_layout_test)
   if(WIN32)
+    file(GLOB IVAN_TEST_JDK_INCLUDES "C:/Program Files/Java/*/include"
+                                   "C:/Program Files/Eclipse Adoptium/*/include")
+    find_path(IVAN_TEST_JNI_INCLUDE jni.h
+      HINTS "$ENV{JAVA_HOME}/include" "C:/Program Files/Android/Android Studio/jbr/include"
+            ${IVAN_TEST_JDK_INCLUDES})
+    if(IVAN_TEST_JNI_INCLUDE)
+      add_executable(mobileui_card_test Tests/mobileui_card_test.cpp
+                     FeLib/Source/adaptiveui.cpp)
+      target_compile_definitions(mobileui_card_test PRIVATE ANDROID)
+      target_include_directories(mobileui_card_test PRIVATE FeLib/Include
+        ${SDL2_INCLUDE_DIR} "${IVAN_TEST_JNI_INCLUDE}" "${IVAN_TEST_JNI_INCLUDE}/win32")
+      target_link_libraries(mobileui_card_test ${SDL2_LIBRARY})
+      if(MSVC)
+        target_compile_options(mobileui_card_test PRIVATE /UNDEBUG)
+      else()
+        target_compile_options(mobileui_card_test PRIVATE -UNDEBUG)
+      endif()
+      add_test(NAME mobileui_card_test COMMAND mobileui_card_test)
+      set_tests_properties(mobileui_card_test PROPERTIES
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ivan>")
+    endif()
+  endif()
+  add_test(NAME startmode_model_test COMMAND $<TARGET_FILE:ivan> --startmode-test)
+  set_tests_properties(startmode_model_test PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:ivan>)
+  target_sources(ivan PRIVATE "${CMAKE_SOURCE_DIR}/Tests/crash_regression_test.cpp")
+  target_compile_definitions(ivan PRIVATE IVAN_CRASH_REGRESSION_TESTS)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/crash-test-user")
+  add_test(NAME crash_regression_test COMMAND $<TARGET_FILE:ivan> --crash-regression-test)
+  set_tests_properties(crash_regression_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/crash-test-user"
+    TIMEOUT 60
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+  if(WIN32)
     # The portable i686 runtime DLLs are staged beside ivan.exe. Run the test
     # there as well so Windows does not pick up incompatible DLLs from PATH.
     set_tests_properties(adaptiveui_layout_test PROPERTIES

@@ -174,6 +174,12 @@ int CountChars(char cSF, cfestring& sSH)
 
 truth bMenuIsActive=false;
 
+void iosystem::ResetInputState()
+{
+  bInUse = false;
+  bMenuIsActive = false;
+}
+
 truth iosystem::IsOnMenu(){
   return bMenuIsActive;
 }

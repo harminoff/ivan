@@ -100,6 +100,7 @@ void soundeffects::initSound()
 
   if(SoundState == 0)
   {
+    eol = false;
     festring fsSndDbgFile = GetUserDataDir() + "SndDebug.txt";
     debf = fopen(fsSndDbgFile.CStr(), "wt"); //"a");
     if(debf)fprintf(debf, "This file can be used to diagnose problems with sound.\n");
@@ -239,6 +240,8 @@ void soundeffects::initSound()
 void soundeffects::deInitSound()
 {
   Mix_AllocateChannels(0);
+  patterns.clear();
+  files.clear();
 
   int freq, chans;
   Uint16 fmt;
@@ -248,7 +251,7 @@ void soundeffects::deInitSound()
   while(Mix_Init(0))
     Mix_Quit();
 
-  SoundState = 2;
+  SoundState = 0;
 }
 
 int soundeffects::addFile(festring filename) {

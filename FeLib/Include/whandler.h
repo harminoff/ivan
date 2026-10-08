@@ -44,6 +44,9 @@ struct mouseclick{
 class globalwindowhandler
 {
  public:
+  // Unwind native input loops when Android is destroying the Activity. This
+  // is not a player quit request and must never open a confirmation dialog.
+  struct activityshutdown {};
   static bool IsKeyPressed(int iSDLScanCode);
   static void ResetKeyTimeout(){SetKeyTimeout(0,iRestWaitKey);}
   static void CheckKeyTimeout();
@@ -78,6 +81,7 @@ class globalwindowhandler
   static void SetAddFrameSkip(int i);
 #ifdef USE_SDL
   static void Init();
+  static void DeInit();
   static void SetQuitMessageHandler(truth (*What)()){ QuitMessageHandler = What; }
   static ulong UpdateTick() { return Tick = SDL_GetTicks() / 40; }
   static void SetFunctionKeyHandler(bool (*What)(SDL_Keycode)){ FunctionKeyHandler = What; }

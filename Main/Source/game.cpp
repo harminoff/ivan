@@ -65,6 +65,7 @@
 #include "room.h"
 #include "save.h"
 #include "stack.h"
+#include "startmode.h"
 #include "team.h"
 #include "whandler.h"
 #include "wsquare.h"
@@ -78,7 +79,9 @@ namespace mobileui = adaptiveui;
 
 #include "dbgmsgproj.h"
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+static truth MobileTruthQuestion(cfestring&, int);
+#elif defined(ADAPTIVE_UI)
 static truth DesktopTruthQuestion(cfestring&, int);
 static int DesktopQuitQuestion(cfestring&);
 #endif
@@ -244,6 +247,7 @@ v2 ZoomPos = v2(0,0);
 v2 silhouettePos = v2(0,0);
 
 bool bPositionQuestionMode=false;
+bool bQuestionMode=false;
 
 std::vector<dbgdrawoverlay> game::vDbgDrawOverlayFunctions;
 
@@ -725,6 +729,7 @@ void FantasyName(festring& rfsName){ DBG2(rfsName.CStr(),ivanconfig::GetFantasyN
 
 truth game::Init(cfestring& loadBaseName)
 {
+  startmode::ResetCurrent();
   festring absLoadNameOk;
 
   if(!loadBaseName.IsEmpty()){
@@ -788,6 +793,12 @@ truth game::Init(cfestring& loadBaseName)
     }
    case NEW_GAME:
     {
+      StartSelection NewStart;
+      if(!startmode::Choose(NewStart))
+        return false;
+      startmode::SetCurrent(NewStart);
+      startmode::RecordCurrentRun();
+
       CurrentSavefileVersion = SAVE_FILE_VERSION;
 
       /* New game music */
@@ -796,7 +807,10 @@ truth game::Init(cfestring& loadBaseName)
       audio::LoadMIDIFile("newgame.mid", 0, 100);
       audio::SetPlaybackStatus(audio::PLAYING);
 
-      iosystem::TextScreen(CONST_S("You couldn't possibly have guessed this day would differ from any other.\n"
+      festring OpeningStory = startmode::GetStoryFlavor();
+      if(!OpeningStory.IsEmpty())
+        OpeningStory << "\n\n";
+      OpeningStory << "You couldn't possibly have guessed this day would differ from any other.\n"
                                    "It began just as always. You woke up at dawn and drove off the giant spider\n"
                                    "resting on your face. On your way to work you had serious trouble avoiding\n"
                                    "the lions and pythons roaming wild around the village. After getting kicked\n"
@@ -807,7 +821,8 @@ truth game::Init(cfestring& loadBaseName)
                                    "Finally you were about to enjoy your free time by taking a quick dip in the\n"
                                    "nearby crocodile bay. However, at this point something unusual happened.\n"
                                    "You were summoned to the mansion of Richel Decos, the viceroy of the\n"
-                                   "colony, and were led directly to him."));
+                                   "colony, and were led directly to him.";
+      iosystem::TextScreen(OpeningStory);
 
       iosystem::TextScreen(CONST_S("\"I have a task for you, citizen\", said the viceroy picking his golden\n"
                                    "teeth, \"The market price of bananas has taken a deep dive and yet the\n"
@@ -846,13 +861,16 @@ truth game::Init(cfestring& loadBaseName)
 
       for(int c = 0; c < ATTRIBUTES; ++c)
       {
-        if(c != ENDURANCE)
+        if(NewStart.Mode == START_CLASSIC && c != ENDURANCE)
           Player->EditAttribute(c, (RAND() & 1) - (RAND() & 1));
 
         Player->EditExperience(c, 500, 1 << 11);
       }
 
-      Player->SetMoney(Player->GetMoney() + RAND() % 11);
+      if(NewStart.Mode == START_CLASSIC)
+        Player->SetMoney(Player->GetMoney() + RAND() % 11);
+      else
+        startmode::Apply(Player, NewStart);
       GetTeam(0)->SetLeader(Player);
       InitDangerMap();
       Petrus = 0;
@@ -885,14 +903,7 @@ truth game::Init(cfestring& loadBaseName)
       DefaultChangeMaterial.Empty();
       DefaultDetectMaterial.Empty();
       Player->GetStack()->AddItem(encryptedscroll::Spawn());
-
-      if(!ivanconfig::GetNoPet())
-      {
-        character* Doggie = dog::Spawn();
-        Doggie->SetTeam(GetTeam(0));
-        GetWorldMap()->GetPlayerGroup().push_back(Doggie);
-        Doggie->SetAssignedName(ivanconfig::GetDefaultPetName());
-      }
+      startmode::CreatePet(NewStart);
       WizardMode = false;
       SeeWholeMapCheatMode = MAP_HIDDEN;
       GoThroughWallsCheat = false;
@@ -952,28 +963,44 @@ truth game::Init(cfestring& loadBaseName)
 
 void game::DeInit()
 {
+  bQuestionMode = false;
+  bPositionQuestionMode = false;
+  SetIsInGetCommand(false);
+  SetIsRunning(false);
+  globalwindowhandler::DeInstallControlLoop(AnimationController);
   delete WorldMap;
   WorldMap = 0;
   int c;
 
-  for(c = 1; c < Dungeons; ++c)
+  for(c = 1; Dungeon && c < Dungeons; ++c)
     delete Dungeon[c];
 
   delete [] Dungeon;
+  Dungeon = 0;
+  Dungeons = 0;
 
-  for(c = 1; c <= GODS; ++c)
+  for(c = 1; God && c <= GODS; ++c)
     delete God[c]; // sorry, Valpuri!
 
   delete [] God;
+  God = 0;
   pool::BurnHell();
 
-  for(c = 0; c < Teams; ++c)
+  for(c = 0; Team && c < Teams; ++c)
     delete Team[c];
 
   delete [] Team;
+  Team = 0;
+  Teams = 0;
   delete GameScript;
+  GameScript = 0;
+  SetPlayer(0);
+  CurrentLevel = 0;
+  CurrentLSquareMap = 0;
+  CurrentWSquareMap = 0;
   msgsystem::Format();
   DangerMap.clear();
+  startmode::ResetCurrent();
 }
 
 void game::Run()
@@ -1261,7 +1288,9 @@ truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForT
   else if(DefaultAnswer != REQUIRES_ANSWER)
     ABORT("Illegal TruthQuestion DefaultAnswer send!");
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+  return MobileTruthQuestion(String, OtherKeyForTrue);
+#elif defined(ADAPTIVE_UI)
   if(graphics::IsEnhancedPresentation())
     return DesktopTruthQuestion(String, OtherKeyForTrue);
 #endif
@@ -3601,6 +3630,7 @@ truth game::Save(cfestring& SaveName)
 
   commandsystem::SaveSwapWeapons(SaveFile); DBGLN;
   craftcore::Save(SaveFile);
+  startmode::Save(SaveFile);
 
   return true;
 }
@@ -3653,19 +3683,19 @@ int game::Load(cfestring& saveName)
   for(c = 0; c < ATTRIBUTES; ++c)
     SaveFile >> OldAttribute[c] >> NewAttribute[c] >> LastAttributeChangeTick[c];
 
-  Dungeon = new dungeon*[Dungeons];
+  Dungeon = new dungeon*[Dungeons]();
   Dungeon[0] = 0;
 
   for(c = 1; c < Dungeons; ++c)
     SaveFile >> Dungeon[c];
 
-  God = new god*[GODS + 1];
+  God = new god*[GODS + 1]();
   God[0] = 0;
 
   for(c = 1; c <= GODS; ++c)
     SaveFile >> God[c];
 
-  Team = new team*[Teams];
+  Team = new team*[Teams]();
 
   for(c = 0; c < Teams; ++c)
     SaveFile >> Team[c];
@@ -3698,6 +3728,7 @@ int game::Load(cfestring& saveName)
 
   commandsystem::LoadSwapWeapons(SaveFile);
   craftcore::Load(SaveFile);
+  startmode::LoadOptional(SaveFile);
 
   ///////////////// loading ended ////////////////
 
@@ -3973,7 +4004,7 @@ void game::SetPlayer(character* NP)
 void game::InitDungeons()
 {
   Dungeons = *GetGameScript()->GetDungeons() + 1;
-  Dungeon = new dungeon *[Dungeons];
+  Dungeon = new dungeon *[Dungeons]();
   Dungeon[0] = 0;
 
   for(int c = 1; c < Dungeons; ++c)
@@ -4053,7 +4084,7 @@ void game::Hostility(team* Attacker, team* Defender)
 void game::CreateTeams()
 {
   Teams = *GetGameScript()->GetTeams();
-  Team = new team*[Teams];
+  Team = new team*[Teams]();
   int c;
 
   for(c = 0; c < Teams; ++c)
@@ -4145,6 +4176,18 @@ void game::UpdateCamera()
 truth game::HandleQuitMessage()
 {
 #ifdef USE_SDL
+
+#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+  if(!IsRunning())
+  {
+    if(graphics::IsEnhancedPresentation())
+      return DesktopTruthQuestion(
+        CONST_S("Are you sure you want to quit IVAN?"), 0);
+    return !Menu(std::vector<bitmap*>(), v2(RES.X >> 1, RES.Y >> 1),
+                 CONST_S("Are you sure you want to quit IVAN?\r"),
+                 CONST_S("Yes\rNo\r"), LIGHT_GRAY);
+  }
+#endif
 
   if(IsRunning())
   {
@@ -4303,7 +4346,7 @@ cchar* game::GetVerbalPlayerAlignment()
 
 void game::CreateGods()
 {
-  God = new god*[GODS + 1];
+  God = new god*[GODS + 1]();
   God[0] = 0;
 
   for(int c = 1; c < protocontainer<god>::GetSize(); ++c)
@@ -4427,7 +4470,6 @@ void game::CreateBusyAnimationCache()
   }
 }
 
-bool bQuestionMode=false;
 bool game::IsQuestionMode()
 {
   return bQuestionMode || bPositionQuestionMode;
@@ -4827,6 +4869,8 @@ void game::InitGlobalValueMap()
 void game::TextScreen(cfestring& Text, v2 Displacement, col16 Color,
                       truth GKey, truth Fade, bitmapeditor BitmapEditor)
 {
+  if(Text.Find("You are victorious!") != festring::NPos)
+    startmode::RecordVictory();
   graphics::SetDenyStretchedBlit();
   globalwindowhandler::DisableControlLoops();
   iosystem::TextScreen(Text, Displacement, Color, GKey, Fade, BitmapEditor);
@@ -6328,12 +6372,58 @@ void WriteCustomKeyBindingsCfgFile(FILE *fl,festring fsDesc,int iKey){
   fflush(fl);
 }
 
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+static truth MobileTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
+{
+  bQuestionMode = true;
+  mobileui::SetConfirmationPrompt(Prompt.CStr());
+  std::string LowerPrompt = Prompt.CStr();
+  std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
+    [](unsigned char Character) { return char(std::tolower(Character)); });
+  if(LowerPrompt.find("continue anyway") != std::string::npos
+     || LowerPrompt.find("still continue") != std::string::npos
+     || LowerPrompt.find("continue? [y/n]") != std::string::npos)
+    mobileui::SetPromptDetail(msgsystem::GetPromptContextMessage().CStr());
+  const int Choices[] = { 'y', 'n' };
+  mobileui::SetQuestionChoices(Choices, 2);
+  if(game::IsRunning())
+    game::DrawEverythingNoBlit();
+  graphics::BlitDBToScreen();
+
+  truth Accepted = false;
+  for(;;)
+  {
+    const int Key = GET_KEY();
+    if(Key == 'y' || Key == 'Y' || Key == KEY_CONTROLLER_A
+       || Key == OtherKeyForTrue)
+    {
+      Accepted = true;
+      break;
+    }
+    if(Key == 'n' || Key == 'N' || Key == KEY_ESC
+       || Key == KEY_CONTROLLER_B)
+      break;
+  }
+
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+  bQuestionMode = false;
+  return Accepted;
+}
+#elif defined(ADAPTIVE_UI)
 static truth DesktopTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
 {
   bQuestionMode = true;
   adaptiveui::SetConfirmationPrompt(Prompt.CStr());
-  game::DrawEverythingNoBlit();
+  std::string LowerPrompt = Prompt.CStr();
+  std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
+    [](unsigned char Character) { return char(std::tolower(Character)); });
+  if(LowerPrompt.find("continue anyway") != std::string::npos
+     || LowerPrompt.find("still continue") != std::string::npos
+     || LowerPrompt.find("continue? [y/n]") != std::string::npos)
+    adaptiveui::SetPromptDetail(msgsystem::GetPromptContextMessage().CStr());
+  if(game::IsRunning())
+    game::DrawEverythingNoBlit();
   graphics::BlitDBToScreen();
 
   truth Accepted = false;
@@ -6462,7 +6552,10 @@ truth game::ConfigureCustomCommandKey(int CommandIndex)
                    << ConflictDescription << "\". Take it for \""
                    << SelectedCommand->GetDescription()
                    << "\" and leave the old control unbound?";
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#ifdef ANDROID
+    if(!TruthQuestion(ConflictPrompt))
+      return false;
+#elif defined(ADAPTIVE_UI)
     if(!graphics::IsEnhancedPresentation()
        || !ConfirmDesktopKeyTransfer(ConflictPrompt))
       return false;

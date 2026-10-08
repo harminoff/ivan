@@ -167,6 +167,24 @@ void globalwindowhandler::Init()
 #endif
 }
 
+void globalwindowhandler::DeInit()
+{
+#if SDL_MAJOR_VERSION == 2
+  for(auto Controller : controllers)
+    if(Controller)
+      SDL_GameControllerClose(Controller);
+  controllers.clear();
+  controller_direction = ZERO_V2;
+#endif
+  KeyBuffer.clear();
+  MouseBuffer = {};
+  Controls = 0;
+  ControlLoopsEnabled = true;
+  FunctionKeyHandler = ControlKeyHandler = 0;
+  QuitMessageHandler = 0;
+  ResetKeyTimeout();
+}
+
 int iCountFPS=0;
 int iLastSecondFPS=0;
 std::chrono::high_resolution_clock::time_point tpLastSecondFPS;
@@ -494,8 +512,9 @@ int globalwindowhandler::GetKey(truth EmptyBuffer)
 
 uint globalwindowhandler::PollEvents(SDL_Event* pEvent)
 {
+  SDL_Event LocalEvent;
   if(pEvent==NULL)
-    pEvent=new SDL_Event();
+    pEvent=&LocalEvent;
 
   uint i=0;
   while(SDL_PollEvent(pEvent)){
@@ -844,14 +863,14 @@ void globalwindowhandler::BufferMouseEvent(mouseclick mc)
 
 #ifdef ADAPTIVE_UI
 bool HandleAdaptivePointer(int WindowX, int WindowY, bool Pressed,
-                           int WheelY, bool Motion, int Button)
+                           int WheelY, bool Motion, int Button, int Clicks = 1)
 {
   if(!graphics::IsEnhancedPresentation())
     return false;
 
   const v2 Output = graphics::MapWindowToOutput(v2(WindowX, WindowY));
   const adaptiveui::PointerResult Result = adaptiveui::HandlePointer(
-    Output.X, Output.Y, Pressed, WheelY, Motion, Button);
+    Output.X, Output.Y, Pressed, WheelY, Motion, Button, Clicks);
   switch(Result.Type)
   {
    case adaptiveui::PointerResult::COMMAND_KEY:
@@ -886,6 +905,21 @@ bool HandleAdaptivePointer(int WindowX, int WindowY, bool Pressed,
 
 void globalwindowhandler::ProcessMessage(SDL_Event* Event)
 {
+  static bool HandlingQuitRequest = false;
+  const auto HandleQuitRequest = [&]()
+  {
+    // SDL may send both SDL_WINDOWEVENT_CLOSE and SDL_QUIT for one click.
+    // The confirmation loop polls events itself, so guard against recursively
+    // opening a second modal while the first one is waiting for an answer.
+    if(HandlingQuitRequest)
+      return;
+    HandlingQuitRequest = true;
+    const truth ShouldQuit = !QuitMessageHandler || QuitMessageHandler();
+    HandlingQuitRequest = false;
+    if(ShouldQuit)
+      exit(0);
+  };
+
   Uint32 type;
 #if SDL_MAJOR_VERSION == 1
   type=(Event->active.type);
@@ -909,6 +943,9 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
      case SDL_WINDOWEVENT_SIZE_CHANGED:
      case SDL_WINDOWEVENT_RESTORED:
       graphics::BlitDBToScreen();
+      break;
+     case SDL_WINDOWEVENT_CLOSE:
+      HandleQuitRequest();
       break;
     }
 #endif
@@ -940,20 +977,36 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
       mobileui::HandleLogTimeout();
       graphics::BlitDBToScreen();
     }
+    else if(Event->user.code == mobileui::MENU_FLING_EVENT_CODE)
+    {
+      mobileui::HandleMenuFling();
+      graphics::BlitDBToScreen();
+    }
 #endif
     break;
 #endif
 
    case SDL_QUIT:
-    if(!QuitMessageHandler || QuitMessageHandler())
-      exit(0);
+#ifdef ANDROID
+    // SDLActivity.onDestroy sends this and joins the native thread. Asking
+    // for input here deadlocks the UI thread against the quit confirmation.
+    throw activityshutdown();
+#else
+    HandleQuitRequest();
+#endif
     return;
+
+#if defined(ANDROID) && SDL_MAJOR_VERSION == 2
+   case SDL_APP_TERMINATING:
+    throw activityshutdown();
+#endif
 
    case SDL_MOUSEBUTTONUP:
      if(Event->button.clicks>0){
 #ifdef ADAPTIVE_UI
        if(HandleAdaptivePointer(Event->button.x, Event->button.y, true,
-                                0, false, Event->button.button))
+                                0, false, Event->button.button,
+                                Event->button.clicks))
          break;
 #endif
        mouseclick mc;
@@ -1127,7 +1180,9 @@ void globalwindowhandler::ProcessMessage(SDL_Event* Event)
    case SDL_KEYDOWN: DBGLN;
 #ifdef ANDROID
      if(Event->key.keysym.sym == SDLK_AC_BACK)
-       AddKeyToBuffer(0xE000 + KEY_CONTROLLER_B);
+       // Escape is accepted by every legacy modal, including number input;
+       // controller B is not recognized by all of those input loops.
+       AddKeyToBuffer(KEY_ESC);
      else
 #endif
      ProcessKeyDownMessage(Event);

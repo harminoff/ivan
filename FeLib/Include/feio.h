@@ -47,6 +47,7 @@ class iosystem
                          col16 = 0xFFFF, truth = true,
                          truth = true, bitmapeditor = 0);
   static truth IsOnMenu();
+  static void ResetInputState();
   static bool IsInUse();
   static bool AlertConfirmMsg(const char* cMsg,std::vector<festring> vfsCritMsgs = std::vector<festring>(),bool bConfirmMode=true);
   static void AlertConfirmMsgDraw(bitmap* Buffer);

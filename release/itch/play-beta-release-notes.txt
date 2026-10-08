@@ -1,0 +1,8 @@
+<en-US>
+Readability and Stability Update
+- Read full item descriptions with scrolling and clearer paragraphs.
+- Clearer god details and remembered prayer responses.
+- Safer quick-equip when a body part or equipment slot is unavailable.
+- Fixed Android Back handling in menus and number prompts.
+- Improved startup, reopening, and display-change stability.
+</en-US>

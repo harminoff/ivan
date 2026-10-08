@@ -66,7 +66,17 @@ configoption* configsystem::Option[MAX_CONFIG_OPTIONS];
 festring configsystem::ConfigFileName;
 int configsystem::Options;
 
+void configsystem::ResetOptions()
+{
+  // The Android Activity can start SDL_main again without unloading libmain.
+  // Rebuild the registration list, preserving the option objects and values.
+  memset(Option, 0, sizeof(Option));
+  Options = 0;
+}
+
 void configsystem::AddOption(festring fsCategory, configoption* O) {
+  if(!O || Options >= MAX_CONFIG_OPTIONS)
+    ABORT("Invalid or excessive config option registration (%d)", Options);
   for(int i=0;i<Options;i++)if(Option[i] == O)ABORT("Option already set '%s' '%s'", O->Name, O->Description); //help developers to prevent duplicated entries
 
   O->fsCategory=fsCategory;
@@ -235,7 +245,7 @@ void configsystem::Show(void (*BackGroundDrawer)(),
       }
 
       List.AddEntry(Entry, LIGHT_GRAY);
-#if defined(ADAPTIVE_UI) && !defined(ANDROID)
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
       List.SetLastEntryAdaptiveGroup(VisibleOption->fsCategory);
 #endif
       // TODO: help should show all possible values with details, may require cycling thru them

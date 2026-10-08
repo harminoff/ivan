@@ -42,10 +42,12 @@ class msgsystem
   static void DeInit();
   static void InitMessagesSinceLastKeyScan();
   static void ThyMessagesAreNowOld();
+  static cfestring& GetPromptContextMessage() { return PromptContextMessage; }
  private:
   static felist MessageHistory;
   static festring LastMessage;
   static festring BigMessage;
+  static festring PromptContextMessage;
   static int Times;
   static v2 Begin, End;
   static truth Enabled;

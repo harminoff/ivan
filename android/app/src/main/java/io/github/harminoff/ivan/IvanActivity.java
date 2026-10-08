@@ -1,6 +1,7 @@
 package io.github.harminoff.ivan;
 
 import android.annotation.TargetApi;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -8,10 +9,12 @@ import android.system.Os;
 import android.util.Log;
 import android.graphics.Rect;
 import android.view.DisplayCutout;
-import android.view.View;
+import android.view.KeyEvent;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 
 import org.libsdl.app.SDLActivity;
 
@@ -25,6 +28,7 @@ public final class IvanActivity extends SDLActivity {
     private static final String CONTENT_VERSION = "0.59-de528ac-android-5";
     private boolean statusBarHidden;
     private Vibrator vibrator;
+    private OnBackInvokedCallback backCallback;
 
     private static native void nativeSetSafeInsets(int left, int top, int right, int bottom,
                                                    int[] cutoutRects,
@@ -49,11 +53,13 @@ public final class IvanActivity extends SDLActivity {
         }
 
         super.onCreate(savedInstanceState);
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !mBrokenLibraries) {
+            registerGameBackCallback();
+        }
         vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
 
-        configureEdgeToEdgeWindow();
-
         getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            if (mSingleton != this) return insets;
             int left = 0;
             int top = 0;
             int right = 0;
@@ -66,24 +72,25 @@ public final class IvanActivity extends SDLActivity {
                 }
                 android.graphics.Insets bars = insets.getInsets(barTypes);
                 android.graphics.Insets cutout = insets.getInsets(WindowInsets.Type.displayCutout());
-                left = statusBarHidden ? bars.left : Math.max(bars.left, cutout.left);
-                top = statusBarHidden ? bars.top : Math.max(bars.top, cutout.top);
-                right = statusBarHidden ? bars.right : Math.max(bars.right, cutout.right);
-                bottom = statusBarHidden ? bars.bottom : Math.max(bars.bottom, cutout.bottom);
+                // Hiding the status bar does not remove the physical camera
+                // cutout. Android 15 also lays non-floating targetSdk 35
+                // windows through cutout areas by default, so always combine
+                // the cutout safe area with whichever system bars are active.
+                left = Math.max(bars.left, cutout.left);
+                top = Math.max(bars.top, cutout.top);
+                right = Math.max(bars.right, cutout.right);
+                bottom = Math.max(bars.bottom, cutout.bottom);
                 displayCutouts = findDisplayCutouts(insets.getDisplayCutout());
             } else if (android.os.Build.VERSION.SDK_INT >= 28) {
                 DisplayCutout cutout = insets.getDisplayCutout();
-                left = statusBarHidden ? insets.getSystemWindowInsetLeft()
-                        : Math.max(insets.getSystemWindowInsetLeft(),
-                                   cutout != null ? cutout.getSafeInsetLeft() : 0);
-                top = statusBarHidden ? 0 : Math.max(insets.getSystemWindowInsetTop(),
-                                cutout != null ? cutout.getSafeInsetTop() : 0);
-                right = statusBarHidden ? insets.getSystemWindowInsetRight()
-                        : Math.max(insets.getSystemWindowInsetRight(),
-                                   cutout != null ? cutout.getSafeInsetRight() : 0);
-                bottom = statusBarHidden ? insets.getSystemWindowInsetBottom()
-                        : Math.max(insets.getSystemWindowInsetBottom(),
-                                   cutout != null ? cutout.getSafeInsetBottom() : 0);
+                left = Math.max(insets.getSystemWindowInsetLeft(),
+                        cutout != null ? cutout.getSafeInsetLeft() : 0);
+                top = Math.max(statusBarHidden ? 0 : insets.getSystemWindowInsetTop(),
+                        cutout != null ? cutout.getSafeInsetTop() : 0);
+                right = Math.max(insets.getSystemWindowInsetRight(),
+                        cutout != null ? cutout.getSafeInsetRight() : 0);
+                bottom = Math.max(insets.getSystemWindowInsetBottom(),
+                        cutout != null ? cutout.getSafeInsetBottom() : 0);
                 displayCutouts = findDisplayCutouts(cutout);
             } else {
                 left = insets.getSystemWindowInsetLeft();
@@ -106,22 +113,35 @@ public final class IvanActivity extends SDLActivity {
         getWindow().getDecorView().requestApplyInsets();
     }
 
-    private void configureEdgeToEdgeWindow() {
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            getWindow().setDecorFitsSystemWindows(false);
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    @TargetApi(33)
+    private void registerGameBackCallback() {
+        backCallback = this::sendGameBack;
+        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+    }
+
+    private void sendGameBack() {
+        if (!mBrokenLibraries && !isFinishing()) {
+            // Use the same cancel/back command as the in-game controls. Finishing
+            // the Activity here can strand a native menu waiting for input.
+            onNativeKeyDown(KeyEvent.KEYCODE_BACK);
+            onNativeKeyUp(KeyEvent.KEYCODE_BACK);
         }
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            WindowManager.LayoutParams attributes = getWindow().getAttributes();
-            attributes.layoutInDisplayCutoutMode = android.os.Build.VERSION.SDK_INT >= 30
-                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            getWindow().setAttributes(attributes);
-        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        // Pre-Android 13 system navigation; SDL already handles physical keys.
+        sendGameBack();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        if (mSingleton != this) return;
+        // SDL resizes its surface; refresh density and safe areas as well.
+        getWindow().getDecorView().requestApplyInsets();
     }
 
     @TargetApi(28)
@@ -212,6 +232,10 @@ public final class IvanActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = null;
+        }
         if (vibrator != null) {
             vibrator.cancel();
         }
@@ -227,7 +251,6 @@ public final class IvanActivity extends SDLActivity {
     }
 
     private void applyStatusBarVisibility() {
-        configureEdgeToEdgeWindow();
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) {

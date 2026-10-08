@@ -83,6 +83,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     // Called when we have a valid drawing surface
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
+        if (this != SDLActivity.mSurface) return;
         Log.v("SDL", "surfaceCreated()");
         SDLActivity.onNativeSurfaceCreated();
     }
@@ -90,6 +91,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     // Called when we lose the surface
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
+        if (this != SDLActivity.mSurface) return;
         Log.v("SDL", "surfaceDestroyed()");
 
         // Transition to pause, if needed
@@ -104,6 +106,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     @Override
     public void surfaceChanged(SurfaceHolder holder,
                                int format, int width, int height) {
+        if (this != SDLActivity.mSurface) return;
         Log.v("SDL", "surfaceChanged()");
 
         if (SDLActivity.mSingleton == null) {

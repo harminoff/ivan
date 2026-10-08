@@ -114,6 +114,11 @@ v2 graphics::OutputRes;
 graphics::presentationmode graphics::Presentation = graphics::PRESENTATION_CLASSIC;
 rawbitmap* graphics::DefaultFont = 0;
 
+namespace
+{
+  truth GraphicsInitialized = false;
+}
+
 #if defined(USE_SDL) && SDL_MAJOR_VERSION == 2 \
     && defined(WIN32) && !defined(ANDROID)
 namespace
@@ -129,12 +134,8 @@ namespace
 
 void graphics::Init()
 {
-  static truth AlreadyInstalled = false;
-
-  if(!AlreadyInstalled)
+  if(!GraphicsInitialized)
   {
-    AlreadyInstalled = true;
-
 #ifdef USE_SDL
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE))
       ABORT("Can't initialize SDL.");
@@ -150,12 +151,25 @@ void graphics::Init()
     VesaInfo.Retrieve();
 #endif
 
-    atexit(graphics::DeInit);
+    GraphicsInitialized = true;
+#ifndef ANDROID
+    static truth ExitHandlerInstalled = false;
+    if(!ExitHandlerInstalled)
+    {
+      atexit(graphics::DeInit);
+      ExitHandlerInstalled = true;
+    }
+#endif
   }
 }
 
 void graphics::DeInit()
 {
+  iosystem::ResetInputState();
+  felist::ResetDrawState();
+  if(!GraphicsInitialized)
+    return;
+  GraphicsInitialized = false;
 #if defined(USE_SDL) && SDL_MAJOR_VERSION == 2 \
     && defined(WIN32) && !defined(ANDROID)
   if(ControllerInitThread)
@@ -169,22 +183,52 @@ void graphics::DeInit()
   DefaultFont = 0;
 
 #ifdef USE_SDL
+  globalwindowhandler::DeInit();
 #if SDL_MAJOR_VERSION == 1
 #if SDL_BYTEORDER == SDL_BIG_ENDIAN
   SDL_FreeSurface(TempSurface);
 #endif
 #else
+#ifdef ANDROID
+  mobileui::DeInit();
+#endif
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  // Snapshots belong to this renderer; do not retain dangling texture handles
+  // when SDL_main runs again or an allocator reuses the renderer's address.
+  adaptiveui::DeInit();
+#endif
   if(Texture)
     SDL_DestroyTexture(Texture);
+  Texture = 0;
 
   if(Renderer)
     SDL_DestroyRenderer(Renderer);
+  Renderer = 0;
 
   if(Window)
     SDL_DestroyWindow(Window);
+  Window = 0;
 #endif
   SDL_Quit();
 #endif
+
+  bAllowStretchedRegionsBlit = false;
+  for(size_t Index = 0; Index < vStretchRegion.size(); ++Index)
+  {
+    stretchRegion& Region = vStretchRegion[Index];
+    Region.B.Bitmap = 0;
+    delete Region.CacheBitmap;
+    Region.CacheBitmap = 0;
+    delete Region.BClearSquares.Bitmap;
+    Region.BClearSquares.Bitmap = 0;
+    delete Region.bmpOverride;
+    Region.bmpOverride = 0;
+    Region.vv2ClearSquaresAt.clear();
+  }
+  delete DoubleBuffer;
+  DoubleBuffer = 0;
+  delete StretchedBuffer;
+  StretchedBuffer = 0;
 
 #ifdef __DJGPP__
   if(ScreenSelector)
@@ -349,6 +393,10 @@ void graphics::SetMode(cchar* Title, cchar* IconName,
 #endif
   DoubleBuffer = new bitmap(CanvasRes);
   StretchedBuffer = new bitmap(CanvasRes); DBG2("StretchedBuffer",StretchedBuffer);
+  // The game keeps stable region IDs across Android SDL_main sessions, but
+  // their output framebuffer must follow this session's newly allocated one.
+  for(size_t Index = 0; Index < vStretchRegion.size(); ++Index)
+    vStretchRegion[Index].B.Bitmap = StretchedBuffer;
   SetScale(NewScale);
   ColorDepth = 16;
 

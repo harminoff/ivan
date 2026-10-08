@@ -1,6 +1,8 @@
 #define SDL_MAIN_HANDLED
 
 #include <cassert>
+#include <cctype>
+#include <algorithm>
 #include <cmath>
 
 #include "adaptiveui.h"
@@ -136,8 +138,14 @@ namespace
     assert(adaptiveui::GetHudModel().MenuActive);
     assert(adaptiveui::GetHudModel().MenuPages == 3);
     assert(adaptiveui::GetHudModel().MenuOptions.size() == 4);
+    const unsigned char Available[4] = { 1, 0, 1, 0 };
+    adaptiveui::SetMenuAvailability(Available, 4);
+    assert(adaptiveui::GetHudModel().MenuAvailability.size() == 4);
+    assert(adaptiveui::GetHudModel().MenuAvailability[0] == 1);
+    assert(adaptiveui::GetHudModel().MenuAvailability[1] == 0);
     adaptiveui::ClearMenu();
     assert(!adaptiveui::GetHudModel().MenuActive);
+    assert(adaptiveui::GetHudModel().MenuAvailability.empty());
 
     assert(adaptiveui::TranslateDesktopShortcut(SDLK_PERIOD, KMOD_SHIFT) == '>');
     assert(adaptiveui::TranslateDesktopShortcut(SDLK_COMMA, KMOD_SHIFT) == '<');
@@ -176,8 +184,36 @@ namespace
     Keys[47] = KEY_MOBILE_COMMAND_BASE + 34;
     Groups[47] = adaptiveui::ACTION_SYSTEM;
     adaptiveui::SetActions(Labels, Keys, Groups, 48);
+    const char* Conditions[] = {
+      "Fearless", "Stressed", "Burdened", "Very hungry", "Exhausted"
+    };
+    adaptiveui::SetConditions(0, 0);
     adaptiveui::SetMapFocus(352, 240);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const SDL_Rect UnconditionedEquipmentCanvas =
+      adaptiveui::GetLayout().EquipmentCanvas;
+    adaptiveui::SetConditions(Conditions, 5);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    assert(adaptiveui::GetHudModel().Conditions.size() == 5);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.x
+           == UnconditionedEquipmentCanvas.x);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.y
+           == UnconditionedEquipmentCanvas.y);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.w
+           == UnconditionedEquipmentCanvas.w);
+    assert(adaptiveui::GetLayout().EquipmentCanvas.h
+           == UnconditionedEquipmentCanvas.h);
+    assert(adaptiveui::GetLayout().EquipmentConditions.w > 0);
+    assert(adaptiveui::GetLayout().EquipmentConditions.h > 0);
+    assert(ContainedBy(adaptiveui::GetLayout().EquipmentConditions,
+                       adaptiveui::GetLayout().EquipmentPanel));
+    assert(!Overlaps(adaptiveui::GetLayout().EquipmentCanvas,
+                     adaptiveui::GetLayout().EquipmentConditions));
+    assert(adaptiveui::GetLayout().EquipmentConditions.x
+             + adaptiveui::GetLayout().EquipmentConditions.w
+           < adaptiveui::GetLayout().EquipmentCanvas.x);
+    assert(adaptiveui::GetLayout().EquipmentConditions.y
+           <= adaptiveui::GetLayout().EquipmentCanvas.y);
     assert(!adaptiveui::GetLayout().ActionButtons.empty());
     assert(adaptiveui::SelectActionCategory(adaptiveui::ACTION_ITEMS));
     assert(adaptiveui::GetLayout().ActiveCategory
@@ -451,7 +487,8 @@ namespace
     SDL_Rect EquipmentIcons[13];
     for(int Index = 0; Index < 13; ++Index)
       EquipmentIcons[Index] = { Index * 16, 0, 16, 16 };
-    adaptiveui::SetMenuPresentation(0, EquipmentIcons, 13, true);
+    adaptiveui::SetMenuPresentation(0, EquipmentIcons, 13,
+                                    adaptiveui::MENU_ROWS);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     assert(adaptiveui::GetHudModel().MenuOptions.size() == 13);
     assert(!adaptiveui::GetHudModel().MenuIconGrid);
@@ -510,7 +547,7 @@ namespace
     adaptiveui::SetMenu("Your inventory (total weight: 1200g)", "",
                         Options, 40, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    40, true);
+                                     40, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::SetInventoryWeights(1200, 25000);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     const adaptiveui::Layout InventoryLayout = adaptiveui::GetLayout();
@@ -574,13 +611,32 @@ namespace
     assert(Green > 200 && Red < 40 && Blue < 40);
     SDL_FreeFormat(PixelFormat);
 
+    const char* CategoryOptions[18] = {
+      "Amulets", "Belts", "Body armor", "Books", "Boots", "Cloaks",
+      "Food", "Gauntlets", "Helmets", "Miscellaneous", "Potions",
+      "Rings", "Scrolls", "Shields", "Tools", "Valuables", "Wands",
+      "Weapons"
+    };
+    adaptiveui::SetMenu("Craft an item - categories", "",
+                        CategoryOptions, 18, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
+                                     18, adaptiveui::MENU_CATEGORY_GRID);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout CategoryLayout = adaptiveui::GetLayout();
+    assert(CategoryLayout.MenuCells.size() == 18);
+    assert(CategoryLayout.MenuDetail.h <= 92);
+    assert(CategoryLayout.MenuDetail.h >= 30);
+    for(size_t Index = 0; Index < CategoryLayout.MenuCells.size(); ++Index)
+      assert(!Overlaps(CategoryLayout.MenuCells[Index],
+                       CategoryLayout.MenuDetail));
+
     const char* ShortInventory[5] = {
       "an encrypted scroll [200g]", "a short sword [1200g]",
       "a potion [250g]", "a book [600g]", "a lantern [900g]" };
     adaptiveui::SetMenu("Your inventory (total weight: 3150g)", "",
                         ShortInventory, 5, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    5, true);
+                                     5, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
     const adaptiveui::Layout ShortInventoryLayout = adaptiveui::GetLayout();
     assert(ShortInventoryLayout.MenuCells.size() == 5);
@@ -589,9 +645,58 @@ namespace
                      ShortInventoryLayout.MenuDetail));
 
     adaptiveui::ClearMenu();
+    adaptiveui::SetMenu("What do you want to pick up?", "",
+                        ShortInventory, 1, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
+                                     1, adaptiveui::MENU_PICKUP_GRID);
+    adaptiveui::ItemMetrics PickupMetrics[1];
+    PickupMetrics[0].Present = true;
+    PickupMetrics[0].Equippable = true;
+    PickupMetrics[0].Actions =
+      adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_EAT)
+      | adaptiveui::ItemActionMask(adaptiveui::ITEM_ACTION_READ);
+    adaptiveui::SetMenuItemMetrics(PickupMetrics, 1);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout PickupLayout = adaptiveui::GetLayout();
+    assert(PickupLayout.MenuItemActions.size() == 3);
+    assert(PickupLayout.MenuItemActionCodes.size() == 3);
+    assert(PickupLayout.MenuItemActionCodes[0]
+           == adaptiveui::ITEM_ACTION_NONE);
+    assert(PickupLayout.MenuItemActionCodes[1]
+           == adaptiveui::ITEM_ACTION_EAT);
+    assert(PickupLayout.MenuItemActionCodes[2]
+           == adaptiveui::ITEM_ACTION_READ);
+    assert(!Overlaps(PickupLayout.MenuDetail, PickupLayout.MenuConfirm));
+    assert(!Overlaps(PickupLayout.MenuDetail, PickupLayout.MenuBack));
+    adaptiveui::PointerResult PickupEquip = adaptiveui::HandlePointer(
+      PickupLayout.MenuItemActions[0].x
+        + PickupLayout.MenuItemActions[0].w / 2,
+      PickupLayout.MenuItemActions[0].y
+        + PickupLayout.MenuItemActions[0].h / 2,
+      true, 0, false, 1);
+    assert(PickupEquip.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupEquip.CommandCode == KEY_MOBILE_MENU_EQUIP_BASE);
+    adaptiveui::PointerResult PickupEat = adaptiveui::HandlePointer(
+      PickupLayout.MenuItemActions[1].x
+        + PickupLayout.MenuItemActions[1].w / 2,
+      PickupLayout.MenuItemActions[1].y
+        + PickupLayout.MenuItemActions[1].h / 2,
+      true, 0, false, 1);
+    assert(PickupEat.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupEat.CommandCode == KEY_MOBILE_MENU_ACTION_BASE
+      + (adaptiveui::ITEM_ACTION_EAT - 1)
+        * KEY_MOBILE_MENU_ACTION_STRIDE);
+    adaptiveui::PointerResult PickupStash = adaptiveui::HandlePointer(
+      PickupLayout.MenuConfirm.x + PickupLayout.MenuConfirm.w / 2,
+      PickupLayout.MenuConfirm.y + PickupLayout.MenuConfirm.h / 2,
+      true, 0, false, 1);
+    assert(PickupStash.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(PickupStash.CommandCode == KEY_MOBILE_MENU_SELECT_BASE);
+
+    adaptiveui::ClearMenu();
     adaptiveui::SetMenu("Choose helmet:", "", ShortInventory, 5, 0, 1, 2);
     adaptiveui::SetMenuPresentation(InventoryDetails, InventoryIcons,
-                                    5, true);
+                                     5, adaptiveui::MENU_ITEM_GRID);
     adaptiveui::ItemMetrics HelmetMetrics[5];
     for(int Index = 0; Index < 5; ++Index)
     {
@@ -602,6 +707,13 @@ namespace
       HelmetMetrics[Index].ArmorValue = 4 + Index;
     }
     adaptiveui::SetMenuItemMetrics(HelmetMetrics, 5);
+    adaptiveui::ItemMetrics HelmetComparisons[5];
+    HelmetComparisons[0].Present = true;
+    HelmetComparisons[0].Armor = true;
+    HelmetComparisons[0].ArmorValue = 3;
+    HelmetComparisons[0].Weight = 1100;
+    HelmetComparisons[0].Label = "an iron helmet";
+    adaptiveui::SetMenuComparisonMetrics(HelmetComparisons, 5);
     adaptiveui::ItemMetrics EquippedHelmet;
     EquippedHelmet.Present = true;
     EquippedHelmet.ItemId = 102;
@@ -615,7 +727,13 @@ namespace
     assert(EquipmentChooserLayout.MenuCells.size() == 5);
     assert(EquipmentChooserLayout.MenuDetail.w > 0);
     assert(adaptiveui::GetHudModel().EquipmentComparisonActive);
+    assert(adaptiveui::GetHudModel().EquippedItemMetrics.ItemId == 102);
     assert(adaptiveui::GetHudModel().MenuItemMetrics.size() == 5);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics.size() == 5);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics[0].ArmorValue
+           == 3);
+    assert(adaptiveui::GetHudModel().MenuComparisonMetrics[0].Label
+           == "an iron helmet");
     assert(adaptiveui::GetHudModel().MenuDisplayOrder[0] == 2);
     assert(adaptiveui::NavigateInventoryMenu(2, KEY_RIGHT, 5) == 0);
     adaptiveui::PointerResult EquippedItemClick = adaptiveui::HandlePointer(
@@ -722,9 +840,11 @@ namespace
     adaptiveui::ClearPrompt();
     assert(!adaptiveui::IsTextEntryPromptActive());
 
+    adaptiveui::SetMenu("MAIN MENU", "", Options, 3, 0, 1, 4);
     adaptiveui::SetConfirmationPrompt(
       "Your quest is not yet completed! Really quit? [y/N]");
     adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    assert(adaptiveui::GetHudModel().MenuActive);
     assert(adaptiveui::GetHudModel().PromptConfirmsChoice);
     assert(adaptiveui::GetHudModel().Prompt.find("[y/N]")
            == std::string::npos);
@@ -748,6 +868,7 @@ namespace
     adaptiveui::DrawBackground(Renderer);
     adaptiveui::Draw(Renderer);
     adaptiveui::ClearPrompt();
+    adaptiveui::ClearMenu();
 
     adaptiveui::SetQuitPrompt(
       "Do you want to save your game before quitting?");
@@ -827,6 +948,98 @@ namespace
     adaptiveui::SetActions(0, 0, 0, 0);
     adaptiveui::SetStats("", "", "", "");
     adaptiveui::SetLocationTime("", "");
+
+    const char* OriginOptions[] = {
+      "Plantation Porter", "Canopy Scout", "Viceroy's Scribe"
+    };
+    const char* OriginDetails[] = {
+      "OVERVIEW :: A powerful carrier.\n\nATTRIBUTES :: Endurance 11\nPerception 10\nIntelligence 9\nWisdom 9\nWillpower 10\nCharisma 10\nMana 9\nArm strength 12\nLeg strength 12\nDexterity 9\nAgility 9\n\nSTARTING KIT :: Quest item: encrypted scroll\nEquipment: Pickaxe and belt\nMoney: 30 gold\nTraining: Modest tool training\nPet: Respects the pet setting\n\nRECORD :: Runs: 2\nWins: 1",
+      "OVERVIEW :: A quick-eyed canopy climber.",
+      "OVERVIEW :: A literate colonial assistant."
+    };
+    adaptiveui::SetMenu("Balanced Origins",
+                        "Choose a balanced banana-colony background.",
+                        OriginOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(OriginDetails, 0, 3,
+                                    adaptiveui::MENU_DETAIL);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout OriginLayout = adaptiveui::GetLayout();
+    assert(OriginLayout.MenuDetail.w > 0);
+    assert(OriginLayout.MenuConfirm.w == 0);
+    assert(OriginLayout.MenuBack.w > 0);
+    assert(OriginLayout.MenuBack.x > OriginLayout.MenuDetail.x
+           + OriginLayout.MenuDetail.w);
+    assert(OriginLayout.MenuBack.y > OriginLayout.MenuDetail.y);
+    adaptiveui::PointerResult PreviewOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuDetail.x + OriginLayout.MenuDetail.w + 30,
+      OriginLayout.MenuDetail.y + 50, true, 0, false, 1);
+    assert(PreviewOrigin.Type == adaptiveui::PointerResult::REDRAW);
+    assert(adaptiveui::GetHudModel().MenuSelected == 1);
+    adaptiveui::PointerResult BeginOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuDetail.x + OriginLayout.MenuDetail.w + 30,
+      OriginLayout.MenuDetail.y + 50, true, 0, false, 1, 2);
+    assert(BeginOrigin.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BeginOrigin.CommandCode == KEY_MOBILE_MENU_SELECT_BASE + 1);
+    adaptiveui::PointerResult BackOrigin = adaptiveui::HandlePointer(
+      OriginLayout.MenuBack.x + OriginLayout.MenuBack.w / 2,
+      OriginLayout.MenuBack.y + OriginLayout.MenuBack.h / 2,
+      true, 0, false, 1);
+    assert(BackOrigin.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BackOrigin.CommandCode == KEY_ESC);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
+    const char* AttributeOptions[] = {
+      "Endurance|10", "Perception|10", "Continue"
+    };
+    adaptiveui::SetMenu("Custom Colonist - 0 points remaining",
+                        "Adjust every attribute directly.",
+                        AttributeOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(0, 0, 3,
+                                    adaptiveui::MENU_ATTRIBUTE_ALLOCATOR);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout AttributeLayout = adaptiveui::GetLayout();
+    adaptiveui::PointerResult DecreaseAttribute = adaptiveui::HandlePointer(
+      AttributeLayout.Menu.x + 27,
+      AttributeLayout.Menu.y + 82, true, 0, false, 1);
+    assert(DecreaseAttribute.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(DecreaseAttribute.CommandCode == KEY_MENU_ADJUST_DECREASE_BASE);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
+    const char* SupplyOptions[] = {
+      "[x] Two bananas (1 point)", "[ ] Pickaxe (2 points)", "Continue"
+    };
+    const char* SupplyDetails[] = {
+      "A small food reserve for the road to Attnam.",
+      "A mining tool that can also serve as a weapon.", "Review the build."
+    };
+    adaptiveui::SetMenu("Choose starting supplies - 5 points remaining",
+                        "Build your own starting loadout.",
+                        SupplyOptions, 3, 0, 1, 1);
+    adaptiveui::SetMenuPresentation(SupplyDetails, 0, 3,
+                                    adaptiveui::MENU_CHARACTER_SHEET);
+    adaptiveui::UpdateLayout(Renderer, 800, 600, false);
+    const adaptiveui::Layout SupplyLayout = adaptiveui::GetLayout();
+    assert(SupplyLayout.MenuDetail.w > 0);
+    assert(SupplyLayout.MenuBack.y > SupplyLayout.MenuDetail.y);
+    adaptiveui::PointerResult ToggleSupply = adaptiveui::HandlePointer(
+      SupplyLayout.MenuDetail.x + SupplyLayout.MenuDetail.w + 30,
+      SupplyLayout.MenuDetail.y + 16, true, 0, false, 1);
+    assert(ToggleSupply.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(ToggleSupply.CommandCode == KEY_MOBILE_MENU_SELECT_BASE);
+    adaptiveui::PointerResult BackSupply = adaptiveui::HandlePointer(
+      SupplyLayout.MenuBack.x + SupplyLayout.MenuBack.w / 2,
+      SupplyLayout.MenuBack.y + SupplyLayout.MenuBack.h / 2,
+      true, 0, false, 1);
+    assert(BackSupply.Type == adaptiveui::PointerResult::COMMAND_KEY);
+    assert(BackSupply.CommandCode == KEY_ESC);
+    adaptiveui::DrawBackground(Renderer);
+    adaptiveui::Draw(Renderer);
+    adaptiveui::ClearMenu();
+
     const char* ConfigurationOptions[] = {
       "Player's default name  -",
       "Autosave interval  100 turns",
@@ -883,6 +1096,180 @@ namespace
     SDL_DestroyRenderer(Renderer);
     SDL_DestroyWindow(Window);
     SDL_Quit();
+    adaptiveui::SetConditions(0, 0);
+  }
+
+  void CheckMobileMenuLayouts()
+  {
+    const SDL_Rect PortraitSafe = { 18, 96, 1044, 2112 };
+    const adaptiveui::MobileMenuLayout Portrait =
+      adaptiveui::CalculateMobileMenuLayout(PortraitSafe, 3.f, 18,
+                                             true, true, 0);
+    assert(!Portrait.Landscape);
+    assert(ContainedBy(Portrait.PaperDoll, PortraitSafe));
+    assert(ContainedBy(Portrait.GridViewport, PortraitSafe));
+    assert(ContainedBy(Portrait.Detail, PortraitSafe));
+    assert(ContainedBy(Portrait.Footer, PortraitSafe));
+    assert(!Overlaps(Portrait.PaperDoll, Portrait.GridViewport));
+    assert(!Overlaps(Portrait.GridViewport, Portrait.Detail));
+    assert(Portrait.Cells.size() == 18);
+    assert(Portrait.CellSize >= 144);
+
+    const SDL_Rect LandscapeSafe = { 96, 18, 2112, 1044 };
+    const adaptiveui::MobileMenuLayout Landscape =
+      adaptiveui::CalculateMobileMenuLayout(LandscapeSafe, 3.f, 18,
+                                             true, true, 0);
+    assert(Landscape.Landscape);
+    assert(ContainedBy(Landscape.GridViewport, LandscapeSafe));
+    assert(ContainedBy(Landscape.PaperDoll, LandscapeSafe));
+    assert(ContainedBy(Landscape.Detail, LandscapeSafe));
+    assert(!Overlaps(Landscape.GridViewport, Landscape.PaperDoll));
+    assert(!Overlaps(Landscape.GridViewport, Landscape.Detail));
+
+    const SDL_Rect Compact = { 0, 0, 360, 520 };
+    const adaptiveui::MobileMenuLayout LongInventory =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 1.f, 128,
+                                             false, true, 0);
+    assert(LongInventory.MaximumScrollY > 0);
+    const adaptiveui::MobileMenuLayout Scrolled =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 1.f, 128,
+        false, true, LongInventory.MaximumScrollY);
+    const int Last = int(Scrolled.Cells.size()) - 1;
+    assert(Last >= 0);
+    assert(Scrolled.Cells[Last].y < Scrolled.GridViewport.y
+                                  + Scrolled.GridViewport.h);
+    const int Hit = adaptiveui::MobileMenuIndexAt(
+      Scrolled, Scrolled.Cells[Last].x + Scrolled.Cells[Last].w / 2,
+      Scrolled.Cells[Last].y + Scrolled.Cells[Last].h / 2);
+    assert(Hit == Last);
+    assert(adaptiveui::MobileMenuIndexAt(Scrolled,
+      Scrolled.Detail.x + 1, Scrolled.Detail.y + 1) == -1);
+
+    const adaptiveui::MobileMenuLayout Empty =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 2.f, 0,
+                                             false, false, 500);
+    assert(Empty.Cells.empty());
+    assert(Empty.MaximumScrollY == 0);
+    const adaptiveui::MobileMenuLayout Single =
+      adaptiveui::CalculateMobileMenuLayout(Compact, 2.f, 1,
+                                             false, true, 0);
+    assert(Single.Cells.size() == 1);
+    assert(Single.Columns == 1);
+
+    // A narrow cutout-safe landscape area must never invert the responsive
+    // right-pane clamp.
+    const adaptiveui::MobileMenuLayout NarrowLandscape =
+      adaptiveui::CalculateMobileMenuLayout({ 40, 20, 420, 300 }, 3.f, 5,
+                                             true, true, 0);
+    assert(NarrowLandscape.GridViewport.w > 0);
+    assert(NarrowLandscape.PaperDoll.w > 0);
+  }
+
+  void CheckLongCardText()
+  {
+    const std::string Text = "A description with narrow wrapping and many words "
+      "whose final line must remain visible after the panel padding is applied.";
+    // Both portrait and landscape widths; the old measurement used Width,
+    // although the actual text was drawn inside another four-scale inset.
+    const int Widths[] = { 180, 320, 680, 1200 };
+    for(int W : Widths)
+      for(int Scale = 2; Scale <= 5; ++Scale)
+      {
+        const int InnerWidth = W - Scale * 4;
+        const int Columns = std::max(1, (InnerWidth - Scale * 2) / (Scale * 6));
+        const auto Lines = adaptiveui::WrapCardText(Text, Columns);
+        const int Height = adaptiveui::MeasureCardParagraph(Text, W, Scale);
+        assert(Height == int(Lines.size()) * Scale * 8 + Scale * 4);
+        for(const auto& Line : Lines)
+          assert(int(Line.size()) <= Columns);
+        assert(Scale * 2 + (int(Lines.size()) - 1) * Scale * 8 + Scale * 7
+               <= Height - Scale * 2);
+      }
+    assert(adaptiveui::MeasureCardParagraph("", 300, 3) == 0);
+    assert(adaptiveui::WrapCardText("abcdefghijkl", 6)
+           == std::vector<std::string>({ "abcdef", "ghijkl" }));
+
+    std::string LongText;
+    for(int I = 0; I < 100; ++I)
+      LongText += Text + "\n\n";
+    LongText += "FINAL DESCRIPTION LINE";
+    const std::vector<std::string> Requirements = {
+      "MISSING REQUIREMENTS", "A very long material requirement to be wrapped",
+      "Have: 3 units", "Exact measurements remain visible at the end"
+    };
+    for(int W : Widths)
+      for(int H : { 180, 420, 900 })
+      {
+        const auto Layout = adaptiveui::CalculateMobileItemCardLayout(
+          LongText, Requirements, 6, 5, W, H, 8);
+        assert(Layout.Scale == 2);
+        assert(Layout.DescriptionScale == 3);
+        assert(Layout.DescriptionHeight
+               == adaptiveui::MeasureCardParagraph(LongText, W, 3));
+        assert(Layout.MetricsHeight == 2 * 31 + 5 * 2 * 11);
+        assert(Layout.RequirementsHeight > 0);
+        assert(Layout.ContentHeight == Layout.DescriptionHeight
+          + Layout.MetricsHeight + Layout.RequirementsHeight + 16);
+        assert(Layout.MaximumScrollY == Layout.ContentHeight - H);
+        // At the final offset the last requirement is fully within the body.
+        assert(Layout.ContentHeight - Layout.MaximumScrollY == H);
+      }
+    const auto Short = adaptiveui::CalculateMobileItemCardLayout(
+      "Short description.", {}, 0, 0, 680, 900, 8);
+    assert(Short.Scale == 5 && Short.MaximumScrollY == 0);
+    const auto Empty = adaptiveui::CalculateMobileItemCardLayout(
+      "", {}, 0, 0, 320, 180, 8);
+    assert(Empty.ContentHeight == 0 && Empty.MaximumScrollY == 0);
+  }
+
+  void CheckCardParagraphs()
+  {
+    const std::string Scroll = "This scroll contains a coded message for the eyes of the high priest Petrus only. "
+      "Given to you by Richel Decos, the viceroy of New Attnam, it should be delivered posthaste to the Cathedral of Attnam.";
+    const std::string Formatted = adaptiveui::FormatCardParagraphs(Scroll);
+    assert(Formatted.find("only.\n\nGiven") != std::string::npos);
+    assert(adaptiveui::FormatCardParagraphs(Formatted) == Formatted);
+    assert(adaptiveui::FormatCardParagraphs("Short description. Another sentence.")
+           == "Short description. Another sentence.");
+    const std::string Authored = "DESCRIPTION\nA short sentence.\n\nREQUIREMENTS\nHave: 3 units\n";
+    assert(adaptiveui::FormatCardParagraphs(Authored) == Authored);
+    const std::string Prose = "A long description that has enough words to make a paragraph and mentions Dr. Petrus, "
+      "Mr. Decos and the initials A. B. without breaking their names apart. \"The price is 1.25 coins.\" "
+      "Another sentence ends here! This final sentence stays available.";
+    const auto Result = adaptiveui::FormatCardParagraphs(Prose);
+    assert(Result.find("Dr. Petrus") != std::string::npos);
+    assert(Result.find("Mr. Decos") != std::string::npos);
+    assert(Result.find("A. B.") != std::string::npos);
+    assert(Result.find("1.25 coins.\"") != std::string::npos);
+    assert(Result.find("apart.\n\n\"The") != std::string::npos);
+    const auto WithoutWhitespace = [](const std::string& Text)
+    {
+      std::string Result;
+      for(unsigned char C : Text)
+        if(!std::isspace(C)) Result += C;
+      return Result;
+    };
+    assert(WithoutWhitespace(Result) == WithoutWhitespace(Prose));
+    const auto Lines = adaptiveui::WrapCardText(Formatted, 22);
+    assert(std::find(Lines.begin(), Lines.end(), "") != Lines.end());
+  }
+
+  void CheckConfirmationContext()
+  {
+    adaptiveui::SetLog("The weapon is much too heavy for you to use safely.");
+    adaptiveui::SetConfirmationPrompt("Continue anyway? [y/N]");
+    const adaptiveui::HudModel& Continue = adaptiveui::GetHudModel();
+    assert(Continue.Prompt == "Continue anyway?");
+    assert(Continue.PromptDetail
+           == "The weapon is much too heavy for you to use safely.");
+    assert(Continue.PromptConfirmsChoice);
+    adaptiveui::ClearPrompt();
+
+    adaptiveui::SetConfirmationPrompt("Really quit? [y/N]");
+    const adaptiveui::HudModel& Ordinary = adaptiveui::GetHudModel();
+    assert(Ordinary.Prompt == "Really quit?");
+    assert(Ordinary.PromptDetail.empty());
+    adaptiveui::ClearPrompt();
   }
 }
 
@@ -896,6 +1283,10 @@ int main()
   CheckSize(3440, 1440);
   CheckSize(2560, 1440);
   CheckDynamicEquipmentPaging();
+  CheckMobileMenuLayouts();
+  CheckLongCardText();
+  CheckCardParagraphs();
+  CheckConfirmationContext();
   assert(adaptiveui::CalculateLayout(1280, 720, 800, 600, true).Fullscreen);
   CheckFeeds();
   CheckPointerInput();

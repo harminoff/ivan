@@ -4,15 +4,28 @@ The Android port's itch.io project is published at:
 
 https://harminoff.itch.io/ivan-android-unofficial
 
-## Current release candidate
+## Readability and Stability update candidate
 
-- Version: `0.59-android.5` (`versionCode` 5)
+- Version: `0.59-android.8` (`versionCode` 8)
 - Application ID: `io.github.harminoff.ivan`
 - Minimum Android version: Android 8.0 / API 26
 - Architectures: `arm64-v8a` and `x86_64`
-- APK: `builds/ivan-android-0.59-android.5.apk` (ignored by Git)
-- APK SHA-256: `F24444E64CD88093F7EFDF7290538FEF88DE4DBDE499449568ED242523CE50C1`
+- APK: `.codex-build-tmp/release-2026-10-08/artifacts/ivan-android-0.59-android.8.apk` (local only)
+- APK SHA-256: `F0AA19A1FFA50A6CC89C3E148FCE292C299A45B42D576339C4D7611C7BCD4E64`
+- Play bundle: the adjacent `ivan-android-0.59-android.8.aab`
+- AAB SHA-256: `02A7B3E900B176BFCA5CC6D126461BBCA5C63DC992FDF3278A282390B0CB238F`
 - Signing certificate SHA-256: `966DB1CE3EC261589D8699192D371A8908A3A31959CB4A65E25ED9F71BA539CB`
+
+The matching Windows desktop package is
+`.codex-build-tmp/release-2026-10-08/artifacts/ivan-windows-0.59-readability-stability.zip`,
+with SHA-256 `64BC2C1C053A0856CDDD03882AE4786BDE9660A720A884434AE03D358EF5C7FB`.
+
+The Windows project is https://harminoff.itch.io/ivan-desktop-enhanced.
+`package-update.ps1` packages a fresh Windows installation with its runtime DLLs
+and license notices, omitting local saves, settings, and runtime logs. The
+player-facing devlog is `devlog-readability-and-stability.md`; the Play beta
+notes are `play-beta-release-notes.txt`. Publication status is recorded separately
+in `Doc/RELEASE_READABILITY_STABILITY_2026-10-08.md`.
 
 The release keystore and recovery information live in the ignored
 `android/signing` directory. Back up that directory securely before publishing;

@@ -32,6 +32,7 @@ class configsystem
   static truth Load();
   static void Show(void (*)() = 0, void (*)(felist&) = 0, truth = false);
   static void AddOption(festring fsCategory, configoption*);
+  static void ResetOptions();
   static void NormalStringDisplayer(const stringoption*, festring&);
   static void NormalNumberDisplayer(const numberoption*, festring&);
   static void NormalTruthDisplayer(const truthoption*, festring&);
