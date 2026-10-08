@@ -56,11 +56,16 @@ Open testing (beta), without changing production or existing closed testers.
   file and native debug symbols are attached. Supported-device counts are
   unchanged from `.7`.
 - Saved a 100% Open testing rollout and the resumption of the paused beta track;
-  submitted exactly these two changes. Publishing overview shows **Changes in
-  review**. Quick checks are still running and the page states that review starts
-  once those checks complete successfully. Managed publishing remains off.
-  This is submitted, not approved/live. Production and Alpha/Layout Review were
-  not changed, nor were tester membership or country settings.
+  submitted exactly these two changes. Initial publishing overview showed
+  **Changes in review** while quick checks ran. Managed publishing remained off.
+- Follow-up Console verification on 2026-10-08 confirms the beta track is
+  **Active**, latest release **8 (0.59-android.8)**, **Available to unlimited
+  testers**, released October 8 at 2:49 PM as displayed by Console. The track
+  retains its 173 countries / regions. Publishing overview reports the update
+  published; store visibility may take longer to propagate. Evidence retained
+  as `play-beta-live.jpg` alongside the release artifacts.
+  Production and Alpha/Layout Review were not changed, nor were tester
+  membership or country settings.
 - itch downloads and player-facing devlogs published on 2026-10-08:
   - Android: `ivan-android-0.59-android.8.apk`, marked Android and publicly
     visible at https://harminoff.itch.io/ivan-android-unofficial.
