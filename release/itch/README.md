@@ -4,6 +4,20 @@ The Android port's itch.io project is published at:
 
 https://harminoff.itch.io/ivan-android-unofficial
 
+## Android Status Effects update
+
+- Version: `0.59-android.9` (`versionCode` 9)
+- Signed APK and Play bundle: `.codex-build-tmp/release-2026-10-11/artifacts/`
+- APK SHA-256: `E4CBDCD435E2AC4DE88C22C17C2106EF3F31E36676FCF5F7075C2B0D00A67A0F`
+- AAB SHA-256: `524C91D602A0D579677B0BB47512746CFE9CE95D59C66E2ACA51BFB023615253`
+- Player devlog: `devlog-status-effects.md`, asking for placement/readability
+  and condition/pagination feedback; attach the new APK and both screenshots.
+- Play notes: `play-status-effects-release-notes.txt`
+- Requested Play destination: the existing **Layout Review** closed testing
+  track containing the user's separate tester account; preserve all tester lists.
+- Publication record: `Doc/RELEASE_STATUS_EFFECTS_2026-10-11.md`
+- No Windows package or production Play update is part of this Android HUD release.
+
 ## Readability and Stability update candidate
 
 - Version: `0.59-android.8` (`versionCode` 8)

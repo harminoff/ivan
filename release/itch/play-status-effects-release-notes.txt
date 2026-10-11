@@ -1,0 +1,9 @@
+<en-US>
+Status Effects Update
+- See hunger, burden and other conditions on the gameplay screen.
+- Color-coded labels: red dangers, amber warnings, green benefits, gray other states.
+- Effects sit top-left in portrait and top-right in landscape, under the stats.
+- A dedicated area keeps the map and controls still as effects change.
+- Tap MORE to check additional effects without taking a turn.
+Please share feedback on placement, readability and whether effects update correctly.
+</en-US>

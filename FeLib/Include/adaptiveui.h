@@ -39,16 +39,25 @@ namespace adaptiveui
     MENU_CHARACTER_SHEET
   };
 
+  enum StatusSeverity
+  {
+    STATUS_NEUTRAL = 0,
+    STATUS_BENEFICIAL,
+    STATUS_WARNING,
+    STATUS_DANGER
+  };
+
   struct StatusIndicator
   {
     std::string Label;
     std::string Value;
+    StatusSeverity Severity;
     unsigned char Red;
     unsigned char Green;
     unsigned char Blue;
 
     StatusIndicator()
-      : Red(190), Green(170), Blue(110) { }
+      : Severity(STATUS_NEUTRAL), Red(175), Green(183), Blue(192) { }
   };
 
   struct ActionEntry

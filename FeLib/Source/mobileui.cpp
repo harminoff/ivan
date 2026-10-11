@@ -107,6 +107,14 @@ namespace
     SDL_Rect Header = { 0, 0, 1, 1 };
     SDL_Rect Game = { 0, 0, 1, 1 };
     SDL_Rect Stats = { 0, 0, 1, 1 };
+    SDL_Rect Effects = { 0, 0, 0, 0 };
+    SDL_Rect EffectsMore = { 0, 0, 0, 0 };
+    std::vector<SDL_Rect> EffectChips;
+    std::vector<int> EffectIndices;
+    int EffectPage = 0;
+    int EffectPages = 1;
+    int EffectTextScale = 3;
+    std::string EffectIdentity;
     SDL_Rect Log = { 0, 0, 1, 1 };
     SDL_Rect Controls = { 0, 0, 1, 1 };
     SDL_Rect Toggle = { 0, 0, 1, 1 };
@@ -1600,6 +1608,147 @@ namespace
         LeftTextAtScale(Renderer, Cell,
                         Values[Groups[Column][Row]].c_str(), SharedScale);
       }
+    }
+  }
+
+  int LayoutGameplayEffects(int X, int Top, int Width, int Gap, bool AlignRight)
+  {
+    State.Effects = { 0, 0, 0, 0 };
+    State.EffectsMore = { 0, 0, 0, 0 };
+    State.EffectChips.clear();
+    State.EffectIndices.clear();
+    const auto& Conditions = adaptiveui::GetHudModel().Conditions;
+    std::string Identity;
+    std::vector<int> Order;
+    for(size_t Index = 0; Index < Conditions.size(); ++Index)
+    {
+      Identity += Conditions[Index].Label + "\n" + Conditions[Index].Value
+        + char('0' + Conditions[Index].Severity) + "\n";
+      Order.push_back(int(Index));
+    }
+    if(Identity != State.EffectIdentity)
+    {
+      State.EffectIdentity = Identity;
+      State.EffectPage = 0; // New dangers always return to the first page.
+    }
+    State.EffectPages = 1;
+    if(!State.Gameplay)
+      return 0;
+    std::stable_sort(Order.begin(), Order.end(), [&](int A, int B)
+    {
+      return Conditions[A].Severity > Conditions[B].Severity;
+    });
+    const int ChipGap = Clamp(int(2 * State.Density), 4, 8);
+    const int Pad = Clamp(int(6 * State.Density), 10, 16);
+    State.EffectTextScale = Clamp(int(1.5f * State.Density), 3, 4);
+    const int ChipHeight = State.EffectTextScale * 7
+                        + Clamp(int(6 * State.Density), 12, 20);
+    const int MaximumRows = State.Width < State.Height ? 2 : 1;
+    // Reserve the same dedicated space even with no effects or a partial page.
+    // The map and movement controls must never jump as conditions change.
+    State.Effects = { X, Top, Width,
+                      MaximumRows * (ChipHeight + ChipGap) - ChipGap };
+    if(Conditions.empty())
+      return State.Effects.h + Gap;
+    const int PagerWidth = std::min(
+      TextWidth("MORE 32/32", State.EffectTextScale) + Pad * 2,
+      std::max(1, (Width - ChipGap) / 2));
+    std::vector<std::vector<int>> Rows;
+    const auto PackRows = [&](int Width)
+    {
+      Rows.clear();
+      int Used = 0;
+      for(int Index : Order)
+      {
+        const auto& Condition = Conditions[Index];
+        const std::string Label = Condition.Label
+          + (Condition.Value.empty() ? "" : ":" + Condition.Value);
+        const int ChipWidth = std::min(Width,
+          TextWidth(Label.c_str(), State.EffectTextScale) + Pad * 2);
+        if(Rows.empty() || (Used && Used + ChipWidth > Width))
+        {
+          Rows.push_back(std::vector<int>());
+          Used = 0;
+        }
+        Rows.back().push_back(Index);
+        Used += ChipWidth + ChipGap;
+      }
+    };
+    int RowWidth = Width;
+    PackRows(RowWidth);
+    if(int(Rows.size()) > MaximumRows)
+    {
+      RowWidth = std::max(1, RowWidth - PagerWidth - ChipGap);
+      PackRows(RowWidth);
+      State.EffectPages = (int(Rows.size()) + MaximumRows - 1) / MaximumRows;
+    }
+    State.EffectPage = Clamp(State.EffectPage, 0, State.EffectPages - 1);
+    for(int Row = 0; Row < MaximumRows; ++Row)
+    {
+      const int SourceRow = State.EffectPage * MaximumRows + Row;
+      if(SourceRow >= int(Rows.size()))
+        break;
+      int Used = 0;
+      for(int Index : Rows[SourceRow])
+      {
+        const auto& Condition = Conditions[Index];
+        const std::string Label = Condition.Label
+          + (Condition.Value.empty() ? "" : ":" + Condition.Value);
+        Used += std::min(RowWidth,
+          TextWidth(Label.c_str(), State.EffectTextScale) + Pad * 2) + ChipGap;
+      }
+      int ChipX = X + (AlignRight ? RowWidth - (Used - ChipGap) : 0);
+      for(int Index : Rows[SourceRow])
+      {
+        const auto& Condition = Conditions[Index];
+        const std::string Label = Condition.Label
+          + (Condition.Value.empty() ? "" : ":" + Condition.Value);
+        const int ChipWidth = std::min(RowWidth,
+          TextWidth(Label.c_str(), State.EffectTextScale) + Pad * 2);
+        State.EffectChips.push_back({ ChipX,
+          Top + Row * (ChipHeight + ChipGap), ChipWidth, ChipHeight });
+        State.EffectIndices.push_back(Index);
+        ChipX += ChipWidth + ChipGap;
+      }
+    }
+    if(State.EffectPages > 1)
+      State.EffectsMore = { State.Effects.x + State.Effects.w - PagerWidth,
+        Top + (MaximumRows - 1) * (ChipHeight + ChipGap),
+        PagerWidth, ChipHeight };
+    return State.Effects.h + Gap;
+  }
+
+  void PaintGameplayEffects(SDL_Renderer* Renderer)
+  {
+    const auto& Conditions = adaptiveui::GetHudModel().Conditions;
+    SDL_Rect PreviousClip;
+    const bool HadClip = SDL_RenderIsClipEnabled(Renderer) == SDL_TRUE;
+    SDL_RenderGetClipRect(Renderer, &PreviousClip);
+    for(size_t Index = 0; Index < State.EffectChips.size(); ++Index)
+    {
+      const auto& Condition = Conditions[State.EffectIndices[Index]];
+      const SDL_Rect Chip = State.EffectChips[Index];
+      Fill(Renderer, Chip, Condition.Red / 6, Condition.Green / 6,
+           Condition.Blue / 6, 255);
+      Outline(Renderer, Chip, Condition.Red, Condition.Green, Condition.Blue);
+      const std::string Label = Condition.Label
+        + (Condition.Value.empty() ? "" : ":" + Condition.Value);
+      SDL_Rect Clip = Chip;
+      if(HadClip && !SDL_IntersectRect(&Chip, &PreviousClip, &Clip))
+        Clip = { 0, 0, 0, 0 };
+      SDL_RenderSetClipRect(Renderer, &Clip);
+      CenterText(Renderer, Chip, Label.c_str(), State.EffectTextScale,
+                 Condition.Red, Condition.Green, Condition.Blue);
+      SDL_RenderSetClipRect(Renderer, HadClip ? &PreviousClip : 0);
+    }
+    if(State.EffectPages > 1)
+    {
+      char More[32];
+      snprintf(More, sizeof(More), "MORE %d/%d",
+               State.EffectPage + 1, State.EffectPages);
+      Fill(Renderer, State.EffectsMore, 24, 27, 32, 255);
+      Outline(Renderer, State.EffectsMore, 175, 183, 192);
+      CenterText(Renderer, State.EffectsMore, More, State.EffectTextScale);
     }
   }
 
@@ -3468,6 +3617,7 @@ namespace
       Frame(Renderer, State.Stats);
       Frame(Renderer, State.Game);
       PaintStats(Renderer);
+      PaintGameplayEffects(Renderer);
       if(State.PromptActive)
         PaintGameplayLog(Renderer);
       if(State.PromptActive && State.PromptShowsInput && !State.PromptNumeric)
@@ -4251,6 +4401,10 @@ namespace mobileui
     State.Safe = { State.Left + Gap, State.Top + Gap,
                    std::max(1, State.Width - State.Left - State.Right - Gap * 2),
                    std::max(1, State.Height - State.Top - State.Bottom - Gap * 2) };
+    State.Effects = { 0, 0, 0, 0 };
+    State.EffectsMore = { 0, 0, 0, 0 };
+    State.EffectChips.clear();
+    State.EffectIndices.clear();
     const int BaseHeaderHeight = Clamp(int(24 * State.Density), 48, 96);
     int HeaderHeight = BaseHeaderHeight;
     if(!State.Gameplay && State.MenuActive && State.MenuTitle.size() > 24)
@@ -4295,6 +4449,8 @@ namespace mobileui
       const int MaximumControls = Clamp(int(State.Safe.h * .31f), 460, 700);
       int ControlsSize = std::min(State.Safe.w, MaximumControls);
       int MapTop = State.Safe.y + StatsHeight + Gap;
+      MapTop += LayoutGameplayEffects(State.Safe.x, MapTop, State.Safe.w,
+                                      Gap, false);
       int ControlsBottom = State.Safe.y + State.Safe.h;
       int ControlsTop = ControlsBottom - ControlsSize;
       int ToggleTop = ControlsTop - Gap - ToggleHeight;
@@ -4353,15 +4509,17 @@ namespace mobileui
         ? RailX + RailWidth + Gap : State.Safe.x;
       const int GameRight = State.ControllerOnLeft
         ? State.Safe.x + State.Safe.w : RailX - Gap;
+      const int GameTop = ContentTop + LayoutGameplayEffects(GameX, ContentTop,
+        std::max(1, GameRight - GameX), Gap, true);
       const int SectionTabWidth = Clamp(int(38 * State.Density), 76, 118);
       const int MaximumControlsWidth = std::max(1,
         RailWidth - (SectionTabWidth + Gap) * 2);
       const int ControlsSize = std::min(MaximumControlsWidth,
         ControllerBottom - ContentTop - ToggleHeight - Gap);
       State.Stats = { State.Safe.x, State.Safe.y, State.Safe.w, StatsHeight };
-      State.Game = { GameX, ContentTop,
+      State.Game = { GameX, GameTop,
                      std::max(1, GameRight - GameX),
-                     std::max(1, GameBottom - ContentTop) };
+                     std::max(1, GameBottom - GameTop) };
       State.Toggle = { RailX, ContentTop, RailWidth, ToggleHeight };
       State.Controls = { RailX + (RailWidth - ControlsSize) / 2,
                          State.Toggle.y + State.Toggle.h + Gap,
@@ -5066,6 +5224,17 @@ namespace mobileui
         Result.KeyCode = 'M';
       }
       return Result;
+    }
+
+    if(State.Gameplay && Contains(State.Effects, X, Y))
+    {
+      if(State.EffectPages > 1 && Contains(State.EffectsMore, X, Y))
+      {
+        State.EffectPage = (State.EffectPage + 1) % State.EffectPages;
+        ConsoleDirty = true;
+        Result.Kind = touchresult::TOUCH_REDRAW;
+      }
+      return Result; // Reading/cycling effects never dispatches a game turn.
     }
 
     if(State.PromptNumeric)

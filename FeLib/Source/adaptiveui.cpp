@@ -3706,26 +3706,36 @@ namespace adaptiveui
     {
       StatusIndicator Indicator;
       Indicator.Label = Safe(Labels ? Labels[Index] : 0);
+      if(Indicator.Label.empty())
+        continue;
       std::string Lower = Indicator.Label;
       for(size_t Character = 0; Character < Lower.size(); ++Character)
         Lower[Character] = char(std::tolower((unsigned char)Lower[Character]));
-      if(Lower.find("starv") != std::string::npos
-         || Lower.find("faint") != std::string::npos
-         || Lower.find("overload") != std::string::npos
-         || Lower.find("exhaust") != std::string::npos)
+      // Presentation only: the game supplies the visible, active conditions.
+      // Match its labels rather than treating every action containing a word
+      // such as "fast" as a beneficial effect.
+      if(Lower == "starving!" || Lower == "very hungry"
+         || Lower == "fainting!" || Lower == "overload!"
+         || Lower == "stressed" || Lower == "poisoned"
+         || Lower == "panicked")
       {
+        Indicator.Severity = STATUS_DANGER;
         Indicator.Red = 235; Indicator.Green = 80; Indicator.Blue = 72;
       }
-      else if(Lower.find("hungry") != std::string::npos
-              || Lower.find("burden") != std::string::npos
-              || Lower.find("stress") != std::string::npos)
+      else if(Lower == "hungry" || Lower == "burdened"
+              || Lower == "exhausted" || Lower == "bloated"
+              || Lower == "overfed!" || Lower == "slowed"
+              || Lower == "hiccups")
       {
+        Indicator.Severity = STATUS_WARNING;
         Indicator.Red = 224; Indicator.Green = 181; Indicator.Blue = 65;
       }
-      else if(Lower.find("ship") != std::string::npos
-              || Lower.find("running") != std::string::npos
-              || Lower.find("fast") != std::string::npos)
+      else if(Lower == "hasted" || Lower == "fearless"
+              || Lower == "invisible" || Lower == "infravision"
+              || Lower == "esp" || Lower == "levitating"
+              || Lower == "polycontrol" || Lower == "telecontrol")
       {
+        Indicator.Severity = STATUS_BENEFICIAL;
         Indicator.Red = 88; Indicator.Green = 191; Indicator.Blue = 121;
       }
       Hud.Conditions.push_back(Indicator);
