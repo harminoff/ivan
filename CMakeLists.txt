@@ -134,6 +134,15 @@ if(BUILD_TESTING)
       add_test(NAME mobileui_hud_test COMMAND mobileui_hud_test)
       set_tests_properties(mobileui_hud_test PROPERTIES
         WORKING_DIRECTORY "$<TARGET_FILE_DIR:ivan>" TIMEOUT 30)
+      add_executable(mobileui_interaction_test Tests/mobileui_interaction_test.cpp
+                     FeLib/Source/adaptiveui.cpp)
+      target_compile_definitions(mobileui_interaction_test PRIVATE ANDROID)
+      target_include_directories(mobileui_interaction_test PRIVATE FeLib/Include
+        ${SDL2_INCLUDE_DIR} "${IVAN_TEST_JNI_INCLUDE}" "${IVAN_TEST_JNI_INCLUDE}/win32")
+      target_link_libraries(mobileui_interaction_test ${SDL2_LIBRARY})
+      add_test(NAME mobileui_interaction_test COMMAND mobileui_interaction_test)
+      set_tests_properties(mobileui_interaction_test PROPERTIES
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:ivan>" TIMEOUT 30)
     endif()
   endif()
   add_test(NAME startmode_model_test COMMAND $<TARGET_FILE:ivan> --startmode-test)

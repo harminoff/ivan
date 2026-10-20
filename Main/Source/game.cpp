@@ -80,9 +80,9 @@ namespace mobileui = adaptiveui;
 #include "dbgmsgproj.h"
 
 #ifdef ANDROID
-static truth MobileTruthQuestion(cfestring&, int);
+static truth MobileTruthQuestion(cfestring&, int, cchar* = "YES", cchar* = "NO");
 #elif defined(ADAPTIVE_UI)
-static truth DesktopTruthQuestion(cfestring&, int);
+static truth DesktopTruthQuestion(cfestring&, int, cchar* = "YES", cchar* = "NO");
 static int DesktopQuitQuestion(cfestring&);
 #endif
 
@@ -1279,7 +1279,7 @@ cchar* game::Insult()
 
 /* DefaultAnswer = REQUIRES_ANSWER the question requires an answer */
 
-truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForTrue)
+truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForTrue, cchar* Accept, cchar* Reject)
 {
   if(DefaultAnswer == NO)
     DefaultAnswer = 'n';
@@ -1289,10 +1289,10 @@ truth game::TruthQuestion(cfestring& String, int DefaultAnswer, int OtherKeyForT
     ABORT("Illegal TruthQuestion DefaultAnswer send!");
 
 #ifdef ANDROID
-  return MobileTruthQuestion(String, OtherKeyForTrue);
+  return MobileTruthQuestion(String, OtherKeyForTrue, Accept, Reject);
 #elif defined(ADAPTIVE_UI)
   if(graphics::IsEnhancedPresentation())
-    return DesktopTruthQuestion(String, OtherKeyForTrue);
+    return DesktopTruthQuestion(String, OtherKeyForTrue, Accept, Reject);
 #endif
 
   int FromKeyQuestion = KeyQuestion(String, DefaultAnswer, 8, 'y', 'Y', 'n', 'N', OtherKeyForTrue, KEY_CONTROLLER_A, KEY_CONTROLLER_B, KEY_CONTROLLER_Y);
@@ -4884,6 +4884,41 @@ void game::TextScreen(cfestring& Text, v2 Displacement, col16 Color,
    Not surprisingly KeyNumber is the number of keys at ...
 */
 
+int game::NamedKeyQuestion(cfestring& Message, const int* Keys,
+                           const char* const* Labels, int Count)
+{
+  bQuestionMode = true;
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  mobileui::SetPrompt(Message.CStr());
+  mobileui::SetQuestionChoices(Keys, Count, Labels);
+#endif
+  DrawEverythingNoBlit();
+  FONT->Printf(DOUBLE_BUFFER, v2(16, 8), WHITE, "%s", Message.CStr());
+  graphics::BlitDBToScreen();
+  int Result = KEY_ESC;
+  for(;;)
+  {
+    int Key = GET_KEY();
+    if(Key == KEY_ESC || Key == KEY_CONTROLLER_B) break;
+    if(Key == KEY_CONTROLLER_A || Key == KEY_ENTER) Key = Keys[0];
+    if(Key == KEY_CONTROLLER_Y && Count > 1) Key = Keys[1];
+    bool Found = false;
+    for(int I = 0; I < Count; ++I) if(Keys[I] == Key) Found = true;
+    // Case aliases are safe only if uppercase is not a distinct choice.
+    if(!Found && Key >= 'A' && Key <= 'Z')
+      for(int I = 0; I < Count; ++I)
+        if(Keys[I] == Key + ('a' - 'A')) { Key = Keys[I]; Found = true; break; }
+    if(Found) { Result = Key; break; }
+  }
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  mobileui::SetQuestionChoices(0, 0);
+  mobileui::ClearPrompt();
+#endif
+  igraph::BlitBackGround(v2(16, 6), v2(GetMaxScreenXSize() << 4, 23));
+  bQuestionMode = false;
+  return Result;
+}
+
 int game::KeyQuestion(cfestring& Message, int DefaultAnswer, int KeyNumber, ...)
 {
   bQuestionMode=true;
@@ -6373,10 +6408,10 @@ void WriteCustomKeyBindingsCfgFile(FILE *fl,festring fsDesc,int iKey){
 }
 
 #ifdef ANDROID
-static truth MobileTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
+static truth MobileTruthQuestion(cfestring& Prompt, int OtherKeyForTrue, cchar* Accept, cchar* Reject)
 {
   bQuestionMode = true;
-  mobileui::SetConfirmationPrompt(Prompt.CStr());
+  mobileui::SetConfirmationPrompt(Prompt.CStr(), Accept, Reject);
   std::string LowerPrompt = Prompt.CStr();
   std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
     [](unsigned char Character) { return char(std::tolower(Character)); });
@@ -6411,10 +6446,10 @@ static truth MobileTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
   return Accepted;
 }
 #elif defined(ADAPTIVE_UI)
-static truth DesktopTruthQuestion(cfestring& Prompt, int OtherKeyForTrue)
+static truth DesktopTruthQuestion(cfestring& Prompt, int OtherKeyForTrue, cchar* Accept, cchar* Reject)
 {
   bQuestionMode = true;
-  adaptiveui::SetConfirmationPrompt(Prompt.CStr());
+  adaptiveui::SetConfirmationPrompt(Prompt.CStr(), Accept, Reject);
   std::string LowerPrompt = Prompt.CStr();
   std::transform(LowerPrompt.begin(), LowerPrompt.end(), LowerPrompt.begin(),
     [](unsigned char Character) { return char(std::tolower(Character)); });

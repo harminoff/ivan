@@ -1235,9 +1235,9 @@ truth olterraincontainer::Open(character* Opener)
 
   truth Success;
 
-  switch(game::KeyQuestion(CONST_S("Do you want to (t)ake something from or "
-                                   "(p)ut something in this container? [t,p]"),
-                           KEY_ESC, 8, 't', 'p', 'T', 'P', KEY_CONTROLLER_A, KEY_CONTROLLER_Y, KEY_CONTROLLER_B, KEY_ESC))
+  const int Keys[] = { 't', 'p', KEY_ESC };
+  const char* Labels[] = { "TAKE", "PUT", "CANCEL" };
+  switch(game::NamedKeyQuestion(CONST_S("Take from or put into this container? [t,p,Esc]"), Keys, Labels, 3))
   {
    case 't':
    case 'T':

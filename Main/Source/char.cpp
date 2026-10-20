@@ -1687,7 +1687,12 @@ truth character::TryMove(v2 MoveVector, truth Important, truth Run, truth* pbWai
               {
                 ADD_MESSAGE("One or more of your team members cannot cross this terrain.");
 
-                if(!game::TruthQuestion("Abandon them? [y/N]"))
+                festring Warning = CONST_S("These companions cannot cross this terrain. Abandoning them permanently removes them from the game:\n");
+                for(uint I = 0; I < V.size(); ++I)
+                  if(!V[I]->CanMoveOn(GetNearWSquare(MoveTo)))
+                    Warning << "\n" << V[I]->GetName(DEFINITE);
+                Warning << "\n\nAbandon these companions? [y/N]";
+                if(!game::TruthQuestion(Warning, NO, 0, "ABANDON", "STAY"))
                   return false;
 
                 Discard = true;
@@ -8989,6 +8994,13 @@ item* character::SelectFromPossessions(cfestring& Topic, sorter Sorter)
 truth character::SelectFromPossessions(itemvector& ReturnVector, cfestring& Topic, int Flags, sorter Sorter)
 {
   felist List(Topic);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+  const bool Repair = Sorter == &item::IsFixableBySmith || Sorter == &item::IsFixableByTailor;
+  if(Repair) {
+    List.SetAdaptivePresentationKind(adaptiveui::MENU_ITEM_GRID);
+    List.AddDescription(CONST_S("Your gold: ") + GetMoney());
+  }
+#endif
   truth InventoryPossible = GetStack()->SortedItems(this, Sorter);
 
   if(InventoryPossible)
@@ -9010,6 +9022,9 @@ truth character::SelectFromPossessions(itemvector& ReturnVector, cfestring& Topi
       BodyPart->AddName(Entry, UNARTICLED);
       int ImageKey = game::AddToItemDrawVector(itemvector(1, BodyPart));
       List.AddEntry(Entry, LIGHT_GRAY, 20, ImageKey, true);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      if(Repair) SetAdaptiveRepairMetrics(List, this, BodyPart, Sorter);
+#endif
       Any = true;
     }
   }
@@ -9028,6 +9043,9 @@ truth character::SelectFromPossessions(itemvector& ReturnVector, cfestring& Topi
       AddSpecialEquipmentInfo(Entry, c);
       int ImageKey = game::AddToItemDrawVector(itemvector(1, Equipment));
       List.AddEntry(Entry, LIGHT_GRAY, 20, ImageKey, true);
+#if defined(ANDROID) || defined(ADAPTIVE_UI)
+      if(Repair) SetAdaptiveRepairMetrics(List, this, Equipment, Sorter);
+#endif
       Any = true;
     }
   }

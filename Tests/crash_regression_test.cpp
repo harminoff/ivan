@@ -16,6 +16,8 @@
 #include "iconf.h"
 #include "message.h"
 #include "whandler.h"
+#include "rooms.h"
+#include "confdef.h"
 
 struct EquipmentCrashTestAccess
 {
@@ -155,6 +157,68 @@ namespace
     int RemoveCalls;
     bool Equippable, Removable;
   };
+
+  class PriceCustomer : public TestCharacter
+  {
+   public:
+    int Charisma = 10;
+    virtual int GetAttribute(int, truth = true) const { return Charisma; }
+  };
+
+  class PricedItem : public TestItem
+  {
+   public:
+    long Value = 100;
+    bool Banana = false;
+    virtual long GetTruePrice() const { return Value; }
+    virtual truth IsBanana() const { return Banana; }
+  };
+
+  class PriceShop : public shop
+  {
+   public:
+    void CacheMaster(character* Who)
+    { Master = Who; LastMasterSearchTick = game::GetTick(); }
+  };
+
+  void CheckPurchasePrices()
+  {
+    PriceCustomer Customer;
+    TestCharacter Merchant;
+    PricedItem Item;
+    PriceShop Shop;
+    library Library;
+    normalroom Ordinary;
+    Shop.CacheMaster(&Merchant);
+    Merchant.Database.Config = 0;
+    Check(Shop.CalculatePurchasePrice(&Customer, &Item, 1) == 91,
+          "Shop quote lost charisma adjustment or rounding");
+    Check(Shop.CalculatePurchasePrice(&Customer, &Item, 3) == 273,
+          "Shop stack quote must match checkout's per-item rounding");
+    Check(Library.CalculatePurchasePrice(&Customer, &Item, 3) == 272,
+          "Library stack quote must retain its different rounding");
+    Check(Shop.CalculateSalePrice(&Customer, &Item, 3) == 82
+          && Library.CalculateSalePrice(&Customer, &Item, 3) == 82,
+          "Sale preview must match stack checkout and charisma rounding");
+    Merchant.Database.Config = BLACK_MARKET;
+    Check(Shop.CalculatePurchasePrice(&Customer, &Item, 3) == 1092,
+          "Black market quote lost its surcharge");
+    Check(Shop.CalculateSalePrice(&Customer, &Item, 3) == 75,
+          "Black market sale preview lost the price adjustment");
+    Merchant.Database.Config = NEW_ATTNAM;
+    Item.Banana = true;
+    Check(Shop.CalculatePurchasePrice(&Customer, &Item, 3) == 69,
+          "Banana shop quote lost its stack discount");
+    Item.Value = 0;
+    Check(Shop.CalculatePurchasePrice(&Customer, &Item, 3) == 0,
+          "Free items must remain free");
+    Check(Ordinary.GetPurchasePrice(&Customer, &Item, 1) == -1
+          && Shop.GetPurchasePrice(0, &Item, 1) == -1,
+          "Ordinary items or missing customers must not show Buy");
+    Shop.CacheMaster(0);
+    Check(Shop.GetPurchasePrice(&Customer, &Item, 1) == -1,
+          "An abandoned shop must not show a merchant offer");
+  }
 
   void CheckEquipment()
   {
@@ -297,6 +361,7 @@ int RunCrashRegressionTests()
   {
     std::cout << "Testing equipment mutations and missing limbs..." << std::endl;
     CheckEquipment();
+    CheckPurchasePrices();
     CheckPrayerInformation();
     game::DeInit(); // OS shutdown may arrive before a game was started.
     game::DeInit(); // Cleanup must also be safe after a completed session.

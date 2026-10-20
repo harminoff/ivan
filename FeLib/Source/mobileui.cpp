@@ -901,9 +901,19 @@ namespace
     return Value && *Value ? int(std::strlen(Value)) * Scale * 6 - Scale : 0;
   }
 
+  #ifdef IVAN_UI_TEST_LABELS
+  // Renderer assertions in the interaction test fixture.
+  struct drawnlabel { std::string Text; SDL_Rect Rect; };
+  std::vector<drawnlabel> DrawnLabels;
+  #endif
+
   void Text(SDL_Renderer* Renderer, int X, int Y, const char* Value, int Scale,
             Uint8 R = 240, Uint8 G = 230, Uint8 B = 202)
   {
+    #ifdef IVAN_UI_TEST_LABELS
+    if(Value && *Value && DrawnLabels.size() < 1024)
+      DrawnLabels.push_back({ Value, { X, Y, TextWidth(Value, Scale), Scale * 7 } });
+    #endif
     Color(Renderer, R, G, B);
     SDL_Rect Pixels[256];
     int PixelCount = 0;
@@ -990,6 +1000,8 @@ namespace
   std::string FormatPromptText(const std::string& Value)
   {
     std::string Result = Value;
+    if(Value.find("(p)ut something in this container?") != std::string::npos)
+      return "Take from or put into this container?";
 
     // Desktop commands embed keyboard directions in their question text.
     // The Android input surface already shows the available direction pad, so
@@ -2179,8 +2191,10 @@ namespace
   {
     const int Pad = Clamp(int(4 * State.Density), 7, 16);
     const int Gap = Clamp(int(2 * State.Density), 4, 10);
-    const mobileitemcardtext Card = MobileItemCardText(
+    mobileitemcardtext Card = MobileItemCardText(
       DetailText, MetricsText);
+    if(Candidate && !Candidate->PriceNote.empty())
+      Card.Description = Candidate->PriceNote + "\n" + Card.Description;
     Fill(Renderer, Area, 7, 9, 8, 248);
     Outline(Renderer, Area, 126, 102, 57);
 
@@ -2213,7 +2227,17 @@ namespace
                                   std::max(1, Title.w - Pad * 2), Title.h };
     CenteredWrappedText(Renderer, TitleInner, DisplayTitle, TitleScale);
 
-    const int BodyTop = Title.y + Title.h + Gap;
+    int BodyTop = Title.y + Title.h + Gap;
+    if(Candidate && Candidate->HasPriceQuote())
+    {
+      const SDL_Rect PriceArea = { Area.x + Pad, BodyTop, TextWidth,
+        std::min(48, std::max(1, Area.h / 6)) };
+      std::string Price = Candidate->PurchasePrice < 0 ? "UNAVAILABLE" : Candidate->PriceSummary(adaptiveui::GetHudModel().MenuSubtitle);
+      Fill(Renderer, PriceArea, 38, 32, 15, 255);
+      CenterText(Renderer, PriceArea, Price.c_str(), 4, 248, 218, 135);
+      BodyTop += PriceArea.h + Gap;
+
+    }
     int BodyHeight = std::max(0, Area.y + Area.h - Pad - BodyTop);
     const int ComparisonRows = Candidate && Current && Current->Present
       && !Card.Metrics.empty()
@@ -2641,7 +2665,7 @@ namespace
 
     const adaptiveui::ItemMetrics& Metrics =
       Hud.MenuItemMetrics[Hud.MenuSelected];
-    if(!Metrics.Present)
+    if(!Metrics.Present || Metrics.HasPriceQuote())
       return Result;
     if(Metrics.Equippable)
       Result.push_back({ adaptiveui::ITEM_ACTION_NONE, "EQUIP" });
@@ -2913,8 +2937,33 @@ namespace
       else
       {
         const int LabelHeight = std::max(28, Cell.h * 30 / 100);
+        const bool ForSale = Index < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Index].HasPriceQuote();
+        const int PriceHeight = ForSale ? std::min(30, Cell.h / 4) : 0;
         SDL_Rect IconArea = { Cell.x + 5, Cell.y + 5,
           std::max(1, Cell.w - 10), std::max(1, Cell.h - LabelHeight - 8) };
+        IconArea.y += PriceHeight;
+        IconArea.h = std::max(1, IconArea.h - PriceHeight);
+        if(ForSale)
+        {
+          const SDL_Rect PriceArea = { Cell.x + 4, Cell.y + 4,
+            std::max(1, Cell.w - 8), PriceHeight };
+          const std::string Price = Hud.MenuItemMetrics[Index].PriceBadge();
+          Fill(Renderer, PriceArea, 38, 32, 15, 255);
+          if(Hud.MenuItemMetrics[Index].PurchasePrice >= 0
+             && TextWidth(Price.c_str(), 1) > PriceArea.w - 2)
+          {
+            SDL_Rect Line = PriceArea;
+            Line.h /= 2;
+            const std::string Number = std::to_string(
+              Hud.MenuItemMetrics[Index].PurchasePrice);
+            CenterText(Renderer, Line, Number.c_str(), 3, 248, 218, 135);
+            Line.y += Line.h;
+            CenterText(Renderer, Line, "GOLD", 3, 248, 218, 135);
+          }
+          else
+            CenterText(Renderer, PriceArea, Price.c_str(), 3, 248, 218, 135);
+        }
         if(Index < int(Hud.MenuIconSources.size())
            && Hud.MenuIconSources[Index].w > 0
            && Hud.MenuIconSources[Index].h > 0)
@@ -3028,7 +3077,10 @@ namespace
     if(ConfirmGrid)
     {
       const bool CanConfirm = Hud.MenuSelected >= 0
-                           && Hud.MenuSelected < Count;
+                           && Hud.MenuSelected < Count
+        && !(Hud.MenuSelected < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Hud.MenuSelected].HasPriceQuote()
+          && Hud.MenuItemMetrics[Hud.MenuSelected].PurchasePrice < 0);
       Fill(Renderer, State.MenuConfirm, CanConfirm ? 35 : 19,
            CanConfirm ? 71 : 23, CanConfirm ? 48 : 28, 245);
       Outline(Renderer, State.MenuConfirm, CanConfirm ? 105 : 70,
@@ -3038,7 +3090,10 @@ namespace
                    ? (Hud.MenuTitle == "Balanced Origins"
                       || Hud.MenuTitle == "Challenge Origins"
                         ? "BEGIN JOURNEY" : "CONTINUE")
-                   : (PickupGrid ? "STASH" : "SELECT"), 4,
+                   : (Hud.MenuSelected >= 0 && Hud.MenuSelected < int(Hud.MenuItemMetrics.size())
+                       && Hud.MenuItemMetrics[Hud.MenuSelected].HasPriceQuote()
+                       ? Hud.MenuItemMetrics[Hud.MenuSelected].PriceAction.c_str()
+                       : PickupGrid ? "STASH" : "SELECT"), 4,
                  CanConfirm ? 235 : 130, CanConfirm ? 230 : 125,
                  CanConfirm ? 202 : 115);
       if(PickupGrid)
@@ -3400,6 +3455,19 @@ namespace
 
   void KeyLabel(int Key, char* Buffer, size_t BufferSize)
   {
+    const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
+    for(int I = 0; I < int(Hud.QuestionLabels.size()); ++I)
+      if(Hud.QuestionChoices[I] == Key)
+      {
+        snprintf(Buffer, BufferSize, "%s", Hud.QuestionLabels[I].c_str());
+        return;
+      }
+    if(State.PromptText == "Take from or put into this container?")
+    {
+      snprintf(Buffer, BufferSize, "%s",
+        Key == 't' ? "TAKE" : (Key == 'p' ? "PUT" : "CANCEL"));
+      return;
+    }
     if(State.MapScreen)
     {
       if(Key == KEY_BACK_SPACE)
@@ -3456,6 +3524,15 @@ namespace
 
   std::string CurrentHeaderTitle()
   {
+    const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
+    if(State.MenuActive && (Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID || Hud.MenuKind == adaptiveui::MENU_ITEM_GRID)
+       && !Hud.MenuItemMetrics.empty()
+       && std::all_of(Hud.MenuItemMetrics.begin(), Hud.MenuItemMetrics.end(),
+         [&](const adaptiveui::ItemMetrics& Item) { return Item.HasPriceQuote()
+           && Item.PriceAction == Hud.MenuItemMetrics.front().PriceAction; }))
+      return Hud.MenuItemMetrics.front().PriceAction == "SELL" ? "What do you want to sell?"
+        : Hud.MenuItemMetrics.front().PriceAction == "REPAIR" ? "What do you want to repair?"
+        : "What do you want to buy?";
     const bool SettingTextPrompt = State.PromptActive
                                 && !State.PromptNumeric
                                 && IsSettingTextPrompt(State.PromptText);
@@ -3757,13 +3834,13 @@ namespace
         Fill(Renderer, Button, Back ? 54 : 35, Back ? 31 : 71,
              Back ? 29 : 48, 238);
         Outline(Renderer, Button, 156, 137, 100);
-        char Label[16];
+        char Label[96];
         if(BinaryConfirmation)
           std::snprintf(Label, sizeof(Label), "%s",
-                        Index == 0 ? "YES" : "NO");
+                        Index == 0 ? adaptiveui::GetHudModel().ConfirmAction.c_str() : adaptiveui::GetHudModel().CancelAction.c_str());
         else
           KeyLabel(State.QuestionChoices[Index], Label, sizeof(Label));
-        CenterTextAtScale(Renderer, Button, Label, 5);
+        CenterText(Renderer, Button, Label, 5);
       }
     }
     else if(!State.Gameplay)
@@ -4056,9 +4133,9 @@ namespace mobileui
     }
   }
 
-  void SetConfirmationPrompt(const char* Prompt)
+  void SetConfirmationPrompt(const char* Prompt, const char* Accept, const char* Reject)
   {
-    adaptiveui::SetConfirmationPrompt(Prompt);
+    adaptiveui::SetConfirmationPrompt(Prompt, Accept, Reject);
     const adaptiveui::HudModel& Hud = adaptiveui::GetHudModel();
     const bool Changed = !State.PromptActive
       || State.PromptText != Hud.Prompt
@@ -4272,9 +4349,17 @@ namespace mobileui
       ConsoleDirty = true;
   }
 
-  void SetQuestionChoices(const int* Keys, int Count)
+  void SetQuestionChoices(const int* Keys, int Count, const char* const* Labels)
   {
-    adaptiveui::SetQuestionChoices(Keys, Count);
+    // These are aliases for two actions, not four separate choices.
+    // Keep the game's keyboard/controller acceptance unchanged.
+    const int ContainerKeys[] = { 't', 'p', KEY_ESC };
+    if(Count > 0 && State.PromptText == "Take from or put into this container?")
+    {
+      Keys = ContainerKeys;
+      Count = 3;
+    }
+    adaptiveui::SetQuestionChoices(Keys, Count, Labels);
     Count = Clamp(Count, 0, MAX_QUESTION_CHOICES);
     bool Changed = State.QuestionChoiceCount != Count;
     for(int Index = 0; Index < Count; ++Index)
@@ -4610,6 +4695,9 @@ namespace mobileui
 
   void DrawBackground(SDL_Renderer* Renderer)
   {
+    #ifdef IVAN_UI_TEST_LABELS
+    DrawnLabels.clear();
+    #endif
     // Android may discard render-target texture contents during a surface
     // transition without reporting a size change.  Painting this lightweight
     // console directly keeps the controls, stats and log present on every
@@ -5354,6 +5442,12 @@ namespace mobileui
        && Contains(State.MenuConfirm, X, Y))
     {
       Result.Kind = touchresult::TOUCH_KEY;
+      const auto& Metrics = adaptiveui::GetHudModel().MenuItemMetrics;
+      if(State.MenuSelected < int(Metrics.size()) && Metrics[State.MenuSelected].HasPriceQuote()
+         && Metrics[State.MenuSelected].PurchasePrice < 0) {
+        Result.Kind = touchresult::TOUCH_REDRAW;
+        return Result;
+      }
       Result.KeyCode = KEY_MOBILE_MENU_SELECT_BASE + State.MenuSelected;
       return Result;
     }

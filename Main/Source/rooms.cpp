@@ -36,19 +36,8 @@ void shop::Enter(character* Customer)
 /* item* ForSale can also be in chest or other container, so don't assume
    anything else in this function */
 
-truth shop::PickupItem(character* Customer, item* ForSale, int Amount)
+long shop::CalculatePurchasePrice(ccharacter* Customer, item* ForSale, int Amount) const
 {
-  if(!MasterIsActive() || Customer == GetMaster()
-     || GetMaster()->GetRelation(Customer) == HOSTILE)
-    return true;
-
-  if(ForSale->IsLanternOnWall())
-  {
-    ADD_MESSAGE("\"I'd appreciate it if you left my "
-                "light sources alone, thank you!\"");
-    return false;
-  }
-
   long Price = ForSale->GetTruePrice();
 
   if(Price)
@@ -70,6 +59,34 @@ truth shop::PickupItem(character* Customer, item* ForSale, int Amount)
       Price *= 4;
     }
   }
+
+  return Price;
+}
+
+long shop::GetPurchasePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  if(!Customer || !ForSale || Amount <= 0 || !MasterIsActive()
+     || Customer == GetMaster() || GetMaster()->GetRelation(Customer) == HOSTILE
+     || !Customer->CanBeSeenBy(GetMaster()) || ForSale->IsLanternOnWall())
+    return -1;
+  return game::IsQuestItem(ForSale) ? 0
+    : CalculatePurchasePrice(Customer, ForSale, Amount);
+}
+
+truth shop::PickupItem(character* Customer, item* ForSale, int Amount)
+{
+  if(!MasterIsActive() || Customer == GetMaster()
+     || GetMaster()->GetRelation(Customer) == HOSTILE)
+    return true;
+
+  if(ForSale->IsLanternOnWall())
+  {
+    ADD_MESSAGE("\"I'd appreciate it if you left my "
+                "light sources alone, thank you!\"");
+    return false;
+  }
+
+  long Price = CalculatePurchasePrice(Customer, ForSale, Amount);
 
   if(!Customer->IsPlayer())
   {
@@ -115,7 +132,8 @@ truth shop::PickupItem(character* Customer, item* ForSale, int Amount)
                     "No haggling, please.\"",
                     Amount, ForSale->CHAR_NAME(PLURAL), Price);
 
-      if(game::TruthQuestion(CONST_S("Do you accept this deal? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Buy ") + ForSale->GetName(INDEFINITE, Amount)
+                            + " for " + Price + " gold pieces total? [y/N]", NO, 0, "BUY", "CANCEL"))
       {
         Customer->EditMoney(-Price);
         GetMaster()->EditMoney(+Price);
@@ -152,6 +170,33 @@ truth shop::PickupItem(character* Customer, item* ForSale, int Amount)
       return false;
 }
 
+long shop::CalculateSalePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  long Price = ForSale->GetTruePrice() * Amount
+               * (100 + Customer->GetAttribute(CHARISMA)) / 400;
+
+  // Decrease the selling price of very expensive items sold in black market.
+  if(GetMaster()->GetConfig() == BLACK_MARKET)
+  {
+    float NewPrice = (float)Price * (100000 / (1000 + (float)Price)) / 100;
+    Price = int(NewPrice);
+  }
+
+  return Price;
+}
+
+long shop::GetSalePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  if(!Customer || !ForSale || Amount <= 0 || !MasterIsActive()
+     || Customer == GetMaster() || GetMaster()->GetRelation(Customer) == HOSTILE
+     || !Customer->CanBeSeenBy(GetMaster())) return -1;
+  if(GetMaster()->GetConfig() == NEW_ATTNAM || GetMaster()->GetConfig() == REBEL_CAMP
+     || ForSale->IsQuestItem() || ForSale->WillExplodeSoon()) return -2;
+  long Price = CalculateSalePrice(Customer, ForSale, Amount);
+  return Price > 0 && GetMaster()->GetMoney() > 0
+    ? Min(Price, GetMaster()->GetMoney()) : -2;
+}
+
 truth shop::DropItem(character* Customer, item* ForSale, int Amount)
 {
   if(!MasterIsActive() || Customer == GetMaster()
@@ -170,15 +215,7 @@ truth shop::DropItem(character* Customer, item* ForSale, int Amount)
     return false;
   }
 
-  long Price = ForSale->GetTruePrice() * Amount
-               * (100 + Customer->GetAttribute(CHARISMA)) / 400;
-
-  // Decrease the selling price of very expensive items sold in black market.
-  if(GetMaster()->GetConfig() == BLACK_MARKET)
-  {
-    float NewPrice = (float)Price * (100000 / (1000 + (float)Price)) / 100;
-    Price = int(NewPrice);
-  }
+  long Price = CalculateSalePrice(Customer, ForSale, Amount);
 
   if(!Customer->IsPlayer())
   {
@@ -233,7 +270,8 @@ truth shop::DropItem(character* Customer, item* ForSale, int Amount)
                     "pay %ld gold pieces for them.\"",
                     Amount, ForSale->CHAR_NAME(PLURAL), Price);
 
-      if(game::TruthQuestion(CONST_S("Do you accept this deal? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Sell ") + ForSale->GetName(INDEFINITE, Amount)
+                            + " for " + Price + " gold pieces total? [y/N]", NO, 0, "SELL", "CANCEL"))
       {
         Customer->SetMoney(Customer->GetMoney() + Price);
         GetMaster()->SetMoney(GetMaster()->GetMoney() - Price);
@@ -256,9 +294,9 @@ truth shop::DropItem(character* Customer, item* ForSale, int Amount)
   {
     ADD_MESSAGE("The shopkeeper doesn't see you, "
                 "so you cannot trade with him.");
-    return game::TruthQuestion(CONST_S("Still drop ")
+    return game::TruthQuestion(CONST_S("The merchant cannot see you, so you will not be paid. Still drop ")
                                + (Amount == 1 ? "this item" : "these items")
-                               + "? [y/N]");
+                               + "? [y/N]", NO, 0, "DROP", "CANCEL");
   }
 }
 
@@ -352,7 +390,7 @@ truth cathedral::DropItem(character* Visitor, item* Item, int)
     }
 
     if(game::TruthQuestion(CONST_S("Do you wish to donate this "
-                                   "item to the Cathedral? [y/N]")))
+                                   "item to the Cathedral? [y/N]"), NO, 0, "DONATE", "CANCEL"))
       return true;
   }
 
@@ -381,7 +419,7 @@ truth cathedral::ConsumeItem(character* HungryMan, item*, int)
   {
     ADD_MESSAGE("Eating the property of the Cathedral is forbidden.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "EAT", "CANCEL"))
     {
       HungryMan->GetTeam()->Hostility(game::GetTeam(ATTNAM_TEAM));
       return true;
@@ -413,7 +451,7 @@ truth cathedral::Drink(character* Thirsty) const
   {
     ADD_MESSAGE("Drinking property of the Cathedral is prohibited.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "DRINK", "CANCEL"))
     {
       Thirsty->GetTeam()->Hostility(game::GetTeam(ATTNAM_TEAM));
       return true;
@@ -462,7 +500,7 @@ truth cathedral::Dip(character* Thirsty) const
 
     ADD_MESSAGE("Stealing the precious water of the Cathedral is prohibited.");
 
-    if(game::TruthQuestion(CONST_S("Are you sure you want to dip? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "DIP", "CANCEL"))
     {
       Thirsty->GetTeam()->Hostility(game::GetTeam(ATTNAM_TEAM));
       return true;
@@ -501,6 +539,22 @@ void library::Enter(character* Customer)
   }
 }
 
+long library::CalculatePurchasePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  return ForSale->GetTruePrice() * Amount
+    * 100 / (100 + Customer->GetAttribute(CHARISMA));
+}
+
+long library::GetPurchasePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  if(!Customer || !ForSale || Amount <= 0 || !MasterIsActive()
+     || Customer == GetMaster() || GetMaster()->GetRelation(Customer) == HOSTILE
+     || !Customer->CanBeSeenBy(GetMaster()) || ForSale->IsLanternOnWall())
+    return -1;
+  return ForSale->IsQuestItem() || !ForSale->CanBeSoldInLibrary(GetMaster()) ? 0
+    : CalculatePurchasePrice(Customer, ForSale, Amount);
+}
+
 truth library::PickupItem(character* Customer, item* ForSale, int Amount)
 {
   if(!MasterIsActive() || Customer == GetMaster()
@@ -514,8 +568,7 @@ truth library::PickupItem(character* Customer, item* ForSale, int Amount)
     return false;
   }
 
-  long Price = ForSale->GetTruePrice() * Amount
-               * 100 / (100 + Customer->GetAttribute(CHARISMA));
+  long Price = CalculatePurchasePrice(Customer, ForSale, Amount);
 
   if(!Customer->IsPlayer())
   {
@@ -557,7 +610,8 @@ truth library::PickupItem(character* Customer, item* ForSale, int Amount)
                     "pieces. No haggling, please.\"",
                     Amount, ForSale->CHAR_NAME(PLURAL), Price);
 
-      if(game::TruthQuestion(CONST_S("Do you accept this deal? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Buy ") + ForSale->GetName(INDEFINITE, Amount)
+                            + " for " + Price + " gold pieces total? [y/N]", NO, 0, "BUY", "CANCEL"))
       {
         Customer->EditMoney(-Price);
         GetMaster()->EditMoney(Price);
@@ -594,14 +648,32 @@ truth library::PickupItem(character* Customer, item* ForSale, int Amount)
       return false;
 }
 
+long library::CalculateSalePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  long Price = ForSale->GetTruePrice() * Amount
+               * (100 + Customer->GetAttribute(CHARISMA)) / 400;
+
+  return Price;
+}
+
+long library::GetSalePrice(ccharacter* Customer, item* ForSale, int Amount) const
+{
+  if(!Customer || !ForSale || Amount <= 0 || !MasterIsActive()
+     || Customer == GetMaster() || GetMaster()->GetRelation(Customer) == HOSTILE
+     || !Customer->CanBeSeenBy(GetMaster())) return -1;
+  if(ForSale->IsQuestItem() || !ForSale->CanBeSoldInLibrary(GetMaster())) return -2;
+  long Price = CalculateSalePrice(Customer, ForSale, Amount);
+  return Price > 0 && GetMaster()->GetMoney() > 0
+    ? Min(Price, GetMaster()->GetMoney()) : -2;
+}
+
 truth library::DropItem(character* Customer, item* ForSale, int Amount)
 {
   if(!MasterIsActive() || Customer == GetMaster()
      || GetMaster()->GetRelation(Customer) == HOSTILE)
     return true;
 
-  long Price = ForSale->GetTruePrice() * Amount
-               * (100 + Customer->GetAttribute(CHARISMA)) / 400;
+  long Price = CalculateSalePrice(Customer, ForSale, Amount);
 
   if(!Customer->IsPlayer())
   {
@@ -648,9 +720,8 @@ truth library::DropItem(character* Customer, item* ForSale, int Amount)
                     "%s. I'll pay %ld gold pieces for it.\"",
                     Amount, ForSale->CHAR_NAME(PLURAL), Price);
 
-      if(game::TruthQuestion(CONST_S("Do you want to sell ")
-                             + (Amount == 1 ? "this item" : "these items")
-                             + "? [y/N]"))
+      if(game::TruthQuestion(CONST_S("Sell ") + ForSale->GetName(INDEFINITE, Amount)
+                            + " for " + Price + " gold pieces total? [y/N]", NO, 0, "SELL", "CANCEL"))
       {
         Customer->EditMoney(Price);
         GetMaster()->EditMoney(-Price);
@@ -672,9 +743,9 @@ truth library::DropItem(character* Customer, item* ForSale, int Amount)
   {
     ADD_MESSAGE("The librarian doesn't see you, "
                 "so you cannot trade with him.");
-    return game::TruthQuestion(CONST_S("Still drop ")
+    return game::TruthQuestion(CONST_S("The merchant cannot see you, so you will not be paid. Still drop ")
                                + (Amount == 1 ? "this item" : "these items")
-                               + "? [y/N]");
+                               + "? [y/N]", NO, 0, "DROP", "CANCEL");
   }
 }
 
@@ -716,7 +787,7 @@ truth bananadroparea::PickupItem(character* Hungry, item* Item, int)
 
     ADD_MESSAGE("That would be stealing.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "TAKE", "CANCEL"))
     {
       if(!Hungry->TryToStealFromShop(GetMaster(), Item))
       {
@@ -798,7 +869,7 @@ truth bananadroparea::ConsumeItem(character* HungryMan, item* Item, int)
 
     ADD_MESSAGE("Eating this is forbidden.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "EAT", "CANCEL"))
     {
       HungryMan->GetTeam()->Hostility(game::GetTeam(NEW_ATTNAM_TEAM));
       return true;
@@ -913,7 +984,7 @@ truth sumoarena::CheckDestroyTerrain(character* Infidel)
 
   ADD_MESSAGE("The residents of New Attnam might not like this.");
 
-  if(game::TruthQuestion(CONST_S("Are you sure you want to do this? [y/N]")))
+  if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "DAMAGE", "CANCEL"))
   {
     DestroyTerrain(Infidel);
     return true;
@@ -1009,7 +1080,7 @@ truth ownedarea::PickupItem(character* Visitor, item* Item, int)
 
     ADD_MESSAGE("Picking up private property is prohibited.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/N]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "TAKE", "CANCEL"))
     {
       Visitor->Hostility(GetMaster());
       return true;
@@ -1060,7 +1131,7 @@ truth ownedarea::ConsumeItem(character* HungryMan, item*, int)
   {
     ADD_MESSAGE("Eating private property is forbidden.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/n]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "EAT", "CANCEL"))
     {
       HungryMan->Hostility(GetMaster());
       return true;
@@ -1080,7 +1151,7 @@ truth ownedarea::Drink(character* Thirsty) const
   {
     ADD_MESSAGE("Drinking private property is prohibited.");
 
-    if(game::TruthQuestion(CONST_S("Do you still want to do this? [y/n]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "DRINK", "CANCEL"))
     {
       Thirsty->Hostility(GetMaster());
       return true;
@@ -1113,7 +1184,7 @@ truth ownedarea::Dip(character* Thirsty) const
 
     ADD_MESSAGE("Stealing water is prohibited.");
 
-    if(game::TruthQuestion(CONST_S("Are you sure you want to dip? [y/n]")))
+    if(game::TruthQuestion(msgsystem::GetPromptContextMessage() + "\n\nProceed with this action? [y/N]", NO, 0, "DIP", "CANCEL"))
     {
       Thirsty->Hostility(GetMaster());
       return true;

@@ -4177,8 +4177,9 @@ truth craftcore::Craft(character* Char) //TODO currently this is an over simplif
       return false;
     }
     if(sel==SuspendedIndex && craftcore::HasSuspended()){
-      int key = game::KeyQuestion(CONST_S("There are suspended crafting actions: (r)esume/ENTER or (c)ancel?"),
-        KEY_ESC, 6, 'r', 'c', KEY_ENTER, KEY_CONTROLLER_A, KEY_CONTROLLER_Y, KEY_CONTROLLER_B);
+      const int Keys[] = { 'r', 'c', KEY_ESC };
+      const char* Labels[] = { "RESUME", "DISCARD", "BACK" };
+      int key = game::NamedKeyQuestion(CONST_S("Suspended crafting: [r] Resume, [c] Discard, [Esc] Back. Discarding permanently loses the selected crafting action."), Keys, Labels, 3);
       if(key==KEY_ESC || key == KEY_CONTROLLER_B)return false;
 
       if(key==KEY_ENTER)key='r';

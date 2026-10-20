@@ -1541,6 +1541,14 @@ void felist::SetLastEntryItemActions(unsigned int Actions)
   Entry[Entry.size() - 1]->ItemMetrics.Actions = Actions;
 }
 
+void felist::SetLastEntryPurchasePrice(long Price, int Count, cchar* Action, cchar* Note)
+{
+  Entry.back()->ItemMetrics.PurchasePrice = Price;
+  Entry.back()->ItemMetrics.PurchaseCount = Count;
+  Entry.back()->ItemMetrics.PriceAction = Action;
+  Entry.back()->ItemMetrics.PriceNote = Note;
+}
+
 void felist::SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
                                      truth Armor, truth Weapon,
                                      truth Shield, truth Equippable,

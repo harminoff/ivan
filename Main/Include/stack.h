@@ -26,6 +26,7 @@ typedef std::vector<itemvector> itemvectorvector;
 item* SpawnAdaptiveCategoryIcon(long Category);
 void SetAdaptiveComparisonMetrics(felist& List, ccharacter* Viewer,
                                   citem* Candidate);
+void SetAdaptiveRepairMetrics(felist&, ccharacter*, item*, sorter);
 #endif
 
 /* Stack contains an arbitrary number of items in a linked list, which can

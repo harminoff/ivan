@@ -195,6 +195,19 @@ void SetAdaptiveComparisonMetrics(felist& List, ccharacter* Viewer,
   SetAdaptiveEntryMetrics(List, Viewer,
                           FindAdaptiveComparisonItem(Viewer, Candidate), true);
 }
+
+void SetAdaptiveRepairMetrics(felist& List, ccharacter* Viewer, item* Item, sorter Sorter)
+{
+  SetAdaptiveEntryMetrics(List, Viewer, Item, false);
+  const bool Smith = Sorter == &item::IsFixableBySmith;
+  const bool MaterialOK = Item->GetMainMaterial()->GetCategoryFlags()
+    & (Smith ? IS_METAL : CAN_BE_TAILORED);
+  const bool Burning = !Smith && Item->GetMainMaterial()->IsBurning();
+  const char* Note = !MaterialOK ? (Smith ? "Requires a metal item." : "This material cannot be tailored.")
+    : Burning ? "Extinguish this item before repair." : "";
+  List.SetLastEntryPurchasePrice(MaterialOK && !Burning ? Item->GetFixPrice() : -1,
+    1, "REPAIR", Note);
+}
 #endif
 
 stack::stack(square* MotherSquare, entity* MotherEntity, ulong Flags)
@@ -634,6 +647,13 @@ int stack::DrawContents(itemvector& ReturnVector, stack* MergeStack,
   Contents.SetAdaptivePresentationKind(
     Topic.Find("What do you want to pick up?", 0) == 0
       ? adaptiveui::MENU_PICKUP_GRID : adaptiveui::MENU_ITEM_GRID);
+  Contents.SetTradeMode(
+    SorterFunction == &item::IsFixableBySmith || SorterFunction == &item::IsFixableByTailor ? 3
+    : Topic.Find("What do you want to drop?", 0) == 0 ? 2
+    : Topic.Find("What do you want to pick up?", 0) == 0
+       || Topic.Find("What do you want to take from ", 0) == 0 ? 1 : 0);
+  if(Contents.GetTradeMode() && Viewer)
+    Contents.AddDescription(CONST_S("Your gold: ") + Viewer->GetMoney());
 #endif
   lsquare* Square = GetLSquareUnder();
   stack* AdjacentStack[4] = { 0, 0, 0, 0 };
@@ -941,6 +961,22 @@ void stack::AddContentsToList(felist& Contents, ccharacter* Viewer,
     Contents.SetLastEntryAdaptiveGroup(
       item::GetItemCategoryName(Item->GetCategory()));
     SetAdaptiveEntryMetrics(Contents, Viewer, Item, false);
+    // Only quote ground pickup choices; inventory items in a shop are owned
+    // by the player and must not acquire a purchase price.
+    if(Contents.GetTradeMode() == 1 && IsOnGround() && Viewer && Item->GetRoom())
+      Contents.SetLastEntryPurchasePrice(
+        Item->GetRoom()->GetPurchasePrice(Viewer, Item, PileVector[p].size()),
+        PileVector[p].size());
+    if(Contents.GetTradeMode() == 2 && Viewer && Viewer->GetLSquareUnder()->GetRoom())
+    {
+      const long Price = Viewer->GetLSquareUnder()->GetRoom()->GetSalePrice(
+        Viewer, Item, PileVector[p].size());
+      if(Price != -1)
+        Contents.SetLastEntryPurchasePrice(Price, PileVector[p].size(), "SELL",
+          Price < 0 ? "No offer: the merchant cannot buy this item." : "");
+    }
+    if(Contents.GetTradeMode() == 3)
+      SetAdaptiveRepairMetrics(Contents, Viewer, Item, SorterFunction);
     SetAdaptiveEntryMetrics(Contents, Viewer,
                             FindAdaptiveComparisonItem(Viewer, Item), true);
 #endif

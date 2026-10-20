@@ -211,7 +211,7 @@ class game
   static void InitLuxTable();
   static void DeInitLuxTable();
   static cchar* Insult();
-  static truth TruthQuestion(cfestring&, int = 0, int = 0);
+  static truth TruthQuestion(cfestring&, int = 0, int = 0, cchar* = "YES", cchar* = "NO");
   static void DrawEverything();
   static void UpdateShowItemsAtPos(bool bAllowed,v2 v2AtPos=v2(0,0));
   static void UpdateAltSilhouette(bool bAllowed);
@@ -305,6 +305,7 @@ class game
   static truth DoZoom() { return Zoom; }
   static void SetDoZoom(truth What) { Zoom = What; }
   static int KeyQuestion(cfestring&, int, int, ...);
+  static int NamedKeyQuestion(cfestring&, const int*, const char* const*, int);
   static v2 LookKeyHandler(v2, int);
   static v2 NameKeyHandler(v2, int);
   static void End(festring, truth = true, truth = true);

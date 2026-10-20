@@ -58,6 +58,10 @@ class room
   character* GetMaster() const;
   void SetMasterID(ulong What) { MasterID = What; }
   virtual truth PickupItem(character*, item*, int) { return true; }
+  // -1 means this is not a visible, purchasable merchant offer.
+  virtual long GetPurchasePrice(ccharacter*, item*, int) const { return -1; }
+  // -1: no trading here; -2: merchant refuses this item or has no money.
+  virtual long GetSalePrice(ccharacter*, item*, int) const { return -1; }
   virtual truth DropItem(character*, item*, int) { return true; }
   int GetDivineMaster() const { return DivineMaster; }
   void SetDivineMaster(int What) { DivineMaster = What; }

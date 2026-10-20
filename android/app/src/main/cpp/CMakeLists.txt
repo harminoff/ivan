@@ -12,7 +12,7 @@ add_compile_definitions(
     ANDROID
     UNIX
     USE_SDL
-    IVAN_VERSION="0.59-android.8"
+    IVAN_VERSION="0.59-android.10"
     PCRE_STATIC
     XBRZLIB_NOINLINEGETSETPIX
 )
@@ -47,6 +47,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+# zlib's CMake reads zconf.h, which its .gitignore excludes from clean checkouts.
+configure_file("${VENDOR_ROOT}/zlib/zconf.h.in" "${VENDOR_ROOT}/zlib/zconf.h" COPYONLY)
 add_subdirectory("${VENDOR_ROOT}/zlib" "${CMAKE_BINARY_DIR}/vendor/zlib")
 
 configure_file(

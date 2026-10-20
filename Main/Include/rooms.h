@@ -20,6 +20,10 @@ ROOM(normalroom, room) { };
 ROOM(shop, room)
 {
  public:
+  virtual long GetSalePrice(ccharacter*, item*, int) const;
+  long CalculateSalePrice(ccharacter*, item*, int) const;
+  virtual long GetPurchasePrice(ccharacter*, item*, int) const;
+  long CalculatePurchasePrice(ccharacter*, item*, int) const;
   virtual void Enter(character*);
   virtual truth PickupItem(character*, item*, int);
   virtual truth DropItem(character*, item*, int);
@@ -67,6 +71,10 @@ ROOM(cathedral, room)
 ROOM(library, room)
 {
  public:
+  virtual long GetSalePrice(ccharacter*, item*, int) const;
+  long CalculateSalePrice(ccharacter*, item*, int) const;
+  virtual long GetPurchasePrice(ccharacter*, item*, int) const;
+  long CalculatePurchasePrice(ccharacter*, item*, int) const;
   virtual void Enter(character*);
   virtual truth PickupItem(character*, item*, int);
   virtual truth DropItem(character*, item*, int);

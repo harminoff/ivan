@@ -54,7 +54,7 @@ namespace mobileui
   void SetLog(const char* Message);
   void SetPrompt(const char* Prompt, const char* Input = 0,
                  bool Numeric = false);
-  void SetConfirmationPrompt(const char* Prompt);
+  void SetConfirmationPrompt(const char* Prompt, const char* Accept = "YES", const char* Reject = "NO");
   void SetPromptDetail(const char* Detail);
   void SetPositionPrompt(bool Active);
   void ClearPrompt();
@@ -68,7 +68,7 @@ namespace mobileui
   void ClearScreenText();
   void SetActions(const char* const* Labels, const int* Keys,
                   const int* Groups, int Count);
-  void SetQuestionChoices(const int* Keys, int Count);
+  void SetQuestionChoices(const int* Keys, int Count, const char* const* Labels = 0);
   void SetMenu(const char* Title, const char* Subtitle,
                const char* const* Options, int Count, int Selected,
                int Page, int Pages);
@@ -88,6 +88,7 @@ namespace mobileui
   void HandleLogTimeout();
   void HandleMenuFling();
   touchresult HandleFinger(float NormalizedX, float NormalizedY);
+
 }
 #endif
 

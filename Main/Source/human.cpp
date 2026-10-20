@@ -839,7 +839,7 @@ void priest::BeTalkedTo()
     {
       ADD_MESSAGE("\"Good %s, you're on fire! Quick, hand over %ld gold!\"", GetMasterGod()->GetName(), Price);
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Extinguish your flames for ") + Price + " gold? [y/N]", NO, 0, "EXTINGUISH", "CANCEL"))
       {
         PLAYER->Extinguish(true);
         PLAYER->SetMoney(PLAYER->GetMoney() - Price);
@@ -877,7 +877,7 @@ void priest::BeTalkedTo()
               ADD_MESSAGE("\"I could put your old %s back in exchange for %ld gold.\"",
                           PLAYER->GetBodyPartName(c).CStr(), Price);
 
-              if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+              if(game::TruthQuestion(CONST_S("Reattach your ") + PLAYER->GetBodyPartName(c) + " for " + Price + " gold? The limb returns with 1 HP. [y/N]", NO, 0, "REATTACH", "CANCEL"))
               {
                 OldBodyPart->SetHP(1);
                 PLAYER->SetMoney(PLAYER->GetMoney() - Price);
@@ -905,7 +905,7 @@ void priest::BeTalkedTo()
                       "I could summon up a new one for %ld gold.\"",
                       PLAYER->GetBodyPartName(c).CStr(), Price);
 
-        if(game::TruthQuestion(CONST_S("Agreed? [y/N]")))
+        if(game::TruthQuestion(CONST_S("Create a new ") + PLAYER->GetBodyPartName(c) + " for " + Price + " gold? The limb starts with 1 HP. [y/N]", NO, 0, "CREATE", "CANCEL"))
         {
           PLAYER->SetMoney(PLAYER->GetMoney() - Price);
           SetMoney(GetMoney() + Price);
@@ -933,7 +933,7 @@ void priest::BeTalkedTo()
             ADD_MESSAGE("\"I could cure the burns on your %s in exchange for %ld gold.\"",
                         PLAYER->GetBodyPartName(c).CStr(), Price);
 
-          if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+          if(game::TruthQuestion(CONST_S("Treat burns on your ") + PLAYER->GetBodyPartName(c) + " for " + Price + " gold? [y/N]", NO, 0, "TREAT", "CANCEL"))
           {
             BodyPart->ResetBurning();
             PLAYER->SetMoney(PLAYER->GetMoney() - Price);
@@ -961,7 +961,7 @@ void priest::BeTalkedTo()
       ADD_MESSAGE("\"You seem to be rather ill. I could give you a "
                   "small dose of antidote for %ld gold pieces.\"", Price);
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Cure your poisoning for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(POISONED);
@@ -983,7 +983,7 @@ void priest::BeTalkedTo()
       ADD_MESSAGE("\"You seem to have contracted the vile disease of leprosy. "
                   "I could give you a small dose of medicine for %ld gold pieces.\"", Price);
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Cure your leprosy for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(LEPROSY);
@@ -1007,7 +1007,7 @@ void priest::BeTalkedTo()
                   "remove the canine blood from your veins, just so you don't scare our blessed youth.\"",
                   Price, GetMasterGod()->GetName(), GetMasterGod()->GetObjectPronoun());
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Cure your lycanthropy for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(LYCANTHROPY);
@@ -1032,7 +1032,7 @@ void priest::BeTalkedTo()
                   "%s to remove your vampiric urges, just so you don't victimize our besotted youth.\""
                   , Price, GetMasterGod()->GetName(), GetMasterGod()->GetObjectPronoun());
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Cure your vampirism for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(VAMPIRISM);
@@ -1056,7 +1056,7 @@ void priest::BeTalkedTo()
                   "to purge the parasite, that is if you wish to donate %ldgp to %s, of course.\""
                   , Price, GetMasterGod()->GetName(), GetMasterGod()->GetObjectPronoun());
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Remove your tapeworm for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(PARASITE_TAPE_WORM);
@@ -1080,7 +1080,7 @@ void priest::BeTalkedTo()
                   "to purge the parasite, that is if you wish to donate %ldgp to %s, of course.\""
                   , Price, GetMasterGod()->GetName(), GetMasterGod()->GetObjectPronoun());
 
-      if(game::TruthQuestion(CONST_S("Do you agree? [y/N]")))
+      if(game::TruthQuestion(CONST_S("Remove your mind worm for ") + Price + " gold? [y/N]", NO, 0, "CURE", "CANCEL"))
       {
         ADD_MESSAGE("You feel better.");
         PLAYER->DeActivateTemporaryState(PARASITE_MIND_WORM);
@@ -1239,7 +1239,7 @@ void slave::BeTalkedTo()
         ADD_MESSAGE("%s talks: \"Do you want to buy me? 50 gold pieces. "
                     "I work very hard.\"", CHAR_DESCRIPTION(DEFINITE));
 
-        if(game::TruthQuestion(CONST_S("Do you want to buy him? [y/N]")))
+        if(game::TruthQuestion(CONST_S("Buy ") + GetName(DEFINITE) + " for 50 gold? He will join your team. [y/N]", NO, 0, "BUY", "CANCEL"))
         {
           PLAYER->SetMoney(PLAYER->GetMoney() - 50);
           Master->SetMoney(Master->GetMoney() + 50);
@@ -3398,7 +3398,8 @@ void smith::BeTalkedTo()
 
     ADD_MESSAGE("\"I can fix your %s, but it'll cost you %ld gold pieces.\"", Item->CHAR_NAME(UNARTICLED), FixPrice);
 
-    if(game::TruthQuestion(CONST_S("Do you accept this deal? [y/N]")))
+    if(game::TruthQuestion(CONST_S("Repair ") + Item->GetName(DEFINITE)
+                          + " for " + FixPrice + " gold pieces? [y/N]", NO, 0, "REPAIR", "CANCEL"))
     {
       Item->RemoveRust();
       Item->Fix();
@@ -4446,8 +4447,9 @@ void humanoid::DetachBodyPart()
 {
   int ToBeDetached;
 
-  switch(game::KeyQuestion(CONST_S("What limb? (l)eft arm, (r)ight arm, (L)eft leg, (R)ight leg, (h)ead?"),
-                           KEY_ESC, 5, 'l', 'r', 'L', 'R', 'h'))
+  const int Keys[] = { 'l', 'r', 'L', 'R', 'h', KEY_ESC };
+  const char* Labels[] = { "LEFT ARM", "RIGHT ARM", "LEFT LEG", "RIGHT LEG", "HEAD", "CANCEL" };
+  switch(game::NamedKeyQuestion(CONST_S("Choose a limb: [l] left arm, [r] right arm, [L] left leg, [R] right leg, [h] head, [Esc] cancel."), Keys, Labels, 6))
   {
    case 'l':
     ToBeDetached = LEFT_ARM_INDEX;
@@ -4491,8 +4493,9 @@ void humanoid::SetFireToBodyPart()
 {
   int ToBeSetFireTo;
 
-  switch(game::KeyQuestion(CONST_S("What limb? (l)eft arm, (r)ight arm, (L)eft leg, (R)ight leg, (h)ead?"),
-                           KEY_ESC, 5, 'l', 'r', 'L', 'R', 'h'))
+  const int Keys[] = { 'l', 'r', 'L', 'R', 'h', KEY_ESC };
+  const char* Labels[] = { "LEFT ARM", "RIGHT ARM", "LEFT LEG", "RIGHT LEG", "HEAD", "CANCEL" };
+  switch(game::NamedKeyQuestion(CONST_S("Choose a limb: [l] left arm, [r] right arm, [L] left leg, [R] right leg, [h] head, [Esc] cancel."), Keys, Labels, 6))
   {
    case 'l':
     ToBeSetFireTo = LEFT_ARM_INDEX;
@@ -6025,7 +6028,8 @@ void tailor::BeTalkedTo()
 
     ADD_MESSAGE("\"I can fix your %s, but it'll cost you %ld gold pieces.\"", Item->CHAR_NAME(UNARTICLED), FixPrice);
 
-    if(game::TruthQuestion(CONST_S("Do you accept this deal? [y/N]")))
+    if(game::TruthQuestion(CONST_S("Repair ") + Item->GetName(DEFINITE)
+                          + " for " + FixPrice + " gold pieces? [y/N]", NO, 0, "REPAIR", "CANCEL"))
     {
       Item->RemoveBurns();
       Item->ResetThermalEnergies(); // OK because the item shouldn't be burning in the first place

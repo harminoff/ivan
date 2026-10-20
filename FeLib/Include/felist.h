@@ -52,6 +52,12 @@ class felist
   void SetLastEntryAdaptiveGroup(cfestring Group);
   void SetLastEntryAdaptiveAvailable(truth Available);
   void SetLastEntryItemActions(unsigned int Actions);
+  void SetLastEntryPurchasePrice(long Price, int Count, cchar* Action = "BUY", cchar* Note = "");
+  void SetTradeMode(int Mode) { TradeMode = Mode; }
+  int GetTradeMode() const { return TradeMode; }
+  adaptiveui::MenuPresentationKind GetAdaptivePresentationKind() const
+  { return PresentationKind; }
+  int TradeMode = 0; // 1 purchase, 2 sale, 3 repair; presentation only.
   void SetLastEntryItemMetrics(unsigned long ItemId, long Weight,
                                truth Armor, truth Weapon,
                                truth Shield, truth Equippable, int ArmorValue,

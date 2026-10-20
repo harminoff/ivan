@@ -1351,6 +1351,14 @@ namespace
 
   std::string DisplayMenuTitle()
   {
+    if((Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID || Hud.MenuKind == adaptiveui::MENU_ITEM_GRID)
+       && !Hud.MenuItemMetrics.empty()
+       && std::all_of(Hud.MenuItemMetrics.begin(), Hud.MenuItemMetrics.end(),
+         [&](const adaptiveui::ItemMetrics& Item) { return Item.HasPriceQuote()
+           && Item.PriceAction == Hud.MenuItemMetrics.front().PriceAction; }))
+      return Hud.MenuItemMetrics.front().PriceAction == "SELL" ? "What do you want to sell?"
+        : Hud.MenuItemMetrics.front().PriceAction == "REPAIR" ? "What do you want to repair?"
+        : "What do you want to buy?";
     return Hud.MenuTitle == "AUTO PICK UP ITEMS" ? Hud.MenuTitle
       : IsOptionsMenu() ? "OPTIONS"
       : (Hud.MenuTitle.empty() ? "MENU" : Hud.MenuTitle);
@@ -1459,14 +1467,14 @@ std::string DisplayMenuSubtitle()
         && (Hud.PromptShowsInput || Hud.PromptNumeric
             || Hud.PromptCapturesKey
             || Hud.PromptConfirmsKeyTransfer
-            || Hud.PromptConfirmsChoice
+            || Hud.PromptConfirmsChoice || !Hud.QuestionLabels.empty()
             || Hud.PromptOffersQuitChoices);
   }
 
   PromptGeometry GetPromptGeometry()
   {
     const int Width = Clamp(CurrentLayout.OutputWidth * 9 / 20, 440, 620);
-    const int Height = Hud.PromptConfirmsChoice
+    const int Height = !Hud.QuestionLabels.empty() ? 320 : Hud.PromptConfirmsChoice
                        && !Hud.PromptDetail.empty() ? 240
                      : Hud.PromptCapturesKey
                     || Hud.PromptConfirmsKeyTransfer
@@ -1505,6 +1513,15 @@ std::string DisplayMenuSubtitle()
     return Geometry;
   }
 
+  SDL_Rect NamedPromptButton(int Index)
+  {
+    const SDL_Rect Dialog = GetPromptGeometry().Dialog;
+    const int Rows = (int(Hud.QuestionLabels.size()) + 2) / 3;
+    const int Width = (Dialog.w - 40) / 3;
+    return { Dialog.x + 16 + (Index % 3) * (Width + 4),
+      Dialog.y + Dialog.h - 12 - Rows * 40 + (Index / 3) * 40, Width, 36 };
+  }
+
   void DrawPromptDialog(SDL_Renderer* Renderer)
   {
     if(!HasBlockingPromptDialog())
@@ -1515,6 +1532,21 @@ std::string DisplayMenuSubtitle()
     const PromptGeometry Geometry = GetPromptGeometry();
     const SDL_Rect Dialog = Geometry.Dialog;
     Frame(Renderer, Dialog);
+    if(!Hud.QuestionLabels.empty())
+    {
+      TopWrapped(Renderer, {Dialog.x + 16, Dialog.y + 16, Dialog.w - 32,
+        Dialog.h - 32 - ((int(Hud.QuestionLabels.size()) + 2) / 3) * 40},
+        Hud.Prompt, 2, 240, 230, 202);
+      for(int I = 0; I < int(Hud.QuestionLabels.size()); ++I)
+      {
+        const SDL_Rect Button = NamedPromptButton(I);
+        Fill(Renderer, Button, 24, 55, 35, 255);
+        Outline(Renderer, Button, 102, 169, 92);
+        Centered(Renderer, Button, Hud.QuestionLabels[I], 1, 240, 230, 202);
+      }
+      SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_NONE);
+      return;
+    }
     const std::string Title = Hud.PromptCapturesKey ? "REMAP CONTROL"
       : Hud.PromptConfirmsKeyTransfer ? "KEY ALREADY IN USE"
       : Hud.PromptConfirmsChoice ? "CONFIRM"
@@ -1568,7 +1600,7 @@ std::string DisplayMenuSubtitle()
       Centered(Renderer, Geometry.Continue,
                Hud.PromptConfirmsKeyTransfer ? "TAKE KEY"
                  : (Hud.PromptConfirmsChoice || Hud.PromptOffersQuitChoices)
-                   ? "YES" : "CONTINUE", 1,
+                   ? (Hud.PromptConfirmsChoice ? Hud.ConfirmAction : "YES") : "CONTINUE", 1,
                190, 226, 157);
     }
     if(Hud.PromptOffersQuitChoices)
@@ -1580,7 +1612,7 @@ std::string DisplayMenuSubtitle()
     Fill(Renderer, Geometry.Cancel, 49, 20, 18, 255);
     Outline(Renderer, Geometry.Cancel, 168, 71, 58);
     Centered(Renderer, Geometry.Cancel,
-             Hud.PromptConfirmsChoice ? "NO" : "CANCEL", 1,
+             Hud.PromptConfirmsChoice ? Hud.CancelAction : "CANCEL", 1,
              228, 168, 139);
     SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_NONE);
   }
@@ -1669,7 +1701,7 @@ std::string DisplayMenuSubtitle()
 
     const adaptiveui::ItemMetrics& Metrics =
       Hud.MenuItemMetrics[Hud.MenuSelected];
-    if(!Metrics.Present)
+    if(!Metrics.Present || Metrics.HasPriceQuote())
       return Result;
     if(Metrics.Equippable)
       Result.push_back({ adaptiveui::ITEM_ACTION_NONE, "EQUIP" });
@@ -1788,7 +1820,9 @@ std::string DisplayMenuSubtitle()
                   Geometry.Area.y + Geometry.Area.h - 42, 116, 32 };
     const std::vector<DesktopItemAction> PickupActions =
       DesktopPickupActions();
-    const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+    const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID
+      || (Hud.MenuKind == adaptiveui::MENU_ITEM_GRID && std::any_of(Hud.MenuItemMetrics.begin(),
+        Hud.MenuItemMetrics.end(), [](const adaptiveui::ItemMetrics& M) { return M.HasPriceQuote(); }));
     if(PickupButtons)
     {
       const int ButtonCount = int(PickupActions.size()) + 2;
@@ -2350,6 +2384,16 @@ std::string DisplayMenuSubtitle()
         Centered(Renderer, Cell, "?", 2,
                  Available ? 181 : 105, Available ? 169 : 101,
                  Available ? 143 : 94);
+      if(Index < int(Hud.MenuItemMetrics.size())
+         && Hud.MenuItemMetrics[Index].HasPriceQuote())
+      {
+        const SDL_Rect PriceArea = { Cell.x + 2, Cell.y + Cell.h - 14,
+          std::max(1, Cell.w - 4), 12 };
+        Fill(Renderer, PriceArea, 38, 32, 15, 255);
+        Centered(Renderer, PriceArea,
+          Hud.MenuItemMetrics[Index].PriceBadge(),
+          1, 248, 218, 135);
+      }
     }
 
     Fill(Renderer, Geometry.Detail, 12, 14, 13, 255);
@@ -2408,6 +2452,13 @@ std::string DisplayMenuSubtitle()
         Index < int(Hud.MenuItemMetrics.size())
           && Hud.MenuItemMetrics[Index].Present
         ? &Hud.MenuItemMetrics[Index] : 0;
+      if(Candidate && Candidate->HasPriceQuote())
+      {
+        std::string Price = Candidate->PriceSummary(Hud.MenuSubtitle);
+        TopWrapped(Renderer, {Left, Y, std::max(1, Right - Left), 36}, Price, 1, 248, 218, 135);
+        Y += Candidate->PurchasePrice < 0 ? 40 : 16;
+
+      }
       const adaptiveui::ItemMetrics* Current = 0;
       if(Hud.EquipmentComparisonActive)
         Current = &Hud.EquippedItemMetrics;
@@ -2958,9 +3009,14 @@ std::string DisplayMenuSubtitle()
     }
     else
     {
-      const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID;
+      const bool PickupButtons = Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID
+      || (Hud.MenuKind == adaptiveui::MENU_ITEM_GRID && std::any_of(Hud.MenuItemMetrics.begin(),
+        Hud.MenuItemMetrics.end(), [](const adaptiveui::ItemMetrics& M) { return M.HasPriceQuote(); }));
       const bool CanConfirm = Hud.MenuSelected >= 0
-                           && Hud.MenuSelected < int(Hud.MenuOptions.size());
+                           && Hud.MenuSelected < int(Hud.MenuOptions.size())
+        && !(Hud.MenuSelected < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Hud.MenuSelected].HasPriceQuote()
+          && Hud.MenuItemMetrics[Hud.MenuSelected].PurchasePrice < 0);
       if(PickupButtons)
       {
         const std::vector<DesktopItemAction> Actions =
@@ -2986,7 +3042,10 @@ std::string DisplayMenuSubtitle()
         Outline(Renderer, Geometry.Confirm,
                 CanConfirm ? 102 : 70, CanConfirm ? 169 : 70,
                 CanConfirm ? 92 : 70);
-        Centered(Renderer, Geometry.Confirm, "STASH", 2,
+        const bool ForSale = CanConfirm
+          && Hud.MenuSelected < int(Hud.MenuItemMetrics.size())
+          && Hud.MenuItemMetrics[Hud.MenuSelected].HasPriceQuote();
+        Centered(Renderer, Geometry.Confirm, ForSale ? Hud.MenuItemMetrics[Hud.MenuSelected].PriceAction : "STASH", 2,
                  CanConfirm ? 190 : 130, CanConfirm ? 226 : 125,
                  CanConfirm ? 157 : 115);
       }
@@ -3164,7 +3223,7 @@ std::string DisplayMenuSubtitle()
 
 adaptiveui::ItemMetrics::ItemMetrics()
   : ItemId(0), Present(false), Armor(false), Weapon(false), Shield(false),
-    Equippable(false), Actions(0), Weight(0),
+    Equippable(false), Actions(0), Weight(0), PurchasePrice(-1), PurchaseCount(1),
     ArmorValue(0), MinimumDamage(0), MaximumDamage(0), ToHit(0), Block(0),
     Enchantment(0), CategorySkill(0), SpecificSkill(0)
 {
@@ -3795,8 +3854,10 @@ namespace adaptiveui
     Dirty = true;
   }
 
-  void SetConfirmationPrompt(const char* Prompt)
+  void SetConfirmationPrompt(const char* Prompt, const char* Accept, const char* Reject)
   {
+    Hud.ConfirmAction = Safe(Accept);
+    Hud.CancelAction = Safe(Reject);
     Hud.Prompt = Safe(Prompt);
     const char* Hints[] = { " [y/N]", " [y/n]", " [Y/n]", " [Y/N]" };
     for(size_t Index = 0; Index < sizeof(Hints) / sizeof(Hints[0]); ++Index)
@@ -4121,11 +4182,15 @@ namespace adaptiveui
     return MenuIndexForDisplayPosition(Position);
   }
 
-  void SetQuestionChoices(const int* Keys, int Count)
+  void SetQuestionChoices(const int* Keys, int Count, const char* const* Labels)
   {
+    Hud.QuestionLabels.clear();
     Hud.QuestionChoiceCount = Clamp(Count, 0, 9);
     for(int Index = 0; Index < Hud.QuestionChoiceCount; ++Index)
+    {
       Hud.QuestionChoices[Index] = Keys ? Keys[Index] : 0;
+      if(Labels) Hud.QuestionLabels.push_back(Safe(Labels[Index]));
+    }
     Dirty = true;
   }
 
@@ -4537,10 +4602,22 @@ namespace adaptiveui
       if(Pressed && (Hud.PromptShowsInput || Hud.PromptNumeric
                       || Hud.PromptCapturesKey
                       || Hud.PromptConfirmsKeyTransfer
-                      || Hud.PromptConfirmsChoice
+                      || Hud.PromptConfirmsChoice || !Hud.QuestionLabels.empty()
                       || Hud.PromptOffersQuitChoices))
       {
         const PromptGeometry Geometry = GetPromptGeometry();
+        if(!Hud.QuestionLabels.empty())
+        {
+          Result.Type = PointerResult::CONSUMED;
+          for(int I = 0; I < int(Hud.QuestionLabels.size()); ++I)
+            if(Contains(NamedPromptButton(I), OutputX, OutputY))
+            {
+              Result.Type = PointerResult::COMMAND_KEY;
+              Result.CommandCode = Hud.QuestionChoices[I];
+              break;
+            }
+          return Result;
+        }
         if((Hud.PromptShowsInput || Hud.PromptNumeric)
            && Contains(Geometry.Input, OutputX, OutputY))
         {
@@ -4586,7 +4663,7 @@ namespace adaptiveui
         return Result;
       }
 
-      if(Hud.MenuKind == adaptiveui::MENU_PICKUP_GRID && Pressed)
+      if(Geometry.Confirm.w > 0 && Pressed)
       {
         const bool HasSelection = Hud.MenuSelected >= 0
           && Hud.MenuSelected < int(Hud.MenuOptions.size());
@@ -4609,10 +4686,11 @@ namespace adaptiveui
           }
         if(Contains(Geometry.Confirm, OutputX, OutputY))
         {
-          Result.Type = HasSelection ? PointerResult::COMMAND_KEY
-                                     : PointerResult::CONSUMED;
-          Result.CommandCode = HasSelection
-            ? KEY_MOBILE_MENU_SELECT_BASE + Hud.MenuSelected : 0;
+          const bool Available = HasSelection && !(Hud.MenuSelected < int(Hud.MenuItemMetrics.size())
+            && Hud.MenuItemMetrics[Hud.MenuSelected].HasPriceQuote()
+            && Hud.MenuItemMetrics[Hud.MenuSelected].PurchasePrice < 0);
+          Result.Type = Available ? PointerResult::COMMAND_KEY : PointerResult::CONSUMED;
+          Result.CommandCode = Available ? KEY_MOBILE_MENU_SELECT_BASE + Hud.MenuSelected : 0;
           return Result;
         }
       }

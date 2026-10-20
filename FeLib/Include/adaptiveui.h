@@ -91,6 +91,26 @@ namespace adaptiveui
     bool Equippable;
     unsigned int Actions;
     long Weight;
+    long PurchasePrice; // Total for PurchaseCount; -1 for ordinary items.
+    int PurchaseCount;
+    std::string PriceAction = "BUY";
+    std::string PriceNote;
+    bool HasPriceQuote() const { return PurchasePrice >= 0 || !PriceNote.empty(); }
+    std::string PriceBadge() const {
+      return PurchasePrice >= 0 ? std::to_string(PurchasePrice) + " GOLD"
+        : PriceAction == "SELL" ? "NO OFFER" : "NO REPAIR";
+    }
+    std::string PriceSummary(const std::string& Subtitle = "") const {
+      if(PurchasePrice < 0) return PriceNote;
+      std::string Text = (PriceAction == "SELL" ? "OFFER: " : "PRICE: ") + PriceBadge();
+      if(PurchaseCount > 1) Text += " TOTAL / " + std::to_string(PurchaseCount) + " ITEMS";
+      const size_t GoldAt = Subtitle.find("Your gold: ");
+      if(GoldAt != std::string::npos) {
+        const size_t Start = GoldAt + 11;
+        Text += " | HAVE: " + Subtitle.substr(Start, Subtitle.find("  ", Start) - Start);
+      }
+      return Text;
+    }
     int ArmorValue;
     int MinimumDamage;
     int MaximumDamage;
@@ -133,6 +153,8 @@ namespace adaptiveui
     std::string Prompt;
     std::string PromptDetail;
     std::string PromptInput;
+    std::string ConfirmAction;
+    std::string CancelAction;
     bool PromptActive;
     bool PromptShowsInput;
     bool PromptNumeric;
@@ -170,6 +192,7 @@ namespace adaptiveui
     int MenuPages;
     std::vector<ActionEntry> Actions;
     int QuestionChoices[9];
+    std::vector<std::string> QuestionLabels;
     int QuestionChoiceCount;
     bool MapScreen;
     SDL_Rect MapSource;
@@ -326,7 +349,7 @@ namespace adaptiveui
                  bool Numeric = false);
   void SetKeyCapturePrompt(const char* Prompt);
   void SetKeyTransferPrompt(const char* Prompt);
-  void SetConfirmationPrompt(const char* Prompt);
+  void SetConfirmationPrompt(const char* Prompt, const char* Accept = "YES", const char* Reject = "NO");
   void SetQuitPrompt(const char* Prompt);
   void SetPromptDetail(const char* Detail);
   void SetPositionPrompt(bool Active);
@@ -355,7 +378,7 @@ namespace adaptiveui
   void SetActionShortcuts(const int* Keys, int Count);
   int PageMenu(int Selected, int Direction, int Count);
   int NavigateInventoryMenu(int Selected, int Key, int Count);
-  void SetQuestionChoices(const int* Keys, int Count);
+  void SetQuestionChoices(const int* Keys, int Count, const char* const* Labels = 0);
   void SetMapScreen(bool Active);
   void SetMapSourceBounds(int X, int Y, int Width, int Height);
   void SetMapFocus(int X, int Y);

@@ -744,7 +744,9 @@ truth commandsystem::ShowInventory(character* Char)
       }
       return right;
     }
-    int kq = game::KeyQuestion("(r)ight or (l)eft?", KEY_ESC, 11, 'r', 'R', 'l', 'L', KEY_CONTROLLER_A-1, KEY_CONTROLLER_A+1, KEY_LEFT, KEY_RIGHT, KEY_CONTROLLER_X, KEY_CONTROLLER_A, KEY_CONTROLLER_B);
+    const int Keys[] = { 'r', 'l', KEY_ESC };
+    const char* Labels[] = { "RIGHT", "LEFT", "CANCEL" };
+    int kq = game::NamedKeyQuestion(CONST_S("Equip on which side? [r] Right, [l] Left, [Esc] Cancel"), Keys, Labels, 3);
     switch(kq) {
       case 'l':
       case 'L':
@@ -872,11 +874,9 @@ truth commandsystem::EquipPickedItem(character* Char, item* Item)
       return EquipInSlot(Right);
     if(!Char->GetEquipment(Left))
       return EquipInSlot(Left);
-    const int Choice = game::KeyQuestion(
-      "Equip on the (r)ight or (l)eft?", KEY_ESC, 11,
-      'r', 'R', 'l', 'L', KEY_CONTROLLER_A - 1, KEY_CONTROLLER_A + 1,
-      KEY_LEFT, KEY_RIGHT, KEY_CONTROLLER_X, KEY_CONTROLLER_A,
-      KEY_CONTROLLER_B);
+    const int Keys[] = { 'r', 'l', KEY_ESC };
+    const char* Labels[] = { "RIGHT", "LEFT", "CANCEL" };
+    const int Choice = game::NamedKeyQuestion(CONST_S("Equip on which side? [r] Right, [l] Left, [Esc] Cancel"), Keys, Labels, 3);
     switch(Choice)
     {
      case 'l': case 'L': case KEY_CONTROLLER_A - 1:

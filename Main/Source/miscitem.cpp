@@ -1393,7 +1393,9 @@ truth itemcontainer::Open(character* Opener)
                               "(p)ut something in this container? [t,p]");
   truth Success;
 
-  switch(game::KeyQuestion(Question, KEY_ESC, 10, 't', 'p', 'T', 'P', KEY_ESC, KEY_CONTROLLER_A, KEY_CONTROLLER_Y, KEY_CONTROLLER_B))
+  const int Keys[] = { 't', 'p', KEY_ESC };
+  const char* Labels[] = { "TAKE", "PUT", "CANCEL" };
+  switch(game::NamedKeyQuestion(Question, Keys, Labels, 3))
   {
    case 't':
    case 'T':
@@ -3304,7 +3306,15 @@ void scrollofgolemcreation::FinishReading(character* Reader)
 
       if(MainPossible && SecPossible)
       {
-        if(game::TruthQuestion(CONST_S("Use main material? [Y/n]"), YES))
+        const int Keys[] = { 'm', 's', KEY_ESC };
+        const char* Labels[] = { "USE MAIN", "USE OTHER", "BACK" };
+        festring Question = CONST_S("Choose the material for the golem. The selected item will be consumed.\n\n[m] Main: ");
+        Question << Main->GetName(false, false) << " (" << Main->GetVolume()
+                 << " cm3)\n[s] Secondary: " << Sec->GetName(false, false)
+                 << " (" << Sec->GetVolume() << " cm3)\n[Esc] Back";
+        const int Choice = game::NamedKeyQuestion(Question, Keys, Labels, 3);
+        if(Choice == KEY_ESC) continue;
+        if(Choice == 'm')
           SecPossible = false;
         else
           MainPossible = false;
